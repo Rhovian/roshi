@@ -1,0 +1,30 @@
+[package]
+name = "roshi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["entrypoint"]
+entrypoint = ["dep:solana-program-entrypoint"]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(custom_heap)'] }
+
+[dependencies]
+solana-account-info = "3.1.1"
+solana-cpi = "3.1.0"
+solana-instruction = "3.4.0"
+solana-msg = "3.1.0"
+solana-program-entrypoint = { version = "3.1.1", optional = true }
+solana-program-error = "3.0.1"
+solana-program-memory = "3.1.0"
+solana-pubkey = "4.2.0"
+solana-sha256-hasher = { version = "3.1.0", features = ["sha2"] }
+solana-system-interface = { version = "3.2.0", features = ["bincode"] }
+solana-sysvar = "3.1.1"
+spl-associated-token-account-interface = "2.0.0"
+spl-token-interface = "2.0.0"
+wincode = { version = "0.5.4", features = ["derive"] }
