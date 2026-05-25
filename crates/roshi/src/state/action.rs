@@ -75,6 +75,8 @@ pub fn compute_action_hash(
                 chunks.push(vec![2]);
                 chunks.push(vec![*index]);
                 chunks.push(account.key.to_bytes().to_vec());
+                chunks.push(vec![u8::from(account.is_signer)]);
+                chunks.push(vec![u8::from(account.is_writable)]);
             }
             Op::IngestInstructionDataSize => {
                 let data_len = u32::try_from(ix_data.len())
@@ -88,4 +90,65 @@ pub fn compute_action_hash(
 
     let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
     Ok(hashv(&refs).to_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_ingestion_hashes_meta_flags() {
+        let program_id = Pubkey::new_unique();
+        let account_key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let ops = Ops {
+            ops: vec![Op::IngestAccount { index: 0 }],
+        };
+        let ix_data = [];
+
+        let mut lamports = 0;
+        let mut data = [];
+        let readonly_account = AccountInfo::new(
+            &account_key,
+            false,
+            false,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+        );
+        let readonly_hash =
+            compute_action_hash(&program_id, &ops, &[readonly_account], &ix_data).unwrap();
+
+        let mut lamports = 0;
+        let mut data = [];
+        let writable_account = AccountInfo::new(
+            &account_key,
+            false,
+            true,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+        );
+        let writable_hash =
+            compute_action_hash(&program_id, &ops, &[writable_account], &ix_data).unwrap();
+
+        let mut lamports = 0;
+        let mut data = [];
+        let signer_account = AccountInfo::new(
+            &account_key,
+            true,
+            false,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+        );
+        let signer_hash =
+            compute_action_hash(&program_id, &ops, &[signer_account], &ix_data).unwrap();
+
+        assert_ne!(readonly_hash, writable_hash);
+        assert_ne!(readonly_hash, signer_hash);
+    }
 }

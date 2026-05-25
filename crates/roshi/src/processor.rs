@@ -2,11 +2,10 @@ use crate::{
     instructions::{
         authorize_action::try_authorize_action, claim::try_claim, deposit::try_deposit,
         initialize_program::try_initialize_program, initialize_vault::try_initialize_vault,
-        manage::try_manage, manage_batch::try_manage_batch, pause_vault::try_pause_vault,
-        process_epoch::try_process_epoch, redeem::try_redeem, resume_vault::try_resume_vault,
-        revoke_action::try_revoke_action, update_fee_config::try_update_fee_config,
-        update_operator::try_update_operator, update_queue_authority::try_update_queue_authority,
-        update_total_assets::try_update_total_assets, RoshiInstruction,
+        manage::try_manage, manage_batch::try_manage_batch,
+        process_withdrawals::try_process_withdrawals, redeem::try_redeem,
+        revoke_action::try_revoke_action, update_total_assets::try_update_total_assets,
+        update_vault_config::try_update_vault_config, RoshiInstruction,
     },
     ID,
 };
@@ -44,35 +43,20 @@ fn try_process_instruction(
             ix_data,
         } => try_manage(accounts, program_id, accounts_start, accounts_len, ix_data),
         RoshiInstruction::ManageBatch { actions } => try_manage_batch(accounts, actions),
-        RoshiInstruction::UpdateTotalAssets {
-            total_assets,
-            external_assets,
-        } => try_update_total_assets(accounts, total_assets, external_assets),
+        RoshiInstruction::UpdateTotalAssets { external_assets } => {
+            try_update_total_assets(accounts, external_assets)
+        }
         RoshiInstruction::Deposit {
             amount,
             min_shares_out,
         } => try_deposit(accounts, amount, min_shares_out),
         RoshiInstruction::Redeem {
+            ticket_index,
             shares,
             min_assets_out,
-        } => try_redeem(accounts, shares, min_assets_out),
-        RoshiInstruction::Claim { epoch } => try_claim(accounts, epoch),
-        RoshiInstruction::ProcessEpoch { epoch } => try_process_epoch(accounts, epoch),
-        RoshiInstruction::UpdateOperator { operator } => try_update_operator(accounts, operator),
-        RoshiInstruction::UpdateQueueAuthority { queue_authority } => {
-            try_update_queue_authority(accounts, queue_authority)
-        }
-        RoshiInstruction::UpdateFeeConfig {
-            performance_fee_bps,
-            fee_collector,
-        } => try_update_fee_config(accounts, performance_fee_bps, fee_collector),
-        RoshiInstruction::PauseVault {
-            deposits_paused,
-            withdrawals_paused,
-        } => try_pause_vault(accounts, deposits_paused, withdrawals_paused),
-        RoshiInstruction::ResumeVault {
-            deposits,
-            withdrawals,
-        } => try_resume_vault(accounts, deposits, withdrawals),
+        } => try_redeem(accounts, ticket_index, shares, min_assets_out),
+        RoshiInstruction::Claim => try_claim(accounts),
+        RoshiInstruction::ProcessWithdrawals => try_process_withdrawals(accounts),
+        RoshiInstruction::UpdateVaultConfig { args } => try_update_vault_config(accounts, args),
     }
 }

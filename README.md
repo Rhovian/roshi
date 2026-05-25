@@ -1,9 +1,9 @@
 # Roshi
 
 Roshi is a Solana-native vault protocol scaffold built in native Rust with
-Wincode serialization. The workspace was bootstrapped from the reusable
-Varangian/Varasil program infrastructure and extended toward the protocol shape
-described in `../plan.md`.
+Wincode serialization. It provides the initial on-chain program shape for a
+generalized vault system with operator-managed CPI execution, trusted NAV
+reporting, share accounting, and queued withdrawals.
 
 ## Workspace
 
@@ -13,7 +13,7 @@ described in `../plan.md`.
 
 ## Current Status
 
-The scaffold includes the recovered Varangian infrastructure:
+The scaffold includes the reusable Solana program infrastructure:
 
 - Native Solana program entrypoint and Wincode instruction dispatch.
 - `initialize_program` with a `ProgramConfig` PDA and authority storage.
@@ -21,15 +21,15 @@ The scaffold includes the recovered Varangian infrastructure:
 - Surfpool config/script and Makefile targets.
 - LiteSVM tests for program initialization and authorized CPI execution.
 
-It also includes the plan-level Roshi protocol surface:
+It also includes the Roshi protocol surface:
 
 - State scaffolding for `Vault`, `Action`, `Ops`, `Op`, and
   `WithdrawalTicket`.
-- PDA helper seeds for program config, vaults, actions, and tickets.
+- PDA helper seeds for program config, vaults, actions, and withdrawal tickets.
 - Authorization hash helper for ops-based CPI patterns.
 - Instruction variants and handler stubs for vault initialization, action
-  authorization/revocation, NAV updates, deposits, redemptions, claims, epoch
-  processing, admin updates, fee updates, and pause/resume controls.
+  authorization/revocation, NAV updates, deposits, redemptions, claims,
+  withdrawal processing, and vault config updates.
 
 Most Roshi-specific protocol instructions are intentionally still stubs. The
 remaining work is implementation: account validation, PDA creation, Action
@@ -38,8 +38,7 @@ transfers, withdrawal queue processing, fee collection, and oracle support.
 
 ## Dependencies
 
-The dependency stack has been refreshed beyond the older Varangian pins while
-staying on the compatible Solana 3.x test/program ecosystem:
+The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
 
 - Program-facing crates use current Solana 3.x minors where compatible.
 - `solana-pubkey` is on 4.x.

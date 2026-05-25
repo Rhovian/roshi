@@ -1,21 +1,31 @@
 use crate::instructions::IndexedActionArgs;
-use crate::state::program_config::ProgramConfig;
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 
-use super::manage::invoke_indexed_cpi;
+use super::manage::invoke_authorized_cpi;
 
 pub fn try_manage_batch(
     accounts: &[AccountInfo],
     actions: Vec<IndexedActionArgs>,
 ) -> ProgramResult {
-    let signer = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let config = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
-    ProgramConfig::verify_authority(config, signer)?;
+    let operator = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let vault = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let action_count = actions.len();
+    let cpi_accounts_base = 2usize
+        .checked_add(action_count)
+        .ok_or(ProgramError::InvalidInstructionData)?;
 
-    for action in actions {
-        invoke_indexed_cpi(
+    for (index, action) in actions.into_iter().enumerate() {
+        let action_acc = accounts
+            .get(2 + index)
+            .ok_or(ProgramError::NotEnoughAccountKeys)?;
+
+        invoke_authorized_cpi(
             accounts,
+            operator,
+            vault,
+            action_acc,
+            cpi_accounts_base,
             action.program_id,
             action.accounts_start,
             action.accounts_len,
