@@ -3,7 +3,6 @@ use solana_cpi::invoke_signed;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use wincode::deserialize;
 
 use crate::{
     error::RoshiError,
@@ -15,12 +14,22 @@ use crate::{
     },
 };
 
-const STRATEGIST_INDEX: usize = 0;
-const VAULT_INDEX: usize = 1;
-const SUB_ACCOUNT_INDEX: usize = 2;
-const ACTION_INDEX: usize = 3;
-const CPI_ACCOUNTS_BASE: usize = 4;
-
+/// Implements [`crate::instructions::RoshiInstruction::Manage`].
+///
+/// # Accounts
+///
+/// 0. `[signer]` Vault strategist.
+/// 1. `[]` Vault account.
+/// 2. `[]` Subaccount PDA derived from `(vault, sub_account)`.
+/// 3. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
+/// 4. `..` CPI account section. `accounts_start` is relative to this section,
+///    and the target CPI program account must follow the selected CPI metas.
+///
+/// # Implementation
+///
+/// Consumes the fixed Roshi accounts from the front of the account list,
+/// validates their expected shapes, validates the CPI authorization against the
+/// remaining CPI account section, then invokes the prepared CPI.
 pub fn try_manage(
     accounts: &[AccountInfo],
     sub_account: u8,
@@ -29,72 +38,73 @@ pub fn try_manage(
     accounts_len: u8,
     ix_data: Vec<u8>,
 ) -> ProgramResult {
-    let strategist = accounts
-        .get(STRATEGIST_INDEX)
+    let accounts_iter = &mut accounts.iter();
+    let strategist = accounts_iter
+        .next()
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let vault = accounts
-        .get(VAULT_INDEX)
+    let vault = accounts_iter
+        .next()
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let sub_account_acc = accounts
-        .get(SUB_ACCOUNT_INDEX)
+    let sub_account_acc = accounts_iter
+        .next()
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let action = accounts
-        .get(ACTION_INDEX)
+    let action = accounts_iter
+        .next()
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
 
-    invoke_authorized_cpi(
-        accounts,
-        strategist,
-        vault,
-        sub_account_acc,
-        action,
-        CPI_ACCOUNTS_BASE,
-        sub_account,
+    let cpi_accounts = accounts_iter.as_slice();
+    let validated_accounts =
+        validate_manage_accounts(strategist, vault, sub_account_acc, action, sub_account)?;
+
+    let authorized_cpi = validate_authorized_cpi(
+        cpi_accounts,
+        &validated_accounts,
         program_id,
         accounts_start,
         accounts_len,
         ix_data,
-    )
+    )?;
+
+    invoke_authorized_cpi(&authorized_cpi)
 }
 
-pub(crate) fn invoke_authorized_cpi(
-    accounts: &[AccountInfo],
-    strategist_acc: &AccountInfo,
-    vault_acc: &AccountInfo,
-    sub_account_acc: &AccountInfo,
-    action_acc: &AccountInfo,
-    cpi_accounts_base: usize,
-    sub_account_index: u8,
+/// Validates and prepares one pre-authorized downstream CPI.
+///
+/// # Accounts
+///
+/// `cpi_accounts` is the remaining account section after the Roshi instruction
+/// prefix has been consumed. `accounts_start` and `accounts_len` select the
+/// downstream CPI account metas relative to that section. The target program
+/// account must be supplied immediately after the selected CPI account metas;
+/// it must be executable and is passed through to `invoke_signed` as an
+/// account info but is not included as an instruction meta.
+///
+/// # Implementation
+///
+/// Recomputes the action hash from the effective CPI program id, stored `Ops`,
+/// selected CPI account metas, and instruction data, then promotes the selected
+/// subaccount to signer when present in the CPI metas.
+pub(crate) fn validate_authorized_cpi<'a>(
+    cpi_accounts: &[AccountInfo<'a>],
+    validated_accounts: &ValidatedManageAccounts,
     program_id: [u8; 32],
     accounts_start: u8,
     accounts_len: u8,
     ix_data: Vec<u8>,
-) -> ProgramResult {
-    let vault = load_vault(vault_acc)?;
-    verify_role(&vault, Role::Strategist, strategist_acc)?;
-    verify_manage_enabled(&vault)?;
-    let sub_account_bump = verify_sub_account(vault_acc, sub_account_acc, sub_account_index)?;
-
-    let action = load_action(action_acc)?;
-    if action.vault != vault_acc.key.to_bytes() {
-        return Err(RoshiError::UnauthorizedAction.into());
-    }
-
-    let accounts_start = cpi_accounts_base
-        .checked_add(usize::from(accounts_start))
-        .ok_or(ProgramError::InvalidInstructionData)?;
+) -> Result<AuthorizedCpi<'a>, ProgramError> {
+    let accounts_start = usize::from(accounts_start);
     let accounts_len = usize::from(accounts_len);
     let accounts_end = accounts_start
         .checked_add(accounts_len)
         .ok_or(ProgramError::InvalidInstructionData)?;
-    let cpi_meta_accounts = accounts
+    let cpi_meta_accounts = cpi_accounts
         .get(accounts_start..accounts_end)
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
     let cpi_program_id = Pubkey::from(program_id);
     let cpi_account_metas = cpi_meta_accounts
         .iter()
         .map(|acc| {
-            let is_signer = acc.is_signer || acc.key == sub_account_acc.key;
+            let is_signer = acc.is_signer || acc.key == &validated_accounts.sub_account_key;
             if acc.is_writable {
                 AccountMeta::new(*acc.key, is_signer)
             } else {
@@ -103,105 +113,119 @@ pub(crate) fn invoke_authorized_cpi(
         })
         .collect::<Vec<_>>();
 
-    let action_hash =
-        compute_action_hash_from_metas(&cpi_program_id, &action.ops, &cpi_account_metas, &ix_data)?;
-    if action.action_hash != action_hash {
+    let action_hash = compute_action_hash_from_metas(
+        &cpi_program_id,
+        &validated_accounts.action.ops,
+        &cpi_account_metas,
+        &ix_data,
+    )?;
+    if validated_accounts.action.action_hash != action_hash {
         return Err(RoshiError::UnauthorizedAction.into());
     }
 
-    let (expected_action_key, _) = Action::find_address(vault_acc.key, &action_hash);
-    if action_acc.key != &expected_action_key {
-        return Err(ProgramError::InvalidSeeds);
+    let cpi_program_acc = cpi_accounts
+        .get(accounts_end)
+        .ok_or(ProgramError::NotEnoughAccountKeys)?;
+    if cpi_program_acc.key != &cpi_program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !cpi_program_acc.executable {
+        return Err(ProgramError::InvalidAccountData);
     }
 
-    let account_infos_end = if accounts
-        .get(accounts_end)
-        .is_some_and(|program_acc| program_acc.key == &cpi_program_id)
-    {
-        accounts_end
-            .checked_add(1)
-            .ok_or(ProgramError::InvalidInstructionData)?
-    } else {
-        accounts_end
-    };
-    let cpi_account_infos = accounts
+    let account_infos_end = accounts_end
+        .checked_add(1)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    let cpi_account_infos = cpi_accounts
         .get(accounts_start..account_infos_end)
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
 
-    let sub_account_index_seed = [sub_account_index];
-    let sub_account_bump_seed = [sub_account_bump];
+    Ok(AuthorizedCpi {
+        instruction: Instruction {
+            program_id: cpi_program_id,
+            accounts: cpi_account_metas,
+            data: ix_data,
+        },
+        account_infos: cpi_account_infos.to_vec(),
+        vault_key: validated_accounts.vault_key,
+        sub_account_index: validated_accounts.sub_account_index,
+        sub_account_bump: validated_accounts.sub_account_bump,
+    })
+}
+
+/// Invokes a CPI after all Roshi and CPI-specific authorization checks have
+/// already been performed.
+pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramResult {
+    let sub_account_index_seed = [authorized_cpi.sub_account_index];
+    let sub_account_bump_seed = [authorized_cpi.sub_account_bump];
     let signer_seeds = &[
         VaultSubAccount::SEED,
-        vault_acc.key.as_ref(),
+        authorized_cpi.vault_key.as_ref(),
         &sub_account_index_seed,
         &sub_account_bump_seed,
     ];
 
     invoke_signed(
-        &Instruction {
-            program_id: cpi_program_id,
-            accounts: cpi_account_metas,
-            data: ix_data,
-        },
-        cpi_account_infos,
+        &authorized_cpi.instruction,
+        &authorized_cpi.account_infos,
         &[signer_seeds],
     )
 }
 
-fn load_vault(vault_acc: &AccountInfo) -> Result<Vault, ProgramError> {
-    if vault_acc.owner != &crate::ID {
-        return Err(ProgramError::IllegalOwner);
-    }
-
-    let vault_data = vault_acc.data.borrow();
-    match deserialize(&vault_data).map_err(|_| ProgramError::InvalidAccountData)? {
-        Account::Vault(vault) => Ok(vault),
-        _ => Err(ProgramError::InvalidAccountData),
-    }
+pub(crate) struct AuthorizedCpi<'a> {
+    instruction: Instruction,
+    account_infos: Vec<AccountInfo<'a>>,
+    vault_key: Pubkey,
+    sub_account_index: u8,
+    sub_account_bump: u8,
 }
 
-fn load_action(action_acc: &AccountInfo) -> Result<Action, ProgramError> {
-    if action_acc.owner != &crate::ID {
-        return Err(ProgramError::IllegalOwner);
-    }
-
-    let action_data = action_acc.data.borrow();
-    match deserialize(&action_data).map_err(|_| ProgramError::InvalidAccountData)? {
-        Account::Action(action) => Ok(action),
-        _ => Err(ProgramError::InvalidAccountData),
-    }
+pub(crate) struct ValidatedManageAccounts {
+    action: Action,
+    vault_key: Pubkey,
+    sub_account_key: Pubkey,
+    sub_account_index: u8,
+    sub_account_bump: u8,
 }
 
-fn verify_role(vault: &Vault, role: Role, signer_acc: &AccountInfo) -> ProgramResult {
-    if !signer_acc.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    if !vault.has_role(role, signer_acc.key) {
-        return Err(ProgramError::IllegalOwner);
-    }
-
-    Ok(())
-}
-
-fn verify_sub_account(
+/// Validates the fixed Roshi account prefix for one manage action.
+///
+/// # Checks
+///
+/// - `vault_acc` must be a Roshi `Vault` account.
+/// - `vault_acc` must be the PDA for the loaded vault's `(admin, base_mint)`.
+/// - `strategist_acc` must sign and match the vault's strategist role.
+/// - `sub_account_acc` must be the PDA for `(vault_acc, sub_account_index)`.
+/// - `sub_account_acc` must be a non-executable system account with no data.
+/// - `action_acc` must be a Roshi `Action` account.
+/// - `action_acc` must be scoped to `vault_acc` and use the expected Action
+///   PDA seeds and bump.
+/// - the vault must not have `manage_paused` set.
+///
+/// Returns the loaded Action and subaccount PDA bump needed by CPI execution.
+pub(crate) fn validate_manage_accounts(
+    strategist_acc: &AccountInfo,
     vault_acc: &AccountInfo,
     sub_account_acc: &AccountInfo,
+    action_acc: &AccountInfo,
     sub_account_index: u8,
-) -> Result<u8, ProgramError> {
-    let (expected_sub_account_key, sub_account_bump) =
-        VaultSubAccount::find_address(vault_acc.key, sub_account_index);
-    if sub_account_acc.key != &expected_sub_account_key {
-        return Err(ProgramError::InvalidSeeds);
-    }
+) -> Result<ValidatedManageAccounts, ProgramError> {
+    let vault = Account::load_as::<Vault>(vault_acc)?;
+    vault.verify_address(vault_acc.key)?;
+    vault.verify_role(Role::Strategist, strategist_acc)?;
 
-    Ok(sub_account_bump)
-}
+    let sub_account_bump =
+        VaultSubAccount::verify_account(vault_acc.key, sub_account_index, sub_account_acc)?;
+    let action = Account::load_as::<Action>(action_acc)?;
+    action.verify_for_vault(vault_acc.key, action_acc.key)?;
 
-fn verify_manage_enabled(vault: &Vault) -> ProgramResult {
-    if vault.manage_paused {
-        return Err(RoshiError::VaultPaused.into());
-    }
+    vault.verify_manage_enabled()?;
 
-    Ok(())
+    Ok(ValidatedManageAccounts {
+        action,
+        vault_key: *vault_acc.key,
+        sub_account_key: *sub_account_acc.key,
+        sub_account_index,
+        sub_account_bump,
+    })
 }

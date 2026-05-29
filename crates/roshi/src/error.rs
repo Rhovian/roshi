@@ -8,6 +8,11 @@ pub enum RoshiError {
     InvalidBps = 3,
     VaultPaused = 4,
     UnauthorizedAction = 5,
+    InvalidProgramConfigAccount = 6,
+    InvalidVaultAccount = 7,
+    InvalidActionAccount = 8,
+    InvalidWithdrawalTicketAccount = 9,
+    InvalidAssetAccount = 10,
 }
 
 impl From<RoshiError> for ProgramError {

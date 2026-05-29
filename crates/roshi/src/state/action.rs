@@ -1,6 +1,6 @@
 use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
-use solana_program_error::ProgramError;
+use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use solana_sha256_hasher::hashv;
 use wincode::{SchemaRead, SchemaWrite};
@@ -39,6 +39,28 @@ impl Action {
 
     pub fn find_address(vault: &Pubkey, action_hash: &[u8; 32]) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[Self::SEED, vault.as_ref(), action_hash], &crate::ID)
+    }
+
+    pub fn verify_vault(&self, vault: &Pubkey) -> ProgramResult {
+        if self.vault != vault.to_bytes() {
+            return Err(RoshiError::UnauthorizedAction.into());
+        }
+
+        Ok(())
+    }
+
+    pub fn verify_address(&self, vault: &Pubkey, action_key: &Pubkey) -> ProgramResult {
+        let (expected_action_key, expected_bump) = Self::find_address(vault, &self.action_hash);
+        if action_key != &expected_action_key || self.bump != expected_bump {
+            return Err(ProgramError::InvalidSeeds);
+        }
+
+        Ok(())
+    }
+
+    pub fn verify_for_vault(&self, vault: &Pubkey, action_key: &Pubkey) -> ProgramResult {
+        self.verify_vault(vault)?;
+        self.verify_address(vault, action_key)
     }
 }
 

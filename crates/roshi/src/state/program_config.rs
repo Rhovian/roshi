@@ -1,7 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use wincode::{deserialize, SchemaRead, SchemaWrite};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::state::Account;
 
@@ -30,21 +30,12 @@ impl ProgramConfig {
     }
 
     pub fn verify_authority(config_acc: &AccountInfo, signer: &AccountInfo) -> ProgramResult {
-        if config_acc.owner != &crate::ID {
-            return Err(ProgramError::IllegalOwner);
-        }
-
         let (expected_config_key, _) = Self::find_address();
         if config_acc.key != &expected_config_key {
             return Err(ProgramError::InvalidSeeds);
         }
 
-        let config_data = config_acc.data.borrow();
-        let config =
-            match deserialize(&config_data).map_err(|_| ProgramError::InvalidAccountData)? {
-                Account::ProgramConfig(config) => config,
-                _ => return Err(ProgramError::InvalidAccountData),
-            };
+        let config = Account::load_as::<ProgramConfig>(config_acc)?;
 
         if signer.key != &config.authority() {
             return Err(ProgramError::IllegalOwner);

@@ -102,7 +102,7 @@ Manage {
 Account layout:
 
 ```text
-[strategist, vault, subaccount PDA, Action PDA, CPI accounts...]
+[strategist, vault, subaccount PDA, Action PDA, CPI account section...]
 ```
 
 `accounts_start` is relative to the CPI accounts section, not the full Roshi
@@ -131,24 +131,30 @@ Execution checks:
 
 1. `strategist` must sign.
 2. `strategist` must equal `vault.strategist`.
-3. `vault.manage_paused` must be false.
-4. `vault` must be a Roshi `Vault` account.
-5. `subaccount PDA` must match `[b"sub_account", vault, sub_account]`.
-6. `Action PDA` must be a Roshi `Action` account.
-7. `action.vault` must equal the supplied vault.
-8. Roshi recomputes the hash from the supplied CPI program id, stored `Ops`,
+3. `vault` must be a Roshi `Vault` account owned by Roshi.
+4. `vault` must match its stored PDA seeds and bump.
+5. `vault.manage_paused` must be false.
+6. `subaccount PDA` must match `[b"sub_account", vault, sub_account]`.
+7. `subaccount PDA` must be a non-executable system account with no data.
+8. `Action PDA` must be a Roshi `Action` account owned by Roshi.
+9. `action.vault` must equal the supplied vault.
+10. The Action PDA address and stored bump must match
+   `[b"action", vault, action_hash]`.
+11. Roshi recomputes the hash from the supplied CPI program id, stored `Ops`,
    selected CPI account slice, and `ix_data`.
-9. `action.action_hash` must equal the recomputed hash.
-10. The Action PDA address must match `[b"action", vault, action_hash]`.
-11. Roshi invokes the CPI with subaccount signer seeds.
+12. `action.action_hash` must equal the recomputed hash.
+13. The supplied target CPI program account must match `program_id`.
+14. The supplied target CPI program account must be executable.
+15. Roshi invokes the CPI with subaccount signer seeds.
 
 The CPI instruction metas are created from the selected CPI account infos. Their
 `is_signer` and `is_writable` flags come from the Roshi instruction's account
 metas.
 
-If the target CPI program account is supplied immediately after the selected CPI
-meta account slice, Roshi passes it to `invoke` as an account info but does not
-include it as an instruction meta.
+The target CPI program account must be supplied immediately after the selected
+CPI meta account slice. Roshi verifies it matches the requested program id and
+is executable, then passes it to `invoke` as an account info without including
+it as an instruction meta.
 
 ## Manage Batch
 
@@ -189,22 +195,32 @@ cpi_accounts_base = 2 + actions.len() * 2
 For action `i`, Roshi uses account `2 + i * 2` as that action's subaccount PDA
 and account `3 + i * 2` as that action's Action PDA. It then uses
 `accounts_start` and `accounts_len` as offsets into the shared CPI account
-section.
+section. The target CPI program account for that action must appear immediately
+after its selected CPI account slice.
 
 This lets multiple actions share the same CPI accounts by overlapping their
 account slices.
 
-Batch actions execute sequentially in the supplied order. If any action fails,
-the whole transaction fails.
+Batch actions execute sequentially in the supplied order. Roshi revalidates the
+vault, subaccount, Action account, and CPI authorization immediately before each
+action is invoked, so writes from earlier actions are visible to later checks.
+If any action fails, the whole transaction fails.
 
 ## Security Invariants
 
 - Strategists can only execute for vaults where they are the configured
   strategist.
 - Manage execution must not be paused.
+- Vault and Action accounts must be Roshi-owned accounts of the expected type.
+- The vault account must match its stored PDA seeds and bump.
 - The selected subaccount PDA must match the supplied subaccount index.
+- The selected subaccount PDA must be a non-executable system account with no
+  data.
 - Action accounts are scoped to a single vault.
-- Action PDA seeds include the vault and action hash.
+- Action PDA seeds include the vault and action hash, and the stored bump must
+  match the derived bump.
+- The target CPI program account must be supplied, match the requested program
+  id, and be executable.
 - Stored `Ops` are used during execution; the strategist cannot substitute a
   different op list.
 - CPI account indices in `Ops` are evaluated against the selected CPI account
@@ -213,6 +229,7 @@ the whole transaction fails.
 - Account ingestion hashes the effective CPI signer flag after subaccount signer
   promotion.
 - CPI instruction data slices must be in bounds.
+- Batch execution revalidates each action immediately before invoking it.
 - Batch execution is atomic at the transaction level.
 
 ## Design Notes
