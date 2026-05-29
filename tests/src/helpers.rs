@@ -5,6 +5,7 @@ use roshi::{instructions::RoshiInstruction, state::program_config::ProgramConfig
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
+use solana_system_interface::program as system_program;
 use solana_transaction::{Address, Transaction};
 use wincode::serialize;
 
@@ -55,7 +56,7 @@ pub fn initialize_program_ix(
         accounts: vec![
             AccountMeta::new(*payer, true),
             AccountMeta::new(*config_pda, false),
-            AccountMeta::new_readonly(common::SYSTEM_PROGRAM, false),
+            AccountMeta::new_readonly(system_program::ID, false),
         ],
         data: serialize(&RoshiInstruction::InitializeProgram {
             authority: authority.to_bytes(),

@@ -626,9 +626,6 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-dependencies = [
- "solana-pubkey 4.2.0",
-]
 
 [[package]]
 name = "const-oid"
@@ -1917,12 +1914,12 @@ dependencies = [
 name = "roshi-tests"
 version = "0.1.0"
 dependencies = [
- "common",
  "litesvm",
  "roshi",
  "solana-instruction",
  "solana-pubkey 4.2.0",
  "solana-sdk",
+ "solana-system-interface 3.2.0",
  "solana-transaction",
  "wincode",
 ]

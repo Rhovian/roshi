@@ -1,2 +1,3 @@
-pub mod programs;
-pub use programs::*;
+//! Shared Roshi helpers.
+//!
+//! This crate is intentionally empty until cross-crate helpers are needed.

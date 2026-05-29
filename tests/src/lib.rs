@@ -16,6 +16,7 @@ mod tests {
     };
     use solana_instruction::{AccountMeta, Instruction};
     use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
+    use solana_system_interface::program as system_program;
     use solana_transaction::{Address, Transaction};
     use wincode::serialize;
 
@@ -44,7 +45,7 @@ mod tests {
             Account {
                 lamports: 0,
                 data: vec![],
-                owner: common::SYSTEM_PROGRAM,
+                owner: system_program::ID,
                 executable: false,
                 rent_epoch: 0,
             },
@@ -63,7 +64,7 @@ mod tests {
             Account {
                 lamports: 1_000_000,
                 data: vec![],
-                owner: common::SYSTEM_PROGRAM,
+                owner: system_program::ID,
                 executable: false,
                 rent_epoch: 0,
             },
@@ -111,7 +112,7 @@ mod tests {
 
         let ops = Ops { ops: vec![] };
         let action_hash =
-            compute_action_hash(&common::SYSTEM_PROGRAM, &ops, &[], &transfer_data).unwrap();
+            compute_action_hash(&system_program::ID, &ops, &[], &transfer_data).unwrap();
         let (action_pda, action_bump) = Action::find_address(&vault_pda, &action_hash);
         svm.set_account(
             action_pda,
@@ -133,7 +134,7 @@ mod tests {
 
         let ix_data = RoshiInstruction::Manage {
             sub_account: 0,
-            program_id: common::SYSTEM_PROGRAM.to_bytes(),
+            program_id: system_program::ID.to_bytes(),
             accounts_start: 0,
             accounts_len: 2,
             ix_data: transfer_data,
@@ -148,7 +149,7 @@ mod tests {
                 AccountMeta::new_readonly(action_pda, false),
                 AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
-                AccountMeta::new_readonly(common::SYSTEM_PROGRAM, false),
+                AccountMeta::new_readonly(system_program::ID, false),
             ],
             data: serialize(&ix_data).unwrap(),
         };
@@ -176,7 +177,7 @@ mod tests {
                 AccountMeta::new_readonly(action_pda, false),
                 AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
-                AccountMeta::new_readonly(common::SYSTEM_PROGRAM, false),
+                AccountMeta::new_readonly(system_program::ID, false),
             ],
             data: serialize(&ix_data).unwrap(),
         };

@@ -7,7 +7,7 @@ reporting, share accounting, and queued withdrawals.
 
 ## Workspace
 
-- `crates/common`: shared program constants and Pubkey helpers.
+- `crates/common`: reserved for shared helpers as the workspace grows.
 - `crates/roshi`: on-chain Roshi program crate.
 - `tests`: LiteSVM and Surfpool-oriented integration test harness.
 
