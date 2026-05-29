@@ -62,6 +62,14 @@ The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
 ## Development
 
 ```bash
+just build
+just check
+just test-sbf
+```
+
+The Makefile exposes the same legacy entry points:
+
+```bash
 make build
 make test
 make surfpool-test
