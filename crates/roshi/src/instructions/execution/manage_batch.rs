@@ -4,6 +4,21 @@ use solana_program_error::{ProgramError, ProgramResult};
 
 use super::manage::invoke_authorized_cpi;
 
+/// Implements [`crate::instructions::RoshiInstruction::ManageBatch`].
+///
+/// # Accounts
+///
+/// 0. `[signer]` Vault strategist.
+/// 1. `[]` Vault account.
+/// 2. `..` Repeated `(subaccount PDA, Action PDA)` pairs, one per action.
+/// N. `..` Shared CPI account section after all pairs.
+///
+/// # Implementation
+///
+/// Computes the shared CPI account section start as `2 + actions.len() * 2`,
+/// then executes each indexed action through `invoke_authorized_cpi`. Each
+/// action selects its own subaccount and Action PDA pair while using
+/// `accounts_start` and `accounts_len` as offsets into the shared CPI accounts.
 pub fn try_manage_batch(
     accounts: &[AccountInfo],
     actions: Vec<IndexedActionArgs>,

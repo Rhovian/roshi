@@ -21,6 +21,22 @@ const SUB_ACCOUNT_INDEX: usize = 2;
 const ACTION_INDEX: usize = 3;
 const CPI_ACCOUNTS_BASE: usize = 4;
 
+/// Implements [`crate::instructions::RoshiInstruction::Manage`].
+///
+/// # Accounts
+///
+/// 0. `[signer]` Vault strategist.
+/// 1. `[]` Vault account.
+/// 2. `[]` Subaccount PDA derived from `(vault, sub_account)`.
+/// 3. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
+/// 4. `..` CPI account section. `accounts_start` is relative to this section.
+///
+/// # Implementation
+///
+/// Loads the fixed Roshi accounts, then delegates to `invoke_authorized_cpi`.
+/// The shared CPI path verifies strategist authority, pause state, subaccount
+/// seeds, Action scope, recomputed authorization hash, and Action PDA seeds
+/// before invoking the downstream CPI with subaccount signer seeds.
 pub fn try_manage(
     accounts: &[AccountInfo],
     sub_account: u8,
@@ -57,6 +73,24 @@ pub fn try_manage(
     )
 }
 
+/// Verifies and invokes one pre-authorized downstream CPI.
+///
+/// # Accounts
+///
+/// `cpi_accounts_base` points at the first account in the shared CPI account
+/// section. `accounts_start` and `accounts_len` select the downstream CPI
+/// account metas relative to that section. If the target program account is
+/// supplied immediately after the selected CPI accounts, it is passed through
+/// to `invoke_signed` as an account info.
+///
+/// # Implementation
+///
+/// Loads the vault, verifies the strategist role and manage pause flag, checks
+/// the selected subaccount PDA, loads the Action, recomputes the action hash
+/// from the effective CPI program id, stored `Ops`, selected CPI account metas,
+/// and instruction data, verifies the Action PDA seeds, promotes the selected
+/// subaccount to signer when present in the CPI metas, and invokes the CPI with
+/// the subaccount PDA signer seeds.
 pub(crate) fn invoke_authorized_cpi(
     accounts: &[AccountInfo],
     strategist_acc: &AccountInfo,

@@ -17,8 +17,7 @@ Subaccounts are not Roshi-owned data accounts. They are PDA authorities. A
 subaccount can:
 
 - own SPL token accounts,
-- act as a signer in authorized CPIs,
-- hold native SOL if it is explicitly created as a system-owned account.
+- act as a signer in authorized CPIs.
 
 ## Vault Defaults
 

@@ -3,8 +3,7 @@ use solana_pubkey::Pubkey;
 /// PDA signer namespace for vault custody and strategy execution.
 ///
 /// Subaccounts are intentionally not Roshi-owned data accounts. They are PDA
-/// authorities that can later own token accounts or hold native SOL as
-/// system-owned accounts.
+/// authorities that can own token accounts and sign authorized CPIs.
 pub struct VaultSubAccount;
 
 impl VaultSubAccount {
