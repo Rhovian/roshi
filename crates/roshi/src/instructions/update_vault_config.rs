@@ -7,8 +7,9 @@ pub fn try_update_vault_config(
     _accounts: &[AccountInfo],
     _args: UpdateVaultConfigArgs,
 ) -> ProgramResult {
-    // TODO: verify vault admin and atomically replace mutable role, pause,
-    // default subaccount, fee, and guardrail config fields.
+    // TODO: verify vault admin and atomically replace mutable role, default
+    // subaccount, fee, and guardrail config fields. Pause flags are updated
+    // through SetPauseFlags.
     let _ = _args;
     Ok(())
 }

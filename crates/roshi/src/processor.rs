@@ -5,9 +5,9 @@ use crate::{
         initialize_sub_account::try_initialize_sub_account, initialize_vault::try_initialize_vault,
         manage::try_manage, manage_batch::try_manage_batch,
         process_withdrawals::try_process_withdrawals, redeem::try_redeem,
-        revoke_action::try_revoke_action, update_asset::try_update_asset,
-        update_total_assets::try_update_total_assets, update_vault_config::try_update_vault_config,
-        RoshiInstruction,
+        revoke_action::try_revoke_action, set_pause_flags::try_set_pause_flags,
+        update_asset::try_update_asset, update_total_assets::try_update_total_assets,
+        update_vault_config::try_update_vault_config, RoshiInstruction,
     },
     ID,
 };
@@ -75,5 +75,6 @@ fn try_process_instruction(
         RoshiInstruction::InitializeSubAccount { index } => {
             try_initialize_sub_account(accounts, index)
         }
+        RoshiInstruction::SetPauseFlags { args } => try_set_pause_flags(accounts, args),
     }
 }

@@ -51,6 +51,20 @@ NAV reports are not separately paused in the current scaffold. If the
 `nav_authority` is compromised, the admin can rotate it and use NAV guardrails
 to limit accepted report movement.
 
+Pause flags have a dedicated instruction surface:
+
+```rust
+SetPauseFlags {
+    deposits_paused,
+    withdrawals_paused,
+    manage_paused,
+}
+```
+
+`SetPauseFlags` should be admin-only. It is intentionally narrower than full
+vault config replacement so emergency pause changes do not require resubmitting
+role, fee, guardrail, or subaccount configuration.
+
 ## Invariants
 
 - Admin-only instructions must verify `vault.admin`.

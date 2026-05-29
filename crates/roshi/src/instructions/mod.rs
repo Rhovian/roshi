@@ -10,6 +10,7 @@ pub mod manage_batch;
 pub mod process_withdrawals;
 pub mod redeem;
 pub mod revoke_action;
+pub mod set_pause_flags;
 pub mod update_asset;
 pub mod update_total_assets;
 pub mod update_vault_config;
@@ -67,6 +68,8 @@ pub enum RoshiInstruction {
     UpdateAsset { args: UpdateAssetArgs },
     #[wincode(tag = 14)]
     InitializeSubAccount { index: u8 },
+    #[wincode(tag = 15)]
+    SetPauseFlags { args: SetPauseFlagsArgs },
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -132,6 +135,10 @@ pub struct UpdateVaultConfigArgs {
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
     pub min_update_interval: i64,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct SetPauseFlagsArgs {
     pub deposits_paused: bool,
     pub withdrawals_paused: bool,
     pub manage_paused: bool,
