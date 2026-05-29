@@ -78,7 +78,7 @@ mod tests {
                     admin: authority.pubkey().to_bytes(),
                     strategist: authority.pubkey().to_bytes(),
                     nav_authority: authority.pubkey().to_bytes(),
-                    queue_authority: authority.pubkey().to_bytes(),
+                    withdrawal_authority: authority.pubkey().to_bytes(),
                     base_mint: base_mint.to_bytes(),
                     share_mint: share_mint.to_bytes(),
                     deposit_sub_account: 0,

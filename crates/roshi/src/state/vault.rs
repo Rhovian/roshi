@@ -6,7 +6,7 @@ pub enum Role {
     Admin,
     Strategist,
     NavAuthority,
-    QueueAuthority,
+    WithdrawalAuthority,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -15,7 +15,7 @@ pub struct Vault {
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
-    pub queue_authority: [u8; 32],
+    pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
     pub deposit_sub_account: u8,
@@ -54,7 +54,7 @@ impl Vault {
             Role::Admin => Pubkey::from(self.admin),
             Role::Strategist => Pubkey::from(self.strategist),
             Role::NavAuthority => Pubkey::from(self.nav_authority),
-            Role::QueueAuthority => Pubkey::from(self.queue_authority),
+            Role::WithdrawalAuthority => Pubkey::from(self.withdrawal_authority),
         }
     }
 

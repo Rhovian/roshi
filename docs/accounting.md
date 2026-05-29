@@ -77,7 +77,8 @@ Token account balances remain important, but for settlement liquidity rather
 than NAV truth:
 
 - immediate redemptions can only pay from actual base custody liquidity,
-- withdrawal claims can only succeed when the relevant custody account can pay,
+- queued withdrawal processing can only settle when the relevant custody account
+  can pay,
 - NAV can include positions that are not directly observable in the instruction.
 
 See [NAV Reporting](./nav_reporting.md) for the trust boundary and report
@@ -171,7 +172,7 @@ The redeem flow should:
   create a withdrawal ticket.
 
 Shares are burned before creating a queued withdrawal ticket. That prevents a
-user from both keeping shares and claiming queued assets.
+user from both keeping shares and being owed queued assets.
 
 ## Withdrawal Buffer
 
@@ -240,7 +241,7 @@ crystallization can be inserted without changing user-facing share semantics.
 - NAV updates must respect `min_update_interval` and `max_change_bps`.
 - Withdrawal tickets represent assets already removed from share accounting.
 - Custody token account balances are the payment source of truth for immediate
-  withdrawals and claims.
+  withdrawals and queued withdrawal settlement.
 
 ## Non-Goals
 

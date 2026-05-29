@@ -1,19 +1,7 @@
-pub mod authorize_action;
-pub mod claim;
-pub mod deposit;
-pub mod initialize_asset;
-pub mod initialize_program;
-pub mod initialize_sub_account;
-pub mod initialize_vault;
-pub mod manage;
-pub mod manage_batch;
-pub mod process_withdrawals;
-pub mod redeem;
-pub mod revoke_action;
-pub mod set_pause_flags;
-pub mod update_asset;
+pub mod admin;
+pub mod execution;
 pub mod update_total_assets;
-pub mod update_vault_config;
+pub mod user;
 
 use crate::state::action::Ops;
 use wincode::{SchemaRead, SchemaWrite};
@@ -56,8 +44,6 @@ pub enum RoshiInstruction {
         shares: u64,
         min_assets_out: u64,
     },
-    #[wincode(tag = 9)]
-    Claim,
     #[wincode(tag = 10)]
     ProcessWithdrawals,
     #[wincode(tag = 11)]
@@ -86,7 +72,7 @@ pub struct InitializeVaultArgs {
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
-    pub queue_authority: [u8; 32],
+    pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
     pub deposit_sub_account: u8,
@@ -127,7 +113,7 @@ pub struct UpdateAssetArgs {
 pub struct UpdateVaultConfigArgs {
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
-    pub queue_authority: [u8; 32],
+    pub withdrawal_authority: [u8; 32],
     pub fee_collector: [u8; 32],
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,

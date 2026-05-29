@@ -6,7 +6,7 @@ Roshi stores named role authorities on each vault.
 admin: Pubkey,
 strategist: Pubkey,
 nav_authority: Pubkey,
-queue_authority: Pubkey,
+withdrawal_authority: Pubkey,
 ```
 
 ## Roles
@@ -24,7 +24,7 @@ queue_authority: Pubkey,
 
 `nav_authority` submits total NAV reports and report commitments.
 
-`queue_authority` processes withdrawal epochs.
+`withdrawal_authority` processes queued withdrawals through settlement.
 
 These roles may be the same signer at launch, but the protocol models them
 separately so operations can move to distinct wallets, bots, or multisigs
@@ -43,7 +43,7 @@ manage_paused: bool,
 `deposits_paused` blocks new deposits.
 
 `withdrawals_paused` blocks new redemptions or withdrawal requests. It should
-not block already eligible claims.
+not block authority-driven processing of already queued withdrawals.
 
 `manage_paused` blocks strategist CPI execution across all subaccounts.
 
@@ -70,5 +70,5 @@ role, fee, guardrail, or subaccount configuration.
 - Admin-only instructions must verify `vault.admin`.
 - Manage instructions must verify `vault.strategist`.
 - NAV update instructions must verify `vault.nav_authority`.
-- Withdrawal processing must verify `vault.queue_authority`.
+- Withdrawal processing must verify `vault.withdrawal_authority`.
 - Pause flags gate behavior, not role identity.

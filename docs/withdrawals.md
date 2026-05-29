@@ -4,7 +4,8 @@ Roshi uses a hybrid withdrawal model:
 
 - If the vault has enough idle liquidity, a redeem is paid immediately.
 - Otherwise, shares are burned immediately and the user receives a queued
-  withdrawal ticket.
+  withdrawal ticket. The withdrawal authority later processes that ticket all
+  the way through settlement.
 
 The design avoids epoch-derived ticket PDAs. Withdrawal epochs are queue state,
 not account address space.
@@ -12,7 +13,7 @@ not account address space.
 ## Goals
 
 - Keep withdrawal account growth bounded.
-- Preserve simple user claims.
+- Keep user interaction simple after a withdrawal request is queued.
 - Let the vault strategist return liquidity asynchronously.
 - Avoid storing redundant reserve balances that can drift from custody token
   account balances.
@@ -43,11 +44,11 @@ unprocessed withdrawal batch.
 
 `current_withdrawal_epoch` is assigned to new queued withdrawal tickets.
 
-`processed_withdrawal_epoch` is the highest withdrawal epoch that has been
-processed by the queue authority and is eligible for claims.
+`processed_withdrawal_epoch` is the highest withdrawal epoch that has been fully
+processed by the withdrawal authority.
 
-The vault does not store a separate reserved or claimable balance. Custody token
-account balances are the source of truth for claim payment capacity.
+The vault does not store a separate reserved or settlement balance. Custody
+token account balances are the source of truth for settlement capacity.
 
 ### WithdrawalTicket
 
@@ -104,81 +105,59 @@ If the withdraw subaccount does not have enough idle liquidity:
 - Increment `vault.pending_withdrawal_assets` by `assets_owed`.
 
 The user may have up to 256 open queued tickets per vault. Reusing a ticket slot
-requires first claiming or clearing the existing ticket in that slot.
+requires the withdrawal authority to process and clear the existing ticket in
+that slot.
 
 ## Processing Flow
 
-Queue authority calls:
+Withdrawal authority calls:
 
 ```rust
 ProcessWithdrawals
 ```
 
-This marks the current queued batch as eligible for claims. At minimum it:
+This settles queued withdrawal tickets. The instruction should:
 
-```rust
-vault.processed_withdrawal_epoch = vault.current_withdrawal_epoch;
-vault.current_withdrawal_epoch += 1;
-vault.pending_withdrawal_assets = 0;
-```
+- verify the caller is the vault's withdrawal authority,
+- verify the withdraw subaccount custody can pay each supplied ticket,
+- transfer each ticket's `assets_owed` to its owner,
+- close or clear settled ticket slots,
+- advance `processed_withdrawal_epoch` for fully processed batches,
+- decrement or clear `pending_withdrawal_assets` for settled tickets.
 
-The instruction should verify the caller is the vault's queue authority.
-
-Processing is an eligibility signal, not a separate escrow movement. The queue
-authority is expected to process only once enough liquidity has returned to the
-withdraw subaccount, but individual claims still pay from the actual token
-account balance.
-
-The queue authority is an operational role. It does not auction withdrawals,
-price discounts, or coordinate a solver market. Its job is to move batches from
-requested to claimable once the vault is ready to satisfy them.
-
-## Claim Flow
-
-User calls:
-
-```rust
-Claim
-```
-
-and passes the withdrawal ticket account they want to settle.
-
-The program verifies:
+For each ticket, the program verifies:
 
 ```rust
 ticket.vault == vault.key()
-ticket.owner == user.key()
 ticket.assets_owed > 0
-ticket.request_epoch <= vault.processed_withdrawal_epoch
+ticket.request_epoch <= vault.current_withdrawal_epoch
 ticket.key() == find_ticket(vault, user, ticket.ticket_index)
 ```
 
-If valid, the program transfers `ticket.assets_owed` from withdraw subaccount
-custody to the user token account.
+Processing is both the eligibility and payment step. The withdrawal authority is
+expected to call it only after the strategist has returned enough liquidity to
+withdraw custody. If a transfer cannot be paid, the instruction fails atomically
+and the ticket remains open.
 
-If the custody token account cannot cover the amount, the token transfer fails
-atomically and the ticket remains open.
-
-After a successful transfer, the ticket is closed or cleared so the user can
-reuse the same `ticket_index`.
+The withdrawal authority is an operational role. It does not auction withdrawals,
+price discounts, or coordinate a solver market. Its job is to settle queued
+withdrawals once the vault is ready to satisfy them.
 
 ## Invariants
 
 - Shares are burned before a queued withdrawal ticket is created.
 - A ticket PDA is bounded by `(vault, owner, ticket_index)`, not by epoch.
-- A ticket is claimable only after its `request_epoch` has been processed.
-- Claim payment capacity is determined by custody token account balances.
+- A ticket is settled only by `ProcessWithdrawals`.
+- Settlement capacity is determined by custody token account balances.
 - The vault does not maintain a separate reserved-assets counter.
-- A ticket slot cannot be overwritten while it contains an unclaimed withdrawal.
-- Queue processing must be authorized by `vault.queue_authority`.
+- A ticket slot cannot be overwritten while it contains an unsettled withdrawal.
+- Withdrawal processing must be authorized by `vault.withdrawal_authority`.
 - Withdrawal pause state should prevent new queued withdrawals, but should not
-  block claims for already processed tickets.
+  block authority-driven processing of existing tickets.
 
 ## Notes
 
-This model deliberately separates eligibility from payment. Processing an epoch
-means the queue authority has made that batch claimable. It does not guarantee a
-claim will succeed if liquidity is later moved out of withdrawal custody.
-
-That tradeoff keeps the state minimal and makes custody token account balances
-the single source of truth for available payment liquidity.
+This model deliberately keeps settlement operational. After a ticket is created,
+the user has burned shares and is owed base assets. The withdrawal authority and
+strategist are responsible for returning liquidity and processing the withdrawal
+through payment.

@@ -31,8 +31,8 @@ withdraw_sub_account: u8,
 
 Deposits should route custody into the deposit subaccount by default.
 
-Immediate redemptions and claims should pay from the withdraw subaccount by
-default.
+Immediate redemptions and queued withdrawal settlement should pay from the
+withdraw subaccount by default.
 
 Strategy execution is explicit: every `manage` or `manage_batch` action selects
 the subaccount that signs that CPI.

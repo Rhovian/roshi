@@ -1,13 +1,14 @@
 use crate::{
     instructions::{
-        authorize_action::try_authorize_action, claim::try_claim, deposit::try_deposit,
-        initialize_asset::try_initialize_asset, initialize_program::try_initialize_program,
-        initialize_sub_account::try_initialize_sub_account, initialize_vault::try_initialize_vault,
-        manage::try_manage, manage_batch::try_manage_batch,
-        process_withdrawals::try_process_withdrawals, redeem::try_redeem,
-        revoke_action::try_revoke_action, set_pause_flags::try_set_pause_flags,
-        update_asset::try_update_asset, update_total_assets::try_update_total_assets,
-        update_vault_config::try_update_vault_config, RoshiInstruction,
+        admin::{
+            try_authorize_action, try_initialize_asset, try_initialize_program,
+            try_initialize_sub_account, try_initialize_vault, try_process_withdrawals,
+            try_revoke_action, try_set_pause_flags, try_update_asset, try_update_vault_config,
+        },
+        execution::{try_manage, try_manage_batch},
+        update_total_assets::try_update_total_assets,
+        user::{try_deposit, try_redeem},
+        RoshiInstruction,
     },
     ID,
 };
@@ -67,7 +68,6 @@ fn try_process_instruction(
             shares,
             min_assets_out,
         } => try_redeem(accounts, ticket_index, shares, min_assets_out),
-        RoshiInstruction::Claim => try_claim(accounts),
         RoshiInstruction::ProcessWithdrawals => try_process_withdrawals(accounts),
         RoshiInstruction::UpdateVaultConfig { args } => try_update_vault_config(accounts, args),
         RoshiInstruction::InitializeAsset { args } => try_initialize_asset(accounts, args),

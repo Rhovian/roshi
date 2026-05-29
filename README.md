@@ -31,8 +31,9 @@ It also includes the Roshi protocol surface:
 - Authorization hash helper for ops-based CPI patterns.
 - Instruction variants and handler stubs for vault initialization, action
   authorization/revocation, NAV reports, supported asset config, deposits,
-  redemptions, claims, withdrawal processing, pause flags, and vault config
-  updates.
+  redemptions, withdrawal processing, pause flags, and vault config updates.
+- Instruction handlers are grouped by domain under `admin`, `execution`, and
+  `user` modules where that grouping carries its weight.
 
 Most Roshi-specific protocol instructions are intentionally still stubs. The
 remaining work is implementation: account validation, PDA creation, Action
