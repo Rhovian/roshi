@@ -1,3 +1,5 @@
+pub(crate) mod accounts;
+
 pub mod admin;
 pub mod args;
 pub mod execution;

@@ -6,6 +6,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     error::RoshiError,
+    instructions::accounts::next_account,
     state::{
         action::{compute_action_hash_from_metas, Action},
         sub_account::VaultSubAccount,
@@ -38,26 +39,11 @@ pub fn try_manage(
     accounts_len: u8,
     ix_data: Vec<u8>,
 ) -> ProgramResult {
-    let accounts_iter = &mut accounts.iter();
-    let strategist = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let vault = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let sub_account_acc = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let action = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-
-    let cpi_accounts = accounts_iter.as_slice();
-    let validated_accounts =
-        validate_manage_accounts(strategist, vault, sub_account_acc, action, sub_account)?;
+    let accounts = ManageAccounts::parse(accounts)?;
+    let validated_accounts = accounts.validate(sub_account)?;
 
     let authorized_cpi = validate_authorized_cpi(
-        cpi_accounts,
+        accounts.cpi_accounts,
         &validated_accounts,
         program_id,
         accounts_start,
@@ -66,6 +52,51 @@ pub fn try_manage(
     )?;
 
     invoke_authorized_cpi(&authorized_cpi)
+}
+
+struct ManageAccounts<'a, 'info> {
+    strategist: &'a AccountInfo<'info>,
+    vault: &'a AccountInfo<'info>,
+    sub_account: &'a AccountInfo<'info>,
+    action: &'a AccountInfo<'info>,
+    cpi_accounts: &'a [AccountInfo<'info>],
+}
+
+impl<'a, 'info> ManageAccounts<'a, 'info> {
+    fn parse(accounts: &'a [AccountInfo<'info>]) -> Result<Self, ProgramError> {
+        let accounts_iter = &mut accounts.iter();
+        let strategist = next_account(accounts_iter)?;
+        let vault = next_account(accounts_iter)?;
+        let sub_account = next_account(accounts_iter)?;
+        let action = next_account(accounts_iter)?;
+        let cpi_accounts = accounts_iter.as_slice();
+
+        Ok(Self {
+            strategist,
+            vault,
+            sub_account,
+            action,
+            cpi_accounts,
+        })
+    }
+
+    fn validate(&self, sub_account_index: u8) -> Result<ValidatedManageAccounts, ProgramError> {
+        validate_manage_accounts(
+            self.strategist,
+            self.vault,
+            self.sub_account,
+            self.action,
+            sub_account_index,
+        )
+    }
+}
+
+pub(crate) struct AuthorizedCpi<'a> {
+    instruction: Instruction,
+    account_infos: Vec<AccountInfo<'a>>,
+    vault_key: Pubkey,
+    sub_account_index: u8,
+    sub_account_bump: u8,
 }
 
 /// Validates and prepares one pre-authorized downstream CPI.
@@ -170,14 +201,6 @@ pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramRe
         &authorized_cpi.account_infos,
         &[signer_seeds],
     )
-}
-
-pub(crate) struct AuthorizedCpi<'a> {
-    instruction: Instruction,
-    account_infos: Vec<AccountInfo<'a>>,
-    vault_key: Pubkey,
-    sub_account_index: u8,
-    sub_account_bump: u8,
 }
 
 pub(crate) struct ValidatedManageAccounts {

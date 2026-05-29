@@ -1,8 +1,11 @@
-use crate::instructions::IndexedActionArgs;
+use crate::instructions::{accounts::next_account, IndexedActionArgs};
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 
-use super::manage::{invoke_authorized_cpi, validate_authorized_cpi, validate_manage_accounts};
+use super::manage::{
+    invoke_authorized_cpi, validate_authorized_cpi, validate_manage_accounts,
+    ValidatedManageAccounts,
+};
 
 /// Implements [`crate::instructions::RoshiInstruction::ManageBatch`].
 ///
@@ -27,39 +30,13 @@ pub fn try_manage_batch(
     accounts: &[AccountInfo],
     actions: Vec<IndexedActionArgs>,
 ) -> ProgramResult {
-    let accounts_iter = &mut accounts.iter();
-    let strategist = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let vault = accounts_iter
-        .next()
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let accounts = ManageBatchAccounts::parse(accounts, actions.len())?;
 
-    let mut action_accounts = Vec::with_capacity(actions.len());
-    for _ in 0..actions.len() {
-        let sub_account_acc = accounts_iter
-            .next()
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
-        let action_acc = accounts_iter
-            .next()
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
-        action_accounts.push((sub_account_acc, action_acc));
-    }
-    let cpi_accounts = accounts_iter.as_slice();
-
-    for (action, (sub_account_acc, action_acc)) in
-        actions.into_iter().zip(action_accounts.into_iter())
-    {
-        let validated_accounts = validate_manage_accounts(
-            strategist,
-            vault,
-            sub_account_acc,
-            action_acc,
-            action.sub_account,
-        )?;
+    for (action, action_accounts) in actions.into_iter().zip(&accounts.action_accounts) {
+        let validated_accounts = accounts.validate_action(action_accounts, action.sub_account)?;
 
         let authorized_cpi = validate_authorized_cpi(
-            cpi_accounts,
+            accounts.cpi_accounts,
             &validated_accounts,
             action.program_id,
             action.accounts_start,
@@ -70,4 +47,56 @@ pub fn try_manage_batch(
     }
 
     Ok(())
+}
+
+struct ManageBatchAccounts<'a, 'info> {
+    strategist: &'a AccountInfo<'info>,
+    vault: &'a AccountInfo<'info>,
+    action_accounts: Vec<ManageBatchActionAccounts<'a, 'info>>,
+    cpi_accounts: &'a [AccountInfo<'info>],
+}
+
+impl<'a, 'info> ManageBatchAccounts<'a, 'info> {
+    fn parse(accounts: &'a [AccountInfo<'info>], actions_len: usize) -> Result<Self, ProgramError> {
+        let accounts_iter = &mut accounts.iter();
+        let strategist = next_account(accounts_iter)?;
+        let vault = next_account(accounts_iter)?;
+
+        let mut action_accounts = Vec::with_capacity(actions_len);
+        for _ in 0..actions_len {
+            let sub_account = next_account(accounts_iter)?;
+            let action = next_account(accounts_iter)?;
+            action_accounts.push(ManageBatchActionAccounts {
+                sub_account,
+                action,
+            });
+        }
+        let cpi_accounts = accounts_iter.as_slice();
+
+        Ok(Self {
+            strategist,
+            vault,
+            action_accounts,
+            cpi_accounts,
+        })
+    }
+
+    fn validate_action(
+        &self,
+        action_accounts: &ManageBatchActionAccounts,
+        sub_account_index: u8,
+    ) -> Result<ValidatedManageAccounts, ProgramError> {
+        validate_manage_accounts(
+            self.strategist,
+            self.vault,
+            action_accounts.sub_account,
+            action_accounts.action,
+            sub_account_index,
+        )
+    }
+}
+
+struct ManageBatchActionAccounts<'a, 'info> {
+    sub_account: &'a AccountInfo<'info>,
+    action: &'a AccountInfo<'info>,
 }
