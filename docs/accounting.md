@@ -10,7 +10,7 @@ The vault stores:
 
 ```rust
 total_assets: u64,
-external_assets: u64,
+last_report_hash: [u8; 32],
 total_shares: u64,
 high_watermark: u64,
 performance_fee_bps: u16,
@@ -22,8 +22,8 @@ last_update_ts: i64,
 
 `total_assets` is the vault's current economic NAV in base-asset units.
 
-`external_assets` is the operator-reported value of deployed or off-chain
-positions, also denominated in the base asset.
+`last_report_hash` is the commitment to the private NAV report bundle behind
+the last accepted NAV update.
 
 `total_shares` is the total supply of vault shares tracked by the vault.
 
@@ -31,47 +31,75 @@ positions, also denominated in the base asset.
 It is used for performance fee accounting.
 
 `withdrawal_buffer_bps` is the target percentage of total assets to keep idle in
-the vault token account for immediate withdrawals.
+withdrawal custody for immediate withdrawals.
 
 `max_change_bps` and `min_update_interval` bound NAV updates.
 
-## Total Assets
+## Supported Assets
 
-`total_assets` is derived from observable idle liquidity plus trusted external
-value:
+The vault's base mint is native to the vault and does not need a supported
+asset PDA. Additional deposit mints are represented by vault-scoped `Asset`
+PDAs:
 
-```rust
-total_assets = idle_assets + external_assets
+```text
+[b"asset", vault, asset_mint]
 ```
 
-where:
+Each `Asset` account records the non-base mint, its vault custody token account,
+base-denominated oracle configuration, decimal metadata, deposit limit, and
+enabled state.
 
-- `idle_assets` is the amount held in the vault token account.
-- `external_assets` is the operator-reported value of deployed or off-chain
-  positions.
+Deposit-time math must normalize each non-base amount into base units before
+minting shares. The oracle must report the relationship directly in vault base
+units, such as base units per asset atomic unit. USD composition, inversion, or
+other routing belongs off-chain before writing the oracle value consumed by
+Roshi.
 
-The operator only reports `external_assets`. The program should read the vault
-token account balance directly and store the derived `total_assets`.
+Redemptions remain base-asset denominated. Multi-asset withdrawals are outside
+the current scaffold.
 
-This keeps the trust boundary narrow: the operator reports only what the program
-cannot observe directly.
+See [Oracles](./oracles.md) for the base-denominated oracle contract.
+
+## Total Assets
+
+`total_assets` is the last accepted NAV report, denominated in base units:
+
+```rust
+total_assets = reported_total_nav
+```
+
+The program does not try to recompute NAV from all vault positions. That would
+either be infeasible on-chain or require disclosing proprietary strategy inputs.
+Instead, a configured `nav_authority` reports total portfolio NAV in base units
+and provides a hash commitment to the private report bundle.
+
+Token account balances remain important, but for settlement liquidity rather
+than NAV truth:
+
+- immediate redemptions can only pay from actual base custody liquidity,
+- withdrawal claims can only succeed when the relevant custody account can pay,
+- NAV can include positions that are not directly observable in the instruction.
+
+See [NAV Reporting](./nav_reporting.md) for the trust boundary and report
+commitment model.
 
 ## NAV Update Flow
 
-Operator calls:
+NAV authority calls:
 
 ```rust
-UpdateTotalAssets { external_assets }
+UpdateTotalAssets {
+    total_assets,
+    report_hash,
+}
 ```
 
 The program should:
 
-- verify the caller is the vault operator,
-- read the vault token account balance,
-- compute `new_total_assets = idle_assets + external_assets`,
+- verify the caller is the vault `nav_authority`,
 - enforce `min_update_interval`,
 - enforce `max_change_bps`,
-- store `external_assets`, `total_assets`, and `last_update_ts`.
+- store `total_assets`, `last_report_hash`, and `last_update_ts`.
 
 The update should fail if arithmetic overflows or if the NAV change exceeds the
 configured guardrail.
@@ -94,26 +122,31 @@ the implementation chooses an explicit initial share scale.
 
 ## Deposits
 
-Deposits mint shares at the current share price.
+Deposits mint shares at the current share price after normalizing the deposit
+amount into base units.
 
 If the vault already has shares:
 
 ```rust
-shares_to_mint = deposit_amount * total_shares / total_assets
+shares_to_mint = base_value * total_shares / total_assets
 ```
 
 If the vault has no shares:
 
 ```rust
-shares_to_mint = deposit_amount
+shares_to_mint = base_value
 ```
 
 The deposit flow should:
 
 - reject deposits while deposits are paused,
-- transfer base assets from the user to the vault token account,
+- if `asset_mint == vault.base_mint`, transfer base assets from the user to the
+  base custody account owned by `vault.deposit_sub_account`,
+- otherwise load the `Asset` PDA, verify it is enabled, transfer the non-base
+  assets into its configured custody token account, and use the configured
+  oracle to compute `base_value`,
 - mint or otherwise account shares to the user,
-- increase `total_assets` by `deposit_amount`,
+- increase `total_assets` by `base_value`,
 - increase `total_shares` by `shares_to_mint`,
 - enforce `min_shares_out`.
 
@@ -134,7 +167,8 @@ The redeem flow should:
 - burn or otherwise account the user's shares,
 - reduce `total_shares` by `shares`,
 - reduce `total_assets` by `assets_out`,
-- either pay immediately from idle liquidity or create a withdrawal ticket.
+- either pay immediately from liquidity owned by `vault.withdraw_sub_account` or
+  create a withdrawal ticket.
 
 Shares are burned before creating a queued withdrawal ticket. That prevents a
 user from both keeping shares and claiming queued assets.
@@ -149,10 +183,10 @@ The idle target is:
 target_idle_assets = total_assets * withdrawal_buffer_bps / 10_000
 ```
 
-Operators should manage deployed positions so the vault token account can serve
-normal withdrawals. The vault does not store a separate reserved-assets counter;
-the vault token account balance is the source of truth for immediate payment
-capacity.
+Strategists should manage deployed positions so the withdraw subaccount can
+serve normal withdrawals. The vault does not store a separate reserved-assets
+counter; custody token account balances are the source of truth for immediate
+payment capacity.
 
 ## Guardrails
 
@@ -195,12 +229,24 @@ crystallization can be inserted without changing user-facing share semantics.
 
 ## Invariants
 
-- `total_assets = idle_assets + external_assets` after a successful NAV update.
+- `total_assets` equals the last accepted NAV report after a successful NAV
+  update.
+- `last_report_hash` commits to the private report bundle for the last accepted
+  NAV update.
 - `total_shares` changes only when shares are minted or burned.
-- Deposits increase both assets and shares proportionally.
+- Deposits increase both assets and shares proportionally after normalization to
+  base units.
 - Redeems decrease both assets and shares proportionally.
-- The operator cannot directly report idle assets.
 - NAV updates must respect `min_update_interval` and `max_change_bps`.
 - Withdrawal tickets represent assets already removed from share accounting.
-- The vault token account balance is the payment source of truth for immediate
+- Custody token account balances are the payment source of truth for immediate
   withdrawals and claims.
+
+## Non-Goals
+
+- The base asset does not have an `Asset` PDA.
+- The program does not compose `asset/USD` and `base/USD` prices on-chain.
+- The program does not invert or route oracle values on-chain.
+- The program does not recompute full portfolio NAV from every custody,
+  strategy, or venue account.
+- Redemptions are not multi-asset in the current design.

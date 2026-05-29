@@ -13,9 +13,18 @@ not account address space.
 
 - Keep withdrawal account growth bounded.
 - Preserve simple user claims.
-- Let the vault operator return liquidity asynchronously.
-- Avoid storing redundant reserve balances that can drift from the vault token
-  account balance.
+- Let the vault strategist return liquidity asynchronously.
+- Avoid storing redundant reserve balances that can drift from custody token
+  account balances.
+- Keep the queue operational rather than market-based.
+
+## Non-Goals
+
+- No withdrawal solver market.
+- No discounts.
+- No maturity auctions.
+- No user-selected deadlines.
+- No separate request pricing domain.
 
 ## Accounts
 
@@ -37,8 +46,8 @@ unprocessed withdrawal batch.
 `processed_withdrawal_epoch` is the highest withdrawal epoch that has been
 processed by the queue authority and is eligible for claims.
 
-The vault does not store a separate reserved or claimable balance. The vault
-token account balance is the source of truth for claim payment capacity.
+The vault does not store a separate reserved or claimable balance. Custody token
+account balances are the source of truth for claim payment capacity.
 
 ### WithdrawalTicket
 
@@ -79,13 +88,13 @@ Redeem {
 
 The program computes `assets_owed` from the current share price.
 
-If the vault token account has enough idle liquidity for immediate payment:
+If the withdraw subaccount has enough idle liquidity for immediate payment:
 
 - Burn the user's shares.
 - Transfer `assets_owed` to the user.
 - Do not create or modify a withdrawal ticket.
 
-If the vault does not have enough idle liquidity:
+If the withdraw subaccount does not have enough idle liquidity:
 
 - Burn the user's shares.
 - Derive the ticket PDA from `(vault, owner, ticket_index)`.
@@ -117,8 +126,12 @@ The instruction should verify the caller is the vault's queue authority.
 
 Processing is an eligibility signal, not a separate escrow movement. The queue
 authority is expected to process only once enough liquidity has returned to the
-vault token account, but individual claims still pay from the actual token
+withdraw subaccount, but individual claims still pay from the actual token
 account balance.
+
+The queue authority is an operational role. It does not auction withdrawals,
+price discounts, or coordinate a solver market. Its job is to move batches from
+requested to claimable once the vault is ready to satisfy them.
 
 ## Claim Flow
 
@@ -140,10 +153,10 @@ ticket.request_epoch <= vault.processed_withdrawal_epoch
 ticket.key() == find_ticket(vault, user, ticket.ticket_index)
 ```
 
-If valid, the program transfers `ticket.assets_owed` from the vault token
-account to the user token account.
+If valid, the program transfers `ticket.assets_owed` from withdraw subaccount
+custody to the user token account.
 
-If the vault token account cannot cover the amount, the token transfer fails
+If the custody token account cannot cover the amount, the token transfer fails
 atomically and the ticket remains open.
 
 After a successful transfer, the ticket is closed or cleared so the user can
@@ -154,7 +167,7 @@ reuse the same `ticket_index`.
 - Shares are burned before a queued withdrawal ticket is created.
 - A ticket PDA is bounded by `(vault, owner, ticket_index)`, not by epoch.
 - A ticket is claimable only after its `request_epoch` has been processed.
-- Claim payment capacity is determined by the vault token account balance.
+- Claim payment capacity is determined by custody token account balances.
 - The vault does not maintain a separate reserved-assets counter.
 - A ticket slot cannot be overwritten while it contains an unclaimed withdrawal.
 - Queue processing must be authorized by `vault.queue_authority`.
@@ -165,7 +178,7 @@ reuse the same `ticket_index`.
 
 This model deliberately separates eligibility from payment. Processing an epoch
 means the queue authority has made that batch claimable. It does not guarantee a
-claim will succeed if liquidity is later moved out of the vault token account.
+claim will succeed if liquidity is later moved out of withdrawal custody.
 
-That tradeoff keeps the state minimal and makes the token account balance the
-single source of truth for available payment liquidity.
+That tradeoff keeps the state minimal and makes custody token account balances
+the single source of truth for available payment liquidity.

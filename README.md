@@ -2,7 +2,7 @@
 
 Roshi is a Solana-native vault protocol scaffold built in native Rust with
 Wincode serialization. It provides the initial on-chain program shape for a
-generalized vault system with operator-managed CPI execution, trusted NAV
+generalized vault system with strategist-managed CPI execution, trusted NAV
 reporting, share accounting, and queued withdrawals.
 
 ## Workspace
@@ -18,23 +18,36 @@ The scaffold includes the reusable Solana program infrastructure:
 - Native Solana program entrypoint and Wincode instruction dispatch.
 - `initialize_program` with a `ProgramConfig` PDA and authority storage.
 - Generic indexed CPI execution in `manage` and `manage_batch`.
+- Vault-scoped RBAC, pause flags, and subaccount signer scaffolding.
 - Surfpool config/script and Makefile targets.
 - LiteSVM tests for program initialization and authorized CPI execution.
 
 It also includes the Roshi protocol surface:
 
-- State scaffolding for `Vault`, `Action`, `Ops`, `Op`, and
+- State scaffolding for `Vault`, `Asset`, `Action`, `Ops`, `Op`, and
   `WithdrawalTicket`.
-- PDA helper seeds for program config, vaults, actions, and withdrawal tickets.
+- PDA helper seeds for program config, vaults, subaccounts, actions, and
+  withdrawal tickets.
 - Authorization hash helper for ops-based CPI patterns.
 - Instruction variants and handler stubs for vault initialization, action
-  authorization/revocation, NAV updates, deposits, redemptions, claims,
-  withdrawal processing, and vault config updates.
+  authorization/revocation, NAV reports, supported asset config, deposits,
+  redemptions, claims, withdrawal processing, and vault config updates.
 
 Most Roshi-specific protocol instructions are intentionally still stubs. The
 remaining work is implementation: account validation, PDA creation, Action
-authorization enforcement in `manage`, share accounting, NAV guardrails, token
+authorization account creation, share accounting, NAV guardrails, token
 transfers, withdrawal queue processing, fee collection, and oracle support.
+
+## Design Docs
+
+- [Design Principles](docs/design.md)
+- [Accounting](docs/accounting.md)
+- [NAV Reporting](docs/nav_reporting.md)
+- [Oracles](docs/oracles.md)
+- [Execution](docs/execution.md)
+- [Subaccounts](docs/subaccounts.md)
+- [RBAC](docs/rbac.md)
+- [Withdrawals](docs/withdrawals.md)
 
 ## Dependencies
 

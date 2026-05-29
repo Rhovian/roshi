@@ -1,0 +1,60 @@
+# RBAC And Pausing
+
+Roshi stores named role authorities on each vault.
+
+```rust
+admin: Pubkey,
+strategist: Pubkey,
+nav_authority: Pubkey,
+queue_authority: Pubkey,
+```
+
+## Roles
+
+`admin` controls vault configuration:
+
+- update roles,
+- update pause flags,
+- configure supported assets,
+- authorize or revoke actions,
+- choose default deposit and withdrawal subaccounts.
+
+`strategist` executes authorized strategy CPIs through `manage` and
+`manage_batch`.
+
+`nav_authority` submits total NAV reports and report commitments.
+
+`queue_authority` processes withdrawal epochs.
+
+These roles may be the same signer at launch, but the protocol models them
+separately so operations can move to distinct wallets, bots, or multisigs
+without changing account layout.
+
+## Pause Flags
+
+The vault has separate pause flags for separate risk surfaces:
+
+```rust
+deposits_paused: bool,
+withdrawals_paused: bool,
+manage_paused: bool,
+```
+
+`deposits_paused` blocks new deposits.
+
+`withdrawals_paused` blocks new redemptions or withdrawal requests. It should
+not block already eligible claims.
+
+`manage_paused` blocks strategist CPI execution across all subaccounts.
+
+NAV reports are not separately paused in the current scaffold. If the
+`nav_authority` is compromised, the admin can rotate it and use NAV guardrails
+to limit accepted report movement.
+
+## Invariants
+
+- Admin-only instructions must verify `vault.admin`.
+- Manage instructions must verify `vault.strategist`.
+- NAV update instructions must verify `vault.nav_authority`.
+- Withdrawal processing must verify `vault.queue_authority`.
+- Pause flags gate behavior, not role identity.

@@ -8,24 +8,33 @@ pub fn try_manage_batch(
     accounts: &[AccountInfo],
     actions: Vec<IndexedActionArgs>,
 ) -> ProgramResult {
-    let operator = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let strategist = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
     let vault = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
     let action_count = actions.len();
     let cpi_accounts_base = 2usize
-        .checked_add(action_count)
+        .checked_add(
+            action_count
+                .checked_mul(2)
+                .ok_or(ProgramError::InvalidInstructionData)?,
+        )
         .ok_or(ProgramError::InvalidInstructionData)?;
 
     for (index, action) in actions.into_iter().enumerate() {
+        let sub_account_acc = accounts
+            .get(2 + index * 2)
+            .ok_or(ProgramError::NotEnoughAccountKeys)?;
         let action_acc = accounts
-            .get(2 + index)
+            .get(3 + index * 2)
             .ok_or(ProgramError::NotEnoughAccountKeys)?;
 
         invoke_authorized_cpi(
             accounts,
-            operator,
+            strategist,
             vault,
+            sub_account_acc,
             action_acc,
             cpi_accounts_base,
+            action.sub_account,
             action.program_id,
             action.accounts_start,
             action.accounts_len,

@@ -8,6 +8,7 @@ mod tests {
         state::{
             action::{compute_action_hash, Action, Ops},
             program_config::ProgramConfig,
+            sub_account::VaultSubAccount,
             vault::Vault,
             Account as RoshiAccount,
         },
@@ -55,22 +56,36 @@ mod tests {
 
         let base_mint = solana_pubkey::Pubkey::new_unique();
         let share_mint = solana_pubkey::Pubkey::new_unique();
-        let vault_token_account = solana_pubkey::Pubkey::new_unique();
         let (vault_pda, vault_bump) = Vault::find_address(&authority.pubkey(), &base_mint);
+        let (sub_account_pda, _) = VaultSubAccount::find_address(&vault_pda, 0);
+        svm.set_account(
+            sub_account_pda,
+            Account {
+                lamports: 1_000_000,
+                data: vec![],
+                owner: common::SYSTEM_PROGRAM,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+
         svm.set_account(
             vault_pda,
             Account {
                 lamports: 1_000_000,
                 data: serialize(&RoshiAccount::Vault(Vault {
                     admin: authority.pubkey().to_bytes(),
-                    operator: authority.pubkey().to_bytes(),
+                    strategist: authority.pubkey().to_bytes(),
+                    nav_authority: authority.pubkey().to_bytes(),
                     queue_authority: authority.pubkey().to_bytes(),
                     base_mint: base_mint.to_bytes(),
                     share_mint: share_mint.to_bytes(),
-                    vault_token_account: vault_token_account.to_bytes(),
+                    deposit_sub_account: 0,
+                    withdraw_sub_account: 0,
                     fee_collector: authority.pubkey().to_bytes(),
                     total_assets: 0,
-                    external_assets: 0,
+                    last_report_hash: [0; 32],
                     total_shares: 0,
                     pending_withdrawal_assets: 0,
                     high_watermark: 0,
@@ -83,6 +98,7 @@ mod tests {
                     processed_withdrawal_epoch: 0,
                     deposits_paused: false,
                     withdrawals_paused: false,
+                    manage_paused: false,
                     bump: vault_bump,
                 }))
                 .unwrap(),
@@ -116,6 +132,7 @@ mod tests {
         .unwrap();
 
         let ix_data = RoshiInstruction::Manage {
+            sub_account: 0,
             program_id: common::SYSTEM_PROGRAM.to_bytes(),
             accounts_start: 0,
             accounts_len: 2,
@@ -127,8 +144,9 @@ mod tests {
             accounts: vec![
                 AccountMeta::new(authority.pubkey(), true),
                 AccountMeta::new_readonly(vault_pda, false),
+                AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new_readonly(action_pda, false),
-                AccountMeta::new(authority.pubkey(), true),
+                AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
                 AccountMeta::new_readonly(common::SYSTEM_PROGRAM, false),
             ],
@@ -154,8 +172,9 @@ mod tests {
             accounts: vec![
                 AccountMeta::new(wrong.pubkey(), true),
                 AccountMeta::new_readonly(vault_pda, false),
+                AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new_readonly(action_pda, false),
-                AccountMeta::new(wrong.pubkey(), true),
+                AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
                 AccountMeta::new_readonly(common::SYSTEM_PROGRAM, false),
             ],

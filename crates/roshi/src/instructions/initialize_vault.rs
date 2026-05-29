@@ -7,7 +7,8 @@ pub fn try_initialize_vault(
     _accounts: &[AccountInfo],
     _args: InitializeVaultArgs,
 ) -> ProgramResult {
-    // TODO: implement vault creation, config, and initial state setup.
+    // TODO: implement vault creation, role config, pause defaults, default
+    // subaccounts, and initial accounting state setup.
     let _ = _args;
     Ok(())
 }

@@ -1,4 +1,5 @@
 use solana_account_info::AccountInfo;
+use solana_instruction::AccountMeta;
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 use solana_sha256_hasher::hashv;
@@ -47,6 +48,24 @@ pub fn compute_action_hash(
     accounts: &[AccountInfo],
     ix_data: &[u8],
 ) -> Result<[u8; 32], ProgramError> {
+    let account_metas = accounts
+        .iter()
+        .map(|account| AccountMeta {
+            pubkey: *account.key,
+            is_signer: account.is_signer,
+            is_writable: account.is_writable,
+        })
+        .collect::<Vec<_>>();
+
+    compute_action_hash_from_metas(program_id, ops, &account_metas, ix_data)
+}
+
+pub fn compute_action_hash_from_metas(
+    program_id: &Pubkey,
+    ops: &Ops,
+    accounts: &[AccountMeta],
+    ix_data: &[u8],
+) -> Result<[u8; 32], ProgramError> {
     let mut chunks = vec![program_id.to_bytes().to_vec()];
 
     for op in &ops.ops {
@@ -74,7 +93,7 @@ pub fn compute_action_hash(
 
                 chunks.push(vec![2]);
                 chunks.push(vec![*index]);
-                chunks.push(account.key.to_bytes().to_vec());
+                chunks.push(account.pubkey.to_bytes().to_vec());
                 chunks.push(vec![u8::from(account.is_signer)]);
                 chunks.push(vec![u8::from(account.is_writable)]);
             }
