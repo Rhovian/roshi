@@ -1,5 +1,9 @@
+use solana_account_info::AccountInfo;
+use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::error::RoshiError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -60,5 +64,37 @@ impl Vault {
 
     pub fn has_role(&self, role: Role, signer: &Pubkey) -> bool {
         self.authority_for_role(role) == *signer
+    }
+
+    pub fn verify_address(&self, vault_key: &Pubkey) -> ProgramResult {
+        let admin = Pubkey::from(self.admin);
+        let base_mint = Pubkey::from(self.base_mint);
+        let (expected_vault_key, expected_bump) = Self::find_address(&admin, &base_mint);
+
+        if vault_key != &expected_vault_key || self.bump != expected_bump {
+            return Err(ProgramError::InvalidSeeds);
+        }
+
+        Ok(())
+    }
+
+    pub fn verify_role(&self, role: Role, signer: &AccountInfo) -> ProgramResult {
+        if !signer.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+
+        if !self.has_role(role, signer.key) {
+            return Err(ProgramError::IllegalOwner);
+        }
+
+        Ok(())
+    }
+
+    pub fn verify_manage_enabled(&self) -> ProgramResult {
+        if self.manage_paused {
+            return Err(RoshiError::VaultPaused.into());
+        }
+
+        Ok(())
     }
 }
