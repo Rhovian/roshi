@@ -5,7 +5,7 @@ mod helpers;
 mod tests {
     use roshi::{
         instructions::IndexedActionArgs,
-        oracle::SwitchboardOracleConfig,
+        oracle::OracleConfig,
         state::{
             action::{compute_action_hash, Action, Ops},
             program_config::ProgramConfig,
@@ -84,7 +84,7 @@ mod tests {
                     base_mint: base_mint.to_bytes(),
                     share_mint: share_mint.to_bytes(),
                     base_decimals: 0,
-                    base_oracle: SwitchboardOracleConfig::default(),
+                    base_oracle: OracleConfig::default(),
                     deposit_sub_account: 0,
                     withdraw_sub_account: 0,
                     fee_collector: authority.pubkey().to_bytes(),

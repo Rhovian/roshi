@@ -1,4 +1,4 @@
-use roshi_interface::oracle::SwitchboardOracleConfig;
+use roshi_interface::oracle::OracleConfig;
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -11,8 +11,8 @@ pub struct Asset {
     pub asset_mint: [u8; 32],
     /// Token account controlled by the vault for this asset mint.
     pub custody_token_account: [u8; 32],
-    /// Switchboard oracle config that reports this asset in vault base units.
-    pub oracle: SwitchboardOracleConfig,
+    /// Oracle config that reports this asset in vault base units.
+    pub oracle: OracleConfig,
     /// Asset mint decimals.
     pub asset_decimals: u8,
     /// Vault base mint decimals.

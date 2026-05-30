@@ -1,4 +1,4 @@
-use crate::oracle::SwitchboardOracleConfig;
+use crate::oracle::OracleConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -19,7 +19,7 @@ pub struct InitializeVaultArgs {
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
     pub base_decimals: u8,
-    pub base_oracle: SwitchboardOracleConfig,
+    pub base_oracle: OracleConfig,
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
     pub fee_collector: [u8; 32],
@@ -33,7 +33,7 @@ pub struct InitializeVaultArgs {
 pub struct InitializeAssetArgs {
     pub asset_mint: [u8; 32],
     pub custody_token_account: [u8; 32],
-    pub oracle: SwitchboardOracleConfig,
+    pub oracle: OracleConfig,
     pub asset_decimals: u8,
     pub base_decimals: u8,
     pub max_price_change_bps: u16,
@@ -44,7 +44,7 @@ pub struct InitializeAssetArgs {
 #[derive(SchemaWrite, SchemaRead)]
 pub struct UpdateAssetArgs {
     pub custody_token_account: [u8; 32],
-    pub oracle: SwitchboardOracleConfig,
+    pub oracle: OracleConfig,
     pub max_price_change_bps: u16,
     pub deposit_limit: u64,
     pub enabled: bool,
@@ -58,7 +58,7 @@ pub struct UpdateVaultConfigArgs {
     pub fee_collector: [u8; 32],
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
-    pub base_oracle: SwitchboardOracleConfig,
+    pub base_oracle: OracleConfig,
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
