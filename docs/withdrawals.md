@@ -87,7 +87,14 @@ Redeem {
 }
 ```
 
-The program computes `assets_owed` from the current share price.
+The program computes `assets_owed` from the current share price using checked
+integer math:
+
+```text
+assets_owed = floor(shares * total_assets / total_shares)
+```
+
+See [Accounting Math](./math.md) for the shared helper contract.
 
 If the withdraw subaccount has enough idle liquidity for immediate payment:
 

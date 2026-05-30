@@ -18,7 +18,7 @@ max_change_bps: u16,
 min_update_interval: i64,
 ```
 
-`total_assets` is denominated in the vault base asset.
+`total_assets` is denominated in vault base atoms.
 
 `last_report_hash` commits to the private report bundle used to produce the NAV.
 The report bundle can contain whatever the vault team, auditor, or investor
@@ -54,7 +54,7 @@ inputs on-chain.
 NAV and liquidity are separate concepts:
 
 ```text
-NAV = nav_authority reported total assets in base units
+NAV = nav_authority reported total assets in base atoms
 Liquidity = actual token balances available for settlement
 ```
 

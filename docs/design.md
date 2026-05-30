@@ -10,9 +10,12 @@ movement, share accounting, and explicit NAV update guardrails.
 
 All vault accounting is denominated in the vault base asset.
 
-Supported non-base deposit assets must be normalized into base units before
+Supported non-base deposit assets must be normalized into base atoms before
 they affect shares or `total_assets`. Redemptions are base-denominated in the
 current design.
+
+Vault shares use fixed 9-decimal accounting. Share decimals do not inherit the
+base mint decimals.
 
 Roshi should not compose valuation routes on-chain. Oracle adapters selected by
 the vault must already satisfy Roshi's base-denominated price contract.
@@ -21,7 +24,7 @@ the vault must already satisfy Roshi's base-denominated price contract.
 
 NAV reporting is an explicit trust boundary.
 
-The program accepts total NAV from `nav_authority`, stores it in base units, and
+The program accepts total NAV from `nav_authority`, stores it in base atoms, and
 stores `last_report_hash` as a commitment to the private report bundle behind
 that value.
 
@@ -52,7 +55,7 @@ maturity auctions, or deadline markets in the core vault.
 
 ## Non-Goals
 
-- No on-chain USD routing or composed price legs.
+- No on-chain USD routing, inverse pricing, or composed price legs.
 - No base asset PDA.
 - No multi-asset redemption path in the current design.
 - No on-chain recomputation of full portfolio NAV in v1.

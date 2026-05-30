@@ -19,7 +19,7 @@ use crate::instructions::InitializeAssetArgs;
 /// This handler is currently a stub. The intended implementation verifies the
 /// vault admin, rejects the vault base mint, validates custody and oracle
 /// accounts, and writes the supported non-base asset config. The oracle must
-/// report this asset directly in vault base units.
+/// report this asset directly in vault base atoms.
 pub fn try_initialize_asset(
     _accounts: &[AccountInfo],
     _args: InitializeAssetArgs,

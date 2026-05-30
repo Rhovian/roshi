@@ -3,6 +3,7 @@ use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 
 use super::{Oracle, OraclePrice, PythOracleConfig};
+use roshi_interface::math::BPS_DENOMINATOR;
 
 const PRICE_UPDATE_V2_DISCRIMINATOR: &[u8; 8] = &[0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
 const SOLANA_RECEIVER_PROGRAM_ID: Pubkey =
@@ -220,7 +221,7 @@ fn confidence_within_bounds(price: u128, confidence: u64, max_confidence_bps: u1
     }
 
     u128::from(confidence)
-        .checked_mul(10_000)
+        .checked_mul(u128::from(BPS_DENOMINATOR))
         .zip(price.checked_mul(u128::from(max_confidence_bps)))
         .is_some_and(|(confidence_bps, max_confidence)| confidence_bps <= max_confidence)
 }

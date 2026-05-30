@@ -45,6 +45,7 @@ transfers, withdrawal queue processing, fee collection, and oracle support.
 
 - [Design Principles](docs/design.md)
 - [Accounting](docs/accounting.md)
+- [Accounting Math](docs/math.md)
 - [NAV Reporting](docs/nav_reporting.md)
 - [Oracles](docs/oracles.md)
 - [Execution](docs/execution.md)

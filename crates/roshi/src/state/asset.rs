@@ -11,7 +11,7 @@ pub struct Asset {
     pub asset_mint: [u8; 32],
     /// Token account controlled by the vault for this asset mint.
     pub custody_token_account: [u8; 32],
-    /// Oracle config that reports this asset in vault base units.
+    /// Oracle config that reports this asset in vault base atoms.
     pub oracle: OracleConfig,
     /// Asset mint decimals.
     pub asset_decimals: u8,
