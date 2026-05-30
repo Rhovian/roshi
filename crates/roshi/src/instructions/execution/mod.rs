@@ -1,3 +1,5 @@
+mod shared;
+
 pub mod manage;
 pub mod manage_batch;
 

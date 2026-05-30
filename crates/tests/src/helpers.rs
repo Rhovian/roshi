@@ -1,18 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use litesvm::LiteSVM;
-use roshi::{instructions::RoshiInstruction, state::program_config::ProgramConfig, ID};
-use solana_instruction::{AccountMeta, Instruction};
+use roshi::{state::program_config::ProgramConfig, ID};
+use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
-use solana_system_interface::program as system_program;
 use solana_transaction::{Address, Transaction};
-use wincode::serialize;
 
 pub fn program_so_path() -> PathBuf {
     std::env::var_os("ROSHI_PROGRAM_SO")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("../target/deploy/roshi.so"))
+        .unwrap_or_else(|| PathBuf::from("../../target/deploy/roshi.so"))
 }
 
 pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
@@ -51,16 +49,5 @@ pub fn initialize_program_ix(
     config_pda: &Pubkey,
     authority: &Pubkey,
 ) -> Instruction {
-    Instruction {
-        program_id: ID,
-        accounts: vec![
-            AccountMeta::new(*payer, true),
-            AccountMeta::new(*config_pda, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ],
-        data: serialize(&RoshiInstruction::InitializeProgram {
-            authority: authority.to_bytes(),
-        })
-        .unwrap(),
-    }
+    roshi_client::instruction::initialize_program(*payer, *config_pda, *authority).unwrap()
 }

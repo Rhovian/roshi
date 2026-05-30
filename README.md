@@ -7,9 +7,10 @@ reporting, share accounting, and queued withdrawals.
 
 ## Workspace
 
-- `crates/common`: reserved for shared helpers as the workspace grows.
+- `crates/interface`: reusable Roshi protocol/interface types.
 - `crates/roshi`: on-chain Roshi program crate.
-- `tests`: LiteSVM and Surfpool-oriented integration test harness.
+- `crates/client`: thin client helpers for building Roshi instructions.
+- `crates/tests`: LiteSVM and Surfpool-oriented integration test harness.
 
 ## Current Status
 

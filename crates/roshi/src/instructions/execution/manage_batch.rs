@@ -2,7 +2,7 @@ use crate::instructions::{accounts::next_account, IndexedActionArgs};
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 
-use super::manage::{
+use super::shared::{
     invoke_authorized_cpi, validate_authorized_cpi, validate_manage_accounts,
     ValidatedManageAccounts,
 };

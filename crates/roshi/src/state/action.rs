@@ -2,28 +2,14 @@ use solana_account_info::AccountInfo;
 use solana_instruction::AccountMeta;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_sha256_hasher::hashv;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::error::RoshiError;
+use roshi_interface::action::{
+    compute_action_hash_from_metas as compute_interface_action_hash_from_metas, ActionHashError,
+};
 
-#[derive(SchemaWrite, SchemaRead)]
-#[wincode(tag_encoding = "u8")]
-pub enum Op {
-    #[wincode(tag = 0)]
-    Noop,
-    #[wincode(tag = 1)]
-    IngestInstruction { offset: u16, len: u8 },
-    #[wincode(tag = 2)]
-    IngestAccount { index: u8 },
-    #[wincode(tag = 3)]
-    IngestInstructionDataSize,
-}
-
-#[derive(SchemaWrite, SchemaRead)]
-pub struct Ops {
-    pub ops: Vec<Op>,
-}
+pub use roshi_interface::action::{Op, Ops};
 
 #[derive(SchemaWrite, SchemaRead)]
 #[repr(C)]
@@ -88,49 +74,18 @@ pub fn compute_action_hash_from_metas(
     accounts: &[AccountMeta],
     ix_data: &[u8],
 ) -> Result<[u8; 32], ProgramError> {
-    let mut chunks = vec![program_id.to_bytes().to_vec()];
+    compute_interface_action_hash_from_metas(program_id, ops, accounts, ix_data)
+        .map_err(action_hash_error_to_program_error)
+}
 
-    for op in &ops.ops {
-        match op {
-            Op::Noop => chunks.push(vec![0]),
-            Op::IngestInstruction { offset, len } => {
-                let start = usize::from(*offset);
-                let length = usize::from(*len);
-                let end = start
-                    .checked_add(length)
-                    .ok_or(RoshiError::InstructionSliceOutOfBounds)?;
-                let slice = ix_data
-                    .get(start..end)
-                    .ok_or(RoshiError::InstructionSliceOutOfBounds)?;
-
-                chunks.push(vec![1]);
-                chunks.push(offset.to_le_bytes().to_vec());
-                chunks.push(vec![*len]);
-                chunks.push(slice.to_vec());
-            }
-            Op::IngestAccount { index } => {
-                let account = accounts
-                    .get(usize::from(*index))
-                    .ok_or(RoshiError::AccountIndexOutOfBounds)?;
-
-                chunks.push(vec![2]);
-                chunks.push(vec![*index]);
-                chunks.push(account.pubkey.to_bytes().to_vec());
-                chunks.push(vec![u8::from(account.is_signer)]);
-                chunks.push(vec![u8::from(account.is_writable)]);
-            }
-            Op::IngestInstructionDataSize => {
-                let data_len = u32::try_from(ix_data.len())
-                    .map_err(|_| ProgramError::InvalidInstructionData)?;
-
-                chunks.push(vec![3]);
-                chunks.push(data_len.to_le_bytes().to_vec());
-            }
+fn action_hash_error_to_program_error(error: ActionHashError) -> ProgramError {
+    match error {
+        ActionHashError::InstructionSliceOutOfBounds => {
+            RoshiError::InstructionSliceOutOfBounds.into()
         }
+        ActionHashError::AccountIndexOutOfBounds => RoshiError::AccountIndexOutOfBounds.into(),
+        ActionHashError::InvalidInstructionData => ProgramError::InvalidInstructionData,
     }
-
-    let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    Ok(hashv(&refs).to_bytes())
 }
 
 #[cfg(test)]

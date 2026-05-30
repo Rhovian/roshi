@@ -4,7 +4,7 @@ mod helpers;
 #[cfg(test)]
 mod tests {
     use roshi::{
-        instructions::RoshiInstruction,
+        instructions::IndexedActionArgs,
         state::{
             action::{compute_action_hash, Action, Ops},
             program_config::ProgramConfig,
@@ -14,7 +14,7 @@ mod tests {
         },
         ID,
     };
-    use solana_instruction::{AccountMeta, Instruction};
+    use solana_instruction::AccountMeta;
     use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
     use solana_system_interface::program as system_program;
     use solana_transaction::{Address, Transaction};
@@ -132,27 +132,27 @@ mod tests {
         )
         .unwrap();
 
-        let ix_data = RoshiInstruction::Manage {
+        let manage_args = IndexedActionArgs {
             sub_account: 0,
             program_id: system_program::ID.to_bytes(),
             accounts_start: 0,
             accounts_len: 2,
-            ix_data: transfer_data,
+            ix_data: transfer_data.clone(),
         };
 
-        let ix = Instruction {
-            program_id: ID,
-            accounts: vec![
-                AccountMeta::new(authority.pubkey(), true),
-                AccountMeta::new_readonly(vault_pda, false),
-                AccountMeta::new(sub_account_pda, false),
-                AccountMeta::new_readonly(action_pda, false),
+        let ix = roshi_client::instruction::manage(
+            authority.pubkey(),
+            vault_pda,
+            sub_account_pda,
+            action_pda,
+            vec![
                 AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
-            data: serialize(&ix_data).unwrap(),
-        };
+            manage_args,
+        )
+        .unwrap();
 
         let blockhash = svm.latest_blockhash();
         let tx = Transaction::new_signed_with_payer(
@@ -168,19 +168,25 @@ mod tests {
         let wrong = Keypair::new();
         svm.airdrop(&wrong.pubkey(), 10_000_000_000).unwrap();
 
-        let ix = Instruction {
-            program_id: ID,
-            accounts: vec![
-                AccountMeta::new(wrong.pubkey(), true),
-                AccountMeta::new_readonly(vault_pda, false),
-                AccountMeta::new(sub_account_pda, false),
-                AccountMeta::new_readonly(action_pda, false),
+        let ix = roshi_client::instruction::manage(
+            wrong.pubkey(),
+            vault_pda,
+            sub_account_pda,
+            action_pda,
+            vec![
                 AccountMeta::new(sub_account_pda, false),
                 AccountMeta::new(scratch, false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
-            data: serialize(&ix_data).unwrap(),
-        };
+            IndexedActionArgs {
+                sub_account: 0,
+                program_id: system_program::ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 2,
+                ix_data: transfer_data,
+            },
+        )
+        .unwrap();
 
         let blockhash = svm.latest_blockhash();
         let tx = Transaction::new_signed_with_payer(

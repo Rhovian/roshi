@@ -624,10 +624,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.1.0"
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1894,6 +1890,7 @@ dependencies = [
 name = "roshi"
 version = "0.1.0"
 dependencies = [
+ "roshi-interface",
  "solana-account-info",
  "solana-cpi",
  "solana-instruction",
@@ -1902,11 +1899,31 @@ dependencies = [
  "solana-program-error",
  "solana-program-memory",
  "solana-pubkey 4.2.0",
- "solana-sha256-hasher",
  "solana-system-interface 3.2.0",
  "solana-sysvar",
  "spl-associated-token-account-interface",
  "spl-token-interface",
+ "wincode",
+]
+
+[[package]]
+name = "roshi-client"
+version = "0.1.0"
+dependencies = [
+ "roshi-interface",
+ "solana-instruction",
+ "solana-pubkey 4.2.0",
+ "solana-system-interface 3.2.0",
+ "wincode",
+]
+
+[[package]]
+name = "roshi-interface"
+version = "0.1.0"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey 4.2.0",
+ "solana-sha256-hasher",
  "wincode",
 ]
 
@@ -1916,6 +1933,7 @@ version = "0.1.0"
 dependencies = [
  "litesvm",
  "roshi",
+ "roshi-client",
  "solana-instruction",
  "solana-pubkey 4.2.0",
  "solana-sdk",
