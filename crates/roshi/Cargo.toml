@@ -27,4 +27,5 @@ solana-system-interface = { version = "3.2.0", features = ["bincode"] }
 solana-sysvar = "3.1.1"
 spl-associated-token-account-interface = "2.0.0"
 spl-token-interface = "2.0.0"
+switchboard-on-demand = { git = "https://github.com/Rhovian/solana-sdk.git", rev = "f1178eb09220864ec6203615dc0c0e11d7683958", default-features = false, features = ["native"] }
 wincode = { version = "0.5.4", features = ["derive"] }

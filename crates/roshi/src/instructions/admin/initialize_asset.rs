@@ -12,7 +12,7 @@ use crate::instructions::InitializeAssetArgs;
 /// 1. `[]` Vault account that owns the asset config.
 /// 2. `[writable]` Asset PDA derived from `(vault, asset_mint)`.
 /// 3. `[]` Custody token account configured for this asset.
-/// 4. `[]` Oracle account configured for base-denominated pricing.
+/// 4.. `[]` Oracle accounts configured for base-denominated pricing.
 ///
 /// # Implementation
 ///

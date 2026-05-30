@@ -20,7 +20,7 @@ The scaffold includes the reusable Solana program infrastructure:
 - `initialize_program` with a `ProgramConfig` PDA and authority storage.
 - Generic indexed CPI execution in `manage` and `manage_batch`.
 - Vault-scoped RBAC, pause flags, and subaccount signer scaffolding.
-- Surfpool config/script and Makefile targets.
+- Surfpool config/script and Justfile targets.
 - LiteSVM tests for program initialization and authorized CPI execution.
 
 It also includes the Roshi protocol surface:
@@ -67,19 +67,12 @@ The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
 ```bash
 just build
 just check
+just surfpool-test
 just test-sbf
 ```
 
-The Makefile exposes the same legacy entry points:
-
-```bash
-make build
-make test
-make surfpool-test
-```
-
-`make build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
-artifact when present, and `make surfpool-test` starts a Surfpool mainnet fork
+`just build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
+artifact when present, and `just surfpool-test` starts a Surfpool mainnet fork
 before running ignored fork tests.
 
 Useful direct checks:

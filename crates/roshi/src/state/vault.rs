@@ -1,3 +1,4 @@
+use roshi_interface::oracle::SwitchboardOracleConfig;
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
@@ -22,6 +23,8 @@ pub struct Vault {
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
+    pub base_decimals: u8,
+    pub base_oracle: SwitchboardOracleConfig,
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
     pub fee_collector: [u8; 32],
