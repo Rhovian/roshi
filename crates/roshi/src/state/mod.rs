@@ -14,7 +14,7 @@ use vault::Vault;
 use wincode::{deserialize, SchemaRead, SchemaWrite};
 use withdrawal_ticket::WithdrawalTicket;
 
-use crate::error::RoshiError;
+use roshi_interface::error::RoshiError;
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]

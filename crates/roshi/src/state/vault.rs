@@ -1,10 +1,11 @@
-use roshi_interface::{access::verify_access_merkle_proof, oracle::OracleConfig};
+use roshi_interface::{
+    access::verify_access_merkle_proof, error::RoshiError, math::validate_percentage_bps,
+    oracle::OracleConfig,
+};
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
-
-use crate::error::RoshiError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -53,6 +54,93 @@ pub struct Vault {
 impl Vault {
     pub const SEED: &'static [u8] = b"vault";
     pub const MAX_TAG_LEN: usize = 32;
+    pub const SPACE: usize = std::mem::size_of::<Self>() + 1;
+
+    pub fn new(
+        tag: &[u8],
+        admin: [u8; 32],
+        strategist: [u8; 32],
+        nav_authority: [u8; 32],
+        withdrawal_authority: [u8; 32],
+        base_mint: [u8; 32],
+        share_mint: [u8; 32],
+        base_decimals: u8,
+        base_oracle: OracleConfig,
+        deposit_sub_account: u8,
+        withdraw_sub_account: u8,
+        fee_collector: [u8; 32],
+        performance_fee_bps: u16,
+        withdrawal_buffer_bps: u16,
+        max_change_bps: u16,
+        min_update_interval: i64,
+        private: bool,
+        access_merkle_root: [u8; 32],
+        bump: u8,
+    ) -> Result<Self, ProgramError> {
+        Self::validate_config(
+            base_mint,
+            share_mint,
+            performance_fee_bps,
+            withdrawal_buffer_bps,
+            max_change_bps,
+            min_update_interval,
+        )?;
+
+        let (tag, tag_len) = Self::pack_tag(tag)?;
+
+        Ok(Self {
+            tag,
+            tag_len,
+            admin,
+            strategist,
+            nav_authority,
+            withdrawal_authority,
+            base_mint,
+            share_mint,
+            base_decimals,
+            base_oracle,
+            deposit_sub_account,
+            withdraw_sub_account,
+            fee_collector,
+            total_assets: 0,
+            last_report_hash: [0; 32],
+            total_shares: 0,
+            pending_withdrawal_assets: 0,
+            high_watermark: 0,
+            performance_fee_bps,
+            withdrawal_buffer_bps,
+            max_change_bps,
+            min_update_interval,
+            last_update_ts: 0,
+            current_withdrawal_epoch: 1,
+            processed_withdrawal_epoch: 0,
+            deposits_paused: false,
+            withdrawals_paused: false,
+            manage_paused: false,
+            private,
+            access_merkle_root,
+            bump,
+        })
+    }
+
+    pub fn validate_config(
+        base_mint: [u8; 32],
+        share_mint: [u8; 32],
+        performance_fee_bps: u16,
+        withdrawal_buffer_bps: u16,
+        max_change_bps: u16,
+        min_update_interval: i64,
+    ) -> ProgramResult {
+        validate_percentage_bps(performance_fee_bps)?;
+        validate_percentage_bps(withdrawal_buffer_bps)?;
+        validate_percentage_bps(max_change_bps)?;
+
+        if min_update_interval < 0 || base_mint == share_mint {
+            return Err(ProgramError::InvalidArgument);
+        }
+
+        Ok(())
+    }
 
     pub fn pack_tag(tag: &[u8]) -> Result<([u8; Self::MAX_TAG_LEN], u8), ProgramError> {
         Self::validate_tag(tag)?;
@@ -63,16 +151,18 @@ impl Vault {
         Ok((packed_tag, tag.len() as u8))
     }
 
-    pub fn tag_seed(&self) -> Result<&[u8], ProgramError> {
-        let tag_len = usize::from(self.tag_len);
-        if tag_len > Self::MAX_TAG_LEN {
-            return Err(RoshiError::InvalidVaultTag.into());
-        }
-
-        let tag = &self.tag[..tag_len];
+    pub fn unpack_tag(tag: &[u8; Self::MAX_TAG_LEN], tag_len: u8) -> Result<&[u8], ProgramError> {
+        let tag_len = usize::from(tag_len);
+        let tag = tag
+            .get(..tag_len)
+            .ok_or(ProgramError::from(RoshiError::InvalidVaultTag))?;
         Self::validate_tag(tag)?;
 
         Ok(tag)
+    }
+
+    pub fn tag_seed(&self) -> Result<&[u8], ProgramError> {
+        Self::unpack_tag(&self.tag, self.tag_len)
     }
 
     pub fn find_address(tag: &[u8], base_mint: &Pubkey) -> Result<(Pubkey, u8), ProgramError> {
@@ -145,46 +235,124 @@ impl Vault {
 mod tests {
     use super::*;
     use roshi_interface::access::{access_merkle_leaf, access_merkle_node};
+    use wincode::{deserialize, serialize};
 
-    fn test_vault(private: bool, access_merkle_root: [u8; 32]) -> Vault {
+    fn new_test_vault(private: bool, access_merkle_root: [u8; 32]) -> Vault {
         let admin = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
-        let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();
         let (_, bump) = Vault::find_address(b"test", &base_mint).unwrap();
 
-        Vault {
-            tag,
-            tag_len,
-            admin: admin.to_bytes(),
-            strategist: admin.to_bytes(),
-            nav_authority: admin.to_bytes(),
-            withdrawal_authority: admin.to_bytes(),
-            base_mint: base_mint.to_bytes(),
-            share_mint: Pubkey::new_unique().to_bytes(),
-            base_decimals: 6,
-            base_oracle: OracleConfig::default(),
-            deposit_sub_account: 0,
-            withdraw_sub_account: 0,
-            fee_collector: admin.to_bytes(),
-            total_assets: 0,
-            last_report_hash: [0; 32],
-            total_shares: 0,
-            pending_withdrawal_assets: 0,
-            high_watermark: 0,
-            performance_fee_bps: 0,
-            withdrawal_buffer_bps: 0,
-            max_change_bps: 0,
-            min_update_interval: 0,
-            last_update_ts: 0,
-            current_withdrawal_epoch: 1,
-            processed_withdrawal_epoch: 0,
-            deposits_paused: false,
-            withdrawals_paused: false,
-            manage_paused: false,
+        Vault::new(
+            b"test",
+            admin.to_bytes(),
+            [2; 32],
+            [3; 32],
+            [4; 32],
+            base_mint.to_bytes(),
+            Pubkey::new_unique().to_bytes(),
+            6,
+            OracleConfig::default(),
+            7,
+            8,
+            [9; 32],
+            100,
+            250,
+            500,
+            60,
             private,
             access_merkle_root,
             bump,
-        }
+        )
+        .unwrap()
+    }
+
+    fn test_vault(private: bool, access_merkle_root: [u8; 32]) -> Vault {
+        new_test_vault(private, access_merkle_root)
+    }
+
+    #[test]
+    fn new_initializes_default_accounting_and_config() {
+        let vault = new_test_vault(true, [10; 32]);
+
+        assert_eq!(vault.tag_seed().unwrap(), b"test");
+        assert_eq!(vault.strategist, [2; 32]);
+        assert_eq!(vault.nav_authority, [3; 32]);
+        assert_eq!(vault.withdrawal_authority, [4; 32]);
+        assert_eq!(vault.base_decimals, 6);
+        assert_eq!(vault.deposit_sub_account, 7);
+        assert_eq!(vault.withdraw_sub_account, 8);
+        assert_eq!(vault.fee_collector, [9; 32]);
+        assert_eq!(vault.total_assets, 0);
+        assert_eq!(vault.total_shares, 0);
+        assert_eq!(vault.pending_withdrawal_assets, 0);
+        assert_eq!(vault.high_watermark, 0);
+        assert_eq!(vault.performance_fee_bps, 100);
+        assert_eq!(vault.withdrawal_buffer_bps, 250);
+        assert_eq!(vault.max_change_bps, 500);
+        assert_eq!(vault.min_update_interval, 60);
+        assert_eq!(vault.last_update_ts, 0);
+        assert_eq!(vault.current_withdrawal_epoch, 1);
+        assert_eq!(vault.processed_withdrawal_epoch, 0);
+        assert!(!vault.deposits_paused);
+        assert!(!vault.withdrawals_paused);
+        assert!(!vault.manage_paused);
+        assert!(vault.private);
+        assert_eq!(vault.access_merkle_root, [10; 32]);
+    }
+
+    #[test]
+    fn serialized_vault_fits_allocated_account_space() {
+        let vault = new_test_vault(false, [0; 32]);
+        let serialized = serialize(&crate::state::Account::Vault(vault)).unwrap();
+
+        assert!(serialized.len() <= Vault::SPACE);
+
+        let mut account_data = vec![0; Vault::SPACE];
+        account_data[..serialized.len()].copy_from_slice(&serialized);
+
+        let decoded: crate::state::Account = deserialize(&account_data).unwrap();
+        let crate::state::Account::Vault(decoded_vault) = decoded else {
+            panic!("expected vault account");
+        };
+        assert_eq!(decoded_vault.tag_seed().unwrap(), b"test");
+    }
+
+    #[test]
+    fn unpack_tag_rejects_invalid_tags() {
+        let (tag, _) = Vault::pack_tag(b"test").unwrap();
+
+        assert!(matches!(
+            Vault::unpack_tag(&tag, 0),
+            Err(error) if error == ProgramError::from(RoshiError::InvalidVaultTag)
+        ));
+        assert!(matches!(
+            Vault::unpack_tag(&tag, 33),
+            Err(error) if error == ProgramError::from(RoshiError::InvalidVaultTag)
+        ));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_bps() {
+        assert!(matches!(
+            Vault::validate_config([1; 32], [2; 32], 10_001, 0, 0, 0),
+            Err(error) if error == ProgramError::from(RoshiError::InvalidBps)
+        ));
+    }
+
+    #[test]
+    fn validate_config_rejects_negative_min_update_interval() {
+        assert!(matches!(
+            Vault::validate_config([1; 32], [2; 32], 0, 0, 0, -1),
+            Err(ProgramError::InvalidArgument)
+        ));
+    }
+
+    #[test]
+    fn validate_config_rejects_matching_base_and_share_mints() {
+        assert!(matches!(
+            Vault::validate_config([1; 32], [1; 32], 0, 0, 0, 0),
+            Err(ProgramError::InvalidArgument)
+        ));
     }
 
     #[test]

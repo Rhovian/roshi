@@ -1,54 +1,45 @@
 //! Shared integer accounting math for Roshi vaults.
 
+use crate::error::RoshiError;
+
 pub const SHARE_DECIMALS: u8 = 9;
 pub const BPS_DENOMINATOR: u16 = 10_000;
 
-pub type MathResult<T> = Result<T, MathError>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MathError {
-    DivisionByZero,
-    InvalidBps,
-    InvalidDecimals,
-    InvalidVaultState,
-    Overflow,
-    ResultDoesNotFit,
-    ZeroOutput,
-}
+pub type MathResult<T> = Result<T, RoshiError>;
 
 pub fn pow10(decimals: u8) -> MathResult<u128> {
     10u128
         .checked_pow(u32::from(decimals))
-        .ok_or(MathError::InvalidDecimals)
+        .ok_or(RoshiError::InvalidDecimals)
 }
 
 pub fn mul_div_floor(lhs: u128, rhs: u128, denominator: u128) -> MathResult<u128> {
     if denominator == 0 {
-        return Err(MathError::DivisionByZero);
+        return Err(RoshiError::DivisionByZero);
     }
 
     lhs.checked_mul(rhs)
-        .ok_or(MathError::Overflow)
+        .ok_or(RoshiError::Overflow)
         .map(|product| product / denominator)
 }
 
 pub fn mul_div_ceil(lhs: u128, rhs: u128, denominator: u128) -> MathResult<u128> {
     if denominator == 0 {
-        return Err(MathError::DivisionByZero);
+        return Err(RoshiError::DivisionByZero);
     }
 
-    let product = lhs.checked_mul(rhs).ok_or(MathError::Overflow)?;
+    let product = lhs.checked_mul(rhs).ok_or(RoshiError::Overflow)?;
     let quotient = product / denominator;
 
     if product % denominator == 0 {
         Ok(quotient)
     } else {
-        quotient.checked_add(1).ok_or(MathError::Overflow)
+        quotient.checked_add(1).ok_or(RoshiError::Overflow)
     }
 }
 
 pub fn checked_u64(value: u128) -> MathResult<u64> {
-    u64::try_from(value).map_err(|_| MathError::ResultDoesNotFit)
+    u64::try_from(value).map_err(|_| RoshiError::ResultDoesNotFit)
 }
 
 pub fn mul_div_floor_u64(lhs: u64, rhs: u64, denominator: u64) -> MathResult<u64> {
@@ -71,7 +62,7 @@ pub fn bps_ceil(amount: u64, bps: u16) -> MathResult<u64> {
 
 pub fn validate_percentage_bps(bps: u16) -> MathResult<()> {
     if bps > BPS_DENOMINATOR {
-        return Err(MathError::InvalidBps);
+        return Err(RoshiError::InvalidBps);
     }
 
     Ok(())
@@ -100,7 +91,7 @@ pub fn shares_for_deposit(
     total_shares: u64,
 ) -> MathResult<u64> {
     if total_assets == 0 || total_shares == 0 {
-        return Err(MathError::InvalidVaultState);
+        return Err(RoshiError::InvalidVaultState);
     }
 
     let shares = mul_div_floor(
@@ -113,7 +104,7 @@ pub fn shares_for_deposit(
 
 pub fn assets_for_redeem(shares: u64, total_assets: u64, total_shares: u64) -> MathResult<u64> {
     if total_assets == 0 || total_shares == 0 || shares > total_shares {
-        return Err(MathError::InvalidVaultState);
+        return Err(RoshiError::InvalidVaultState);
     }
 
     let assets = mul_div_floor(
@@ -142,7 +133,7 @@ pub fn nav_delta_within_bps(
 fn checked_nonzero_u64(value: u128) -> MathResult<u64> {
     let value = checked_u64(value)?;
     if value == 0 {
-        return Err(MathError::ZeroOutput);
+        return Err(RoshiError::ZeroOutput);
     }
 
     Ok(value)
@@ -156,7 +147,7 @@ mod tests {
     #[test]
     fn pow10_rejects_unsupported_decimals() {
         assert!(pow10(38).is_ok());
-        assert_eq!(pow10(39), Err(MathError::InvalidDecimals));
+        assert_eq!(pow10(39), Err(RoshiError::InvalidDecimals));
     }
 
     #[test]
@@ -165,16 +156,16 @@ mod tests {
         assert_eq!(mul_div_floor_u64(10, 2, 6), Ok(3));
         assert_eq!(mul_div_ceil_u64(10, 2, 4), Ok(5));
         assert_eq!(mul_div_ceil_u64(10, 2, 6), Ok(4));
-        assert_eq!(mul_div_floor_u64(1, 1, 0), Err(MathError::DivisionByZero));
-        assert_eq!(mul_div_ceil_u64(1, 1, 0), Err(MathError::DivisionByZero));
+        assert_eq!(mul_div_floor_u64(1, 1, 0), Err(RoshiError::DivisionByZero));
+        assert_eq!(mul_div_ceil_u64(1, 1, 0), Err(RoshiError::DivisionByZero));
     }
 
     #[test]
     fn mul_div_rejects_overflow_and_downcast() {
-        assert_eq!(mul_div_floor(u128::MAX, 2, 1), Err(MathError::Overflow));
+        assert_eq!(mul_div_floor(u128::MAX, 2, 1), Err(RoshiError::Overflow));
         assert_eq!(
             mul_div_floor_u64(u64::MAX, u64::MAX, 1),
-            Err(MathError::ResultDoesNotFit)
+            Err(RoshiError::ResultDoesNotFit)
         );
     }
 
@@ -190,7 +181,7 @@ mod tests {
     fn percentage_bps_validation_caps_at_full_percentage() {
         assert_eq!(validate_percentage_bps(0), Ok(()));
         assert_eq!(validate_percentage_bps(10_000), Ok(()));
-        assert_eq!(validate_percentage_bps(10_001), Err(MathError::InvalidBps));
+        assert_eq!(validate_percentage_bps(10_001), Err(RoshiError::InvalidBps));
     }
 
     #[test]
@@ -201,7 +192,7 @@ mod tests {
         );
         assert_eq!(
             base_atoms_from_asset_atoms(u64::MAX, u128::from(u64::MAX), 0),
-            Err(MathError::ResultDoesNotFit)
+            Err(RoshiError::ResultDoesNotFit)
         );
     }
 
@@ -215,7 +206,7 @@ mod tests {
     fn normalization_rejects_invalid_price_decimals() {
         assert_eq!(
             base_atoms_from_asset_atoms(1, 1, 39),
-            Err(MathError::InvalidDecimals)
+            Err(RoshiError::InvalidDecimals)
         );
     }
 
@@ -231,7 +222,7 @@ mod tests {
         );
         assert_eq!(
             initial_shares_from_base_atoms(1, 12),
-            Err(MathError::ZeroOutput)
+            Err(RoshiError::ZeroOutput)
         );
     }
 
@@ -239,11 +230,11 @@ mod tests {
     fn initial_share_scale_rejects_invalid_decimals_and_downcast_overflow() {
         assert_eq!(
             initial_shares_from_base_atoms(1, 39),
-            Err(MathError::InvalidDecimals)
+            Err(RoshiError::InvalidDecimals)
         );
         assert_eq!(
             initial_shares_from_base_atoms(u64::MAX, 0),
-            Err(MathError::ResultDoesNotFit)
+            Err(RoshiError::ResultDoesNotFit)
         );
     }
 
@@ -253,15 +244,15 @@ mod tests {
         assert_eq!(shares_for_deposit(101, 1_000, 10_000), Ok(1_010));
         assert_eq!(
             shares_for_deposit(1, 1_000, 100),
-            Err(MathError::ZeroOutput)
+            Err(RoshiError::ZeroOutput)
         );
         assert_eq!(
             shares_for_deposit(1, 0, 100),
-            Err(MathError::InvalidVaultState)
+            Err(RoshiError::InvalidVaultState)
         );
         assert_eq!(
             shares_for_deposit(1, 100, 0),
-            Err(MathError::InvalidVaultState)
+            Err(RoshiError::InvalidVaultState)
         );
     }
 
@@ -275,14 +266,17 @@ mod tests {
     fn redeem_assets_are_floor_rounded_and_cannot_overpay() {
         assert_eq!(assets_for_redeem(1_000, 1_000, 10_000), Ok(100));
         assert_eq!(assets_for_redeem(1_010, 1_000, 10_000), Ok(101));
-        assert_eq!(assets_for_redeem(1, 100, 1_000), Err(MathError::ZeroOutput));
+        assert_eq!(
+            assets_for_redeem(1, 100, 1_000),
+            Err(RoshiError::ZeroOutput)
+        );
         assert_eq!(
             assets_for_redeem(1, 0, 100),
-            Err(MathError::InvalidVaultState)
+            Err(RoshiError::InvalidVaultState)
         );
         assert_eq!(
             assets_for_redeem(101, 100, 100),
-            Err(MathError::InvalidVaultState)
+            Err(RoshiError::InvalidVaultState)
         );
     }
 
@@ -296,7 +290,10 @@ mod tests {
     fn deposit_redeem_round_trip_does_not_overpay() {
         let shares = shares_for_deposit(1, 3, 10).unwrap();
         assert_eq!(shares, 3);
-        assert_eq!(assets_for_redeem(shares, 3, 10), Err(MathError::ZeroOutput));
+        assert_eq!(
+            assets_for_redeem(shares, 3, 10),
+            Err(RoshiError::ZeroOutput)
+        );
 
         let shares = shares_for_deposit(100, 333, 1_000).unwrap();
         let assets = assets_for_redeem(shares, 333, 1_000).unwrap();

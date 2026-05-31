@@ -1,14 +1,7 @@
 use solana_account_info::AccountInfo;
-use solana_program_error::{ProgramError, ProgramResult};
-use wincode::serialize;
+use solana_program_error::ProgramResult;
 
-use crate::{
-    instructions::{accounts::next_account, SetVaultAccessArgs},
-    state::{
-        vault::{Role, Vault},
-        Account,
-    },
-};
+use crate::instructions::{admin::vault_update::update_vault_as_admin, SetVaultAccessArgs};
 
 /// Implements [`crate::instructions::RoshiInstruction::SetVaultAccess`].
 ///
@@ -22,38 +15,22 @@ use crate::{
 /// `access_merkle_root` without touching role, fee, guardrail, pause, or
 /// subaccount configuration.
 pub fn try_set_vault_access(accounts: &[AccountInfo], args: SetVaultAccessArgs) -> ProgramResult {
-    let mut accounts_iter = accounts.iter();
-    let admin = next_account(&mut accounts_iter)?;
-    let vault_account = next_account(&mut accounts_iter)?;
-    if !vault_account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let mut vault = Account::load_as::<Vault>(vault_account)?;
-    vault.verify_address(vault_account.key)?;
-    vault.verify_role(Role::Admin, admin)?;
-
-    vault.private = args.private;
-    vault.access_merkle_root = args.access_merkle_root;
-
-    let serialized =
-        serialize(&Account::Vault(vault)).map_err(|_| ProgramError::InvalidAccountData)?;
-    let mut data = vault_account.try_borrow_mut_data()?;
-    if serialized.len() > data.len() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    data[..serialized.len()].copy_from_slice(&serialized);
-
-    Ok(())
+    update_vault_as_admin(accounts, |vault| {
+        vault.private = args.private;
+        vault.access_merkle_root = args.access_merkle_root;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use roshi_interface::oracle::OracleConfig;
+    use solana_program_error::ProgramError;
     use solana_pubkey::Pubkey;
-    use wincode::deserialize;
+    use wincode::{deserialize, serialize};
+
+    use crate::state::{vault::Vault, Account};
 
     fn test_vault(admin: Pubkey, base_mint: Pubkey) -> (Pubkey, Vault) {
         let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();

@@ -1,8 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use crate::error::RoshiError;
-use roshi_interface::access::MAX_ACCESS_PROOF_LEN;
+use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError};
 
 /// Implements [`crate::instructions::RoshiInstruction::Deposit`].
 ///

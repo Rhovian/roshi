@@ -1,7 +1,7 @@
 use roshi_interface::{
     instructions::{
-        IndexedActionArgs, RoshiInstruction, SetNavAuthorityArgs, SetStrategistArgs,
-        SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+        IndexedActionArgs, InitializeVaultArgs, RoshiInstruction, SetNavAuthorityArgs,
+        SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     },
     ID,
 };
@@ -41,6 +41,25 @@ pub fn initialize_program(
         RoshiInstruction::InitializeProgram {
             authority: authority.to_bytes(),
         },
+    )
+}
+
+pub fn initialize_vault(
+    program_authority: Pubkey,
+    program_config: Pubkey,
+    payer: Pubkey,
+    vault: Pubkey,
+    args: InitializeVaultArgs,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(program_authority, true),
+            AccountMeta::new_readonly(program_config, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        RoshiInstruction::InitializeVault { args },
     )
 }
 
@@ -252,6 +271,67 @@ mod tests {
         match wincode::deserialize(&ix.data).unwrap() {
             RoshiInstruction::InitializeProgram { authority: decoded } => {
                 assert_eq!(decoded, authority.to_bytes());
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_initialize_vault_instruction() {
+        let program_authority = Pubkey::new_unique();
+        let program_config = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
+        let args = InitializeVaultArgs {
+            tag: [1; 32],
+            tag_len: 4,
+            admin: Pubkey::new_unique().to_bytes(),
+            strategist: Pubkey::new_unique().to_bytes(),
+            nav_authority: Pubkey::new_unique().to_bytes(),
+            withdrawal_authority: Pubkey::new_unique().to_bytes(),
+            base_mint: base_mint.to_bytes(),
+            share_mint: share_mint.to_bytes(),
+            base_decimals: 6,
+            base_oracle: roshi_interface::oracle::OracleConfig::default(),
+            deposit_sub_account: 0,
+            withdraw_sub_account: 1,
+            fee_collector: Pubkey::new_unique().to_bytes(),
+            performance_fee_bps: 100,
+            withdrawal_buffer_bps: 250,
+            max_change_bps: 500,
+            min_update_interval: 60,
+            private: true,
+            access_merkle_root: [2; 32],
+        };
+
+        let ix = initialize_vault(program_authority, program_config, payer, vault, args).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 5);
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(program_authority, true)
+        );
+        assert_eq!(
+            ix.accounts[1],
+            AccountMeta::new_readonly(program_config, false)
+        );
+        assert_eq!(ix.accounts[2], AccountMeta::new(payer, true));
+        assert_eq!(ix.accounts[3], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[4],
+            AccountMeta::new_readonly(system_program::ID, false)
+        );
+
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::InitializeVault { args } => {
+                assert_eq!(args.tag, [1; 32]);
+                assert_eq!(args.tag_len, 4);
+                assert_eq!(args.base_mint, base_mint.to_bytes());
+                assert_eq!(args.share_mint, share_mint.to_bytes());
+                assert!(args.private);
             }
             _ => panic!("unexpected instruction"),
         }

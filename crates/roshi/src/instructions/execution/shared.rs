@@ -4,15 +4,13 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 
-use crate::{
-    error::RoshiError,
-    state::{
-        action::{compute_action_hash_from_metas, Action},
-        sub_account::VaultSubAccount,
-        vault::{Role, Vault},
-        Account,
-    },
+use crate::state::{
+    action::{compute_action_hash_from_metas, Action},
+    sub_account::VaultSubAccount,
+    vault::{Role, Vault},
+    Account,
 };
+use roshi_interface::error::RoshiError;
 
 pub(super) struct AuthorizedCpi<'a> {
     instruction: Instruction,

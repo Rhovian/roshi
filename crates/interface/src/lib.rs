@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod action;
+pub mod error;
 pub mod instructions;
 pub mod math;
 pub mod oracle;

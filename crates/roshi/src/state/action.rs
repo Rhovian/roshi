@@ -4,10 +4,10 @@ use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::error::RoshiError;
 use roshi_interface::action::{
     compute_action_hash_from_metas as compute_interface_action_hash_from_metas, ActionHashError,
 };
+use roshi_interface::error::RoshiError;
 
 pub use roshi_interface::action::{Op, Ops};
 
