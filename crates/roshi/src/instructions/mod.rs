@@ -7,5 +7,5 @@ pub mod user;
 
 pub use roshi_interface::instructions::{
     IndexedActionArgs, InitializeAssetArgs, InitializeVaultArgs, RoshiInstruction,
-    SetPauseFlagsArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+    SetPauseFlagsArgs, SetVaultAccessArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
 };

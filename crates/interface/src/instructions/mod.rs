@@ -2,7 +2,7 @@ pub mod args;
 
 pub use args::{
     IndexedActionArgs, InitializeAssetArgs, InitializeVaultArgs, SetPauseFlagsArgs,
-    UpdateAssetArgs, UpdateVaultConfigArgs,
+    SetVaultAccessArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
 };
 
 use crate::action::Ops;
@@ -39,6 +39,7 @@ pub enum RoshiInstruction {
         asset_mint: [u8; 32],
         amount: u64,
         min_shares_out: u64,
+        access_proof: Vec<[u8; 32]>,
     },
     #[wincode(tag = 8)]
     Redeem {
@@ -58,4 +59,62 @@ pub enum RoshiInstruction {
     InitializeSubAccount { index: u8 },
     #[wincode(tag = 15)]
     SetPauseFlags { args: SetPauseFlagsArgs },
+    #[wincode(tag = 16)]
+    SetVaultAccess { args: SetVaultAccessArgs },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wincode::{deserialize, serialize};
+
+    #[test]
+    fn deposit_round_trips_with_access_proof() {
+        let proof = vec![[1; 32], [2; 32], [3; 32]];
+        let encoded = serialize(&RoshiInstruction::Deposit {
+            asset_mint: [4; 32],
+            amount: 123,
+            min_shares_out: 456,
+            access_proof: proof.clone(),
+        })
+        .unwrap();
+
+        let decoded = deserialize(&encoded).unwrap();
+
+        match decoded {
+            RoshiInstruction::Deposit {
+                asset_mint,
+                amount,
+                min_shares_out,
+                access_proof,
+            } => {
+                assert_eq!(asset_mint, [4; 32]);
+                assert_eq!(amount, 123);
+                assert_eq!(min_shares_out, 456);
+                assert_eq!(access_proof, proof);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn set_vault_access_round_trips() {
+        let encoded = serialize(&RoshiInstruction::SetVaultAccess {
+            args: SetVaultAccessArgs {
+                private: true,
+                access_merkle_root: [9; 32],
+            },
+        })
+        .unwrap();
+
+        let decoded = deserialize(&encoded).unwrap();
+
+        match decoded {
+            RoshiInstruction::SetVaultAccess { args } => {
+                assert!(args.private);
+                assert_eq!(args.access_merkle_root, [9; 32]);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
 }

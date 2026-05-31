@@ -19,8 +19,8 @@ use crate::{instructions::InitializeVaultArgs, state::program_config::ProgramCon
 /// Verifies the program authority gate. The rest of this handler is currently
 /// a stub: the intended implementation creates the vault account, records role
 /// authorities, base-asset oracle config, and default subaccounts, initializes
-/// fee and NAV guardrail config, clears pause flags, and starts accounting
-/// from an empty-share, empty-asset state.
+/// fee, access, and NAV guardrail config, clears pause flags, and starts
+/// accounting from an empty-share, empty-asset state.
 pub fn try_initialize_vault(accounts: &[AccountInfo], _args: InitializeVaultArgs) -> ProgramResult {
     let mut accounts_iter = accounts.iter();
     let program_authority = accounts_iter

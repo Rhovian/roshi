@@ -1,5 +1,5 @@
 use roshi_interface::{
-    instructions::{IndexedActionArgs, RoshiInstruction},
+    instructions::{IndexedActionArgs, RoshiInstruction, SetVaultAccessArgs},
     ID,
 };
 use solana_instruction::{AccountMeta, Instruction};
@@ -96,6 +96,58 @@ pub fn manage_batch(
     new(accounts, RoshiInstruction::ManageBatch { actions })
 }
 
+pub fn deposit(
+    depositor: Pubkey,
+    vault: Pubkey,
+    user_source_token_account: Pubkey,
+    vault_custody_token_account: Pubkey,
+    user_share_account: Pubkey,
+    asset_mint: Pubkey,
+    amount: u64,
+    min_shares_out: u64,
+    access_proof: Vec<[u8; 32]>,
+    additional_accounts: Vec<AccountMeta>,
+) -> Result<Instruction> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(depositor, true),
+        AccountMeta::new(vault, false),
+        AccountMeta::new(user_source_token_account, false),
+        AccountMeta::new(vault_custody_token_account, false),
+        AccountMeta::new(user_share_account, false),
+    ];
+    accounts.extend(additional_accounts);
+
+    new(
+        accounts,
+        RoshiInstruction::Deposit {
+            asset_mint: asset_mint.to_bytes(),
+            amount,
+            min_shares_out,
+            access_proof,
+        },
+    )
+}
+
+pub fn set_vault_access(
+    admin: Pubkey,
+    vault: Pubkey,
+    private: bool,
+    access_merkle_root: [u8; 32],
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(admin, true),
+            AccountMeta::new(vault, false),
+        ],
+        RoshiInstruction::SetVaultAccess {
+            args: SetVaultAccessArgs {
+                private,
+                access_merkle_root,
+            },
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +226,78 @@ mod tests {
                 assert_eq!(accounts_start, 0);
                 assert_eq!(accounts_len, 1);
                 assert_eq!(decoded_ix_data, ix_data);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_deposit_instruction_with_access_proof() {
+        let depositor = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let source = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let shares = Pubkey::new_unique();
+        let asset_mint = Pubkey::new_unique();
+        let asset_pda = Pubkey::new_unique();
+        let proof = vec![[1; 32], [2; 32]];
+
+        let ix = deposit(
+            depositor,
+            vault,
+            source,
+            custody,
+            shares,
+            asset_mint,
+            123,
+            456,
+            proof.clone(),
+            vec![AccountMeta::new_readonly(asset_pda, false)],
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(depositor, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(source, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(shares, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new_readonly(asset_pda, false));
+
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::Deposit {
+                asset_mint: decoded_asset_mint,
+                amount,
+                min_shares_out,
+                access_proof,
+            } => {
+                assert_eq!(decoded_asset_mint, asset_mint.to_bytes());
+                assert_eq!(amount, 123);
+                assert_eq!(min_shares_out, 456);
+                assert_eq!(access_proof, proof);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_set_vault_access_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let root = [9; 32];
+
+        let ix = set_vault_access(admin, vault, true, root).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::SetVaultAccess { args } => {
+                assert!(args.private);
+                assert_eq!(args.access_merkle_root, root);
             }
             _ => panic!("unexpected instruction"),
         }

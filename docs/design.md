@@ -4,7 +4,8 @@ Roshi is a base-denominated NAV vault.
 
 The program should stay small around the invariants it can enforce on-chain:
 role authorization, pause surfaces, account ownership, PDA derivations, custody
-movement, share accounting, and explicit NAV update guardrails.
+movement, deposit access checks, share accounting, and explicit NAV update
+guardrails.
 
 ## Base-Denominated Accounting
 
@@ -19,6 +20,15 @@ base mint decimals.
 
 Roshi should not compose valuation routes on-chain. Oracle adapters selected by
 the vault must already satisfy Roshi's base-denominated price contract.
+
+## Vault Access
+
+Vaults can be public or private.
+
+Private vaults gate deposits with a Merkle proof against a vault-level access
+root. The proof is supplied on the deposit instruction and is not stored.
+Access gating does not block redemptions or withdrawal processing for existing
+share owners.
 
 ## NAV Trust Boundary
 

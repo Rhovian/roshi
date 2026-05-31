@@ -162,6 +162,9 @@ shares_to_mint = floor(base_atoms * 10^SHARE_DECIMALS / 10^base_decimals)
 The deposit flow should:
 
 - reject deposits while deposits are paused,
+- if the vault is private, verify the depositor's access proof against
+  `vault.access_merkle_root`,
+- reject access proofs longer than 32 sibling hashes,
 - if `asset_mint == vault.base_mint`, transfer base assets from the user to the
   base custody account owned by `vault.deposit_sub_account`,
 - otherwise load the `Asset` PDA, verify it is enabled, transfer the non-base
@@ -186,6 +189,7 @@ assets_out = floor(shares * total_assets / total_shares)
 The redeem flow should:
 
 - reject new redeems while withdrawals are paused,
+- not require private-vault allowlist membership,
 - enforce `min_assets_out`,
 - burn or otherwise account the user's shares,
 - reduce `total_shares` by `shares`,

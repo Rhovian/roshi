@@ -27,6 +27,8 @@ pub struct InitializeVaultArgs {
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
     pub min_update_interval: i64,
+    pub private: bool,
+    pub access_merkle_root: [u8; 32],
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -70,4 +72,10 @@ pub struct SetPauseFlagsArgs {
     pub deposits_paused: bool,
     pub withdrawals_paused: bool,
     pub manage_paused: bool,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct SetVaultAccessArgs {
+    pub private: bool,
+    pub access_merkle_root: [u8; 32],
 }

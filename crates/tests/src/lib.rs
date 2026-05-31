@@ -103,6 +103,8 @@ mod tests {
                     deposits_paused: false,
                     withdrawals_paused: false,
                     manage_paused: false,
+                    private: false,
+                    access_merkle_root: [0; 32],
                     bump: vault_bump,
                 }))
                 .unwrap(),
