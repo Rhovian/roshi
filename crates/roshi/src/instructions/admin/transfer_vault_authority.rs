@@ -1,7 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use crate::instructions::{admin::vault_update::update_vault_as_admin, TransferVaultAuthorityArgs};
+use crate::instructions::{accounts::update_writable_vault_as_admin, TransferVaultAuthorityArgs};
 
 /// Implements [`crate::instructions::RoshiInstructionTag::TransferVaultAuthority`].
 ///
@@ -17,7 +17,7 @@ pub fn try_transfer_vault_authority(
     accounts: &[AccountInfo],
     args: TransferVaultAuthorityArgs,
 ) -> ProgramResult {
-    update_vault_as_admin(accounts, |vault| {
+    update_writable_vault_as_admin(accounts, |vault| {
         vault.admin = args.new_authority;
         Ok(())
     })

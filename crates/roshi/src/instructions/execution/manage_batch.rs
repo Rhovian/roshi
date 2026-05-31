@@ -1,11 +1,8 @@
-use crate::instructions::{accounts::next_account, ManageBatchArgs};
+use crate::instructions::{accounts::ManageBatchContext, ManageBatchArgs};
 use solana_account_info::AccountInfo;
-use solana_program_error::{ProgramError, ProgramResult};
+use solana_program_error::ProgramResult;
 
-use super::shared::{
-    invoke_authorized_cpi, validate_authorized_cpi, validate_manage_accounts,
-    ValidatedManageAccounts,
-};
+use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 
 /// Implements [`crate::instructions::RoshiInstructionTag::ManageBatch`].
 ///
@@ -27,7 +24,7 @@ use super::shared::{
 /// accounts. The target CPI program account must follow each selected CPI
 /// account meta slice.
 pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> ProgramResult {
-    let accounts = ManageBatchAccounts::parse(accounts, args.actions.len())?;
+    let accounts = ManageBatchContext::load(accounts, args.actions.len())?;
 
     for (action, action_accounts) in args.actions.into_iter().zip(&accounts.action_accounts) {
         let validated_accounts = accounts.validate_action(action_accounts, action.sub_account)?;
@@ -44,56 +41,4 @@ pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> Prog
     }
 
     Ok(())
-}
-
-struct ManageBatchAccounts<'a, 'info> {
-    strategist: &'a AccountInfo<'info>,
-    vault: &'a AccountInfo<'info>,
-    action_accounts: Vec<ManageBatchActionAccounts<'a, 'info>>,
-    cpi_accounts: &'a [AccountInfo<'info>],
-}
-
-impl<'a, 'info> ManageBatchAccounts<'a, 'info> {
-    fn parse(accounts: &'a [AccountInfo<'info>], actions_len: usize) -> Result<Self, ProgramError> {
-        let accounts_iter = &mut accounts.iter();
-        let strategist = next_account(accounts_iter)?;
-        let vault = next_account(accounts_iter)?;
-
-        let mut action_accounts = Vec::with_capacity(actions_len);
-        for _ in 0..actions_len {
-            let sub_account = next_account(accounts_iter)?;
-            let action = next_account(accounts_iter)?;
-            action_accounts.push(ManageBatchActionAccounts {
-                sub_account,
-                action,
-            });
-        }
-        let cpi_accounts = accounts_iter.as_slice();
-
-        Ok(Self {
-            strategist,
-            vault,
-            action_accounts,
-            cpi_accounts,
-        })
-    }
-
-    fn validate_action(
-        &self,
-        action_accounts: &ManageBatchActionAccounts,
-        sub_account_index: u8,
-    ) -> Result<ValidatedManageAccounts, ProgramError> {
-        validate_manage_accounts(
-            self.strategist,
-            self.vault,
-            action_accounts.sub_account,
-            action_accounts.action,
-            sub_account_index,
-        )
-    }
-}
-
-struct ManageBatchActionAccounts<'a, 'info> {
-    sub_account: &'a AccountInfo<'info>,
-    action: &'a AccountInfo<'info>,
 }

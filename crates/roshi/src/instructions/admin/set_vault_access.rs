@@ -1,7 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use crate::instructions::{admin::vault_update::update_vault_as_admin, SetVaultAccessArgs};
+use crate::instructions::{accounts::update_writable_vault_as_admin, SetVaultAccessArgs};
 
 /// Implements [`crate::instructions::RoshiInstructionTag::SetVaultAccess`].
 ///
@@ -15,7 +15,7 @@ use crate::instructions::{admin::vault_update::update_vault_as_admin, SetVaultAc
 /// `access_merkle_root` without touching role, fee, guardrail, pause, or
 /// subaccount configuration.
 pub fn try_set_vault_access(accounts: &[AccountInfo], args: SetVaultAccessArgs) -> ProgramResult {
-    update_vault_as_admin(accounts, |vault| {
+    update_writable_vault_as_admin(accounts, |vault| {
         vault.private = args.private;
         vault.access_merkle_root = args.access_merkle_root;
         Ok(())

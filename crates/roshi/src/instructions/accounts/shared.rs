@@ -8,11 +8,15 @@ pub(crate) fn next_account<'a, 'info>(
     accounts.next().ok_or(ProgramError::NotEnoughAccountKeys)
 }
 
-pub(crate) fn require_writable_signer(account: &AccountInfo) -> ProgramResult {
+pub(super) fn require_writable_signer(account: &AccountInfo) -> ProgramResult {
     if !account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
+    require_writable(account)
+}
+
+pub(super) fn require_writable(account: &AccountInfo) -> ProgramResult {
     if !account.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -20,7 +24,7 @@ pub(crate) fn require_writable_signer(account: &AccountInfo) -> ProgramResult {
     Ok(())
 }
 
-pub(crate) fn require_uninitialized_account(account: &AccountInfo) -> ProgramResult {
+pub(super) fn require_uninitialized_account(account: &AccountInfo) -> ProgramResult {
     if !account.data_is_empty() || account.lamports() != 0 {
         return Err(ProgramError::AccountAlreadyInitialized);
     }
@@ -28,7 +32,7 @@ pub(crate) fn require_uninitialized_account(account: &AccountInfo) -> ProgramRes
     Ok(())
 }
 
-pub(crate) fn require_system_program(account: &AccountInfo) -> ProgramResult {
+pub(super) fn require_system_program(account: &AccountInfo) -> ProgramResult {
     if account.key != &system_program::ID {
         return Err(ProgramError::IncorrectProgramId);
     }

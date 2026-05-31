@@ -14,7 +14,6 @@ pub mod transfer_program_authority;
 pub mod transfer_vault_authority;
 pub mod update_asset;
 pub mod update_vault_config;
-mod vault_update;
 
 pub use authorize_action::try_authorize_action;
 pub use initialize_asset::try_initialize_asset;

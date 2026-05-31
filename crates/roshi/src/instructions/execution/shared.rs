@@ -4,11 +4,9 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 
-use crate::state::{
-    action::{compute_action_hash_from_metas, Action},
-    sub_account::VaultSubAccount,
-    vault::{Role, Vault},
-    Account,
+use crate::{
+    instructions::accounts::ValidatedManageAccounts,
+    state::{action::compute_action_hash_from_metas, sub_account::VaultSubAccount},
 };
 use roshi_interface::error::RoshiError;
 
@@ -122,54 +120,4 @@ pub(super) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramRe
         &authorized_cpi.account_infos,
         &[signer_seeds],
     )
-}
-
-pub(super) struct ValidatedManageAccounts {
-    action: Action,
-    vault_key: Pubkey,
-    sub_account_key: Pubkey,
-    sub_account_index: u8,
-    sub_account_bump: u8,
-}
-
-/// Validates the fixed Roshi account prefix for one manage action.
-///
-/// # Checks
-///
-/// - `vault_acc` must be a Roshi `Vault` account.
-/// - `vault_acc` must be the PDA for `[b"vault", tag, base_mint]`.
-/// - `strategist_acc` must sign and match the vault's strategist role.
-/// - `sub_account_acc` must be the PDA for `(vault_acc, sub_account_index)`.
-/// - `sub_account_acc` must be a non-executable system account with no data.
-/// - `action_acc` must be a Roshi `Action` account.
-/// - `action_acc` must be scoped to `vault_acc` and use the expected Action
-///   PDA seeds and bump.
-/// - the vault must not have `manage_paused` set.
-///
-/// Returns the loaded Action and subaccount PDA bump needed by CPI execution.
-pub(super) fn validate_manage_accounts(
-    strategist_acc: &AccountInfo,
-    vault_acc: &AccountInfo,
-    sub_account_acc: &AccountInfo,
-    action_acc: &AccountInfo,
-    sub_account_index: u8,
-) -> Result<ValidatedManageAccounts, ProgramError> {
-    let vault = Account::load_as::<Vault>(vault_acc)?;
-    vault.verify_address(vault_acc.key)?;
-    vault.verify_role(Role::Strategist, strategist_acc)?;
-
-    let sub_account_bump =
-        VaultSubAccount::verify_account(vault_acc.key, sub_account_index, sub_account_acc)?;
-    let action = Account::load_as::<Action>(action_acc)?;
-    action.verify_for_vault(vault_acc.key, action_acc.key)?;
-
-    vault.verify_manage_enabled()?;
-
-    Ok(ValidatedManageAccounts {
-        action,
-        vault_key: *vault_acc.key,
-        sub_account_key: *sub_account_acc.key,
-        sub_account_index,
-        sub_account_bump,
-    })
 }

@@ -1,11 +1,10 @@
 use solana_account_info::AccountInfo;
-use solana_program_error::{ProgramError, ProgramResult};
+use solana_program_error::ProgramResult;
 use solana_pubkey::Pubkey;
-use wincode::serialize;
 
-use crate::{
-    instructions::{accounts::next_account, TransferProgramAuthorityArgs},
-    state::{program_config::ProgramConfig, Account},
+use crate::instructions::{
+    accounts::{next_account, WritableProgramConfigAuthorityContext},
+    TransferProgramAuthorityArgs,
 };
 
 /// Implements [`crate::instructions::RoshiInstructionTag::TransferProgramAuthority`].
@@ -25,30 +24,21 @@ pub fn try_transfer_program_authority(
     let authority = next_account(&mut accounts_iter)?;
     let program_config_account = next_account(&mut accounts_iter)?;
 
-    if !program_config_account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    ProgramConfig::verify_authority(program_config_account, authority)?;
-
-    let mut program_config = Account::load_as::<ProgramConfig>(program_config_account)?;
-    program_config.set_authority(Pubkey::from(args.new_authority));
-
-    let serialized = serialize(&Account::ProgramConfig(program_config))
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let mut data = program_config_account.try_borrow_mut_data()?;
-    if serialized.len() > data.len() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    data[..serialized.len()].copy_from_slice(&serialized);
-
-    Ok(())
+    let mut context =
+        WritableProgramConfigAuthorityContext::load(authority, program_config_account)?;
+    context
+        .program_config_mut()
+        .set_authority(Pubkey::from(args.new_authority));
+    context.store()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_program_error::ProgramError;
+    use wincode::serialize;
+
+    use crate::state::{program_config::ProgramConfig, Account};
 
     fn program_config_account_data(authority: Pubkey) -> Vec<u8> {
         serialize(&Account::ProgramConfig(ProgramConfig::new(authority))).unwrap()
