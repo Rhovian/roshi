@@ -6,6 +6,7 @@ pub mod initialize_vault;
 pub mod process_withdrawals;
 pub mod revoke_action;
 pub mod set_pause_flags;
+pub mod set_vault_access;
 pub mod update_asset;
 pub mod update_vault_config;
 
@@ -17,5 +18,6 @@ pub use initialize_vault::try_initialize_vault;
 pub use process_withdrawals::try_process_withdrawals;
 pub use revoke_action::try_revoke_action;
 pub use set_pause_flags::try_set_pause_flags;
+pub use set_vault_access::try_set_vault_access;
 pub use update_asset::try_update_asset;
 pub use update_vault_config::try_update_vault_config;

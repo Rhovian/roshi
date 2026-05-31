@@ -1,10 +1,18 @@
-use solana_pubkey::Pubkey;
+mod pyth;
+mod switchboard;
 
-/// Discriminator for oracle implementations stored on-chain in `Asset`.
-#[repr(u8)]
-pub enum OracleKind {
-    Switchboard = 0,
-    Pyth = 1,
+pub use pyth::PythOracle;
+pub use roshi_interface::oracle::{
+    OracleConfig, OracleKind, PythOracleConfig, SwitchboardOracleConfig,
+};
+pub use switchboard::SwitchboardOracle;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OraclePrice {
+    /// Raw base-denominated price value.
+    pub value: u128,
+    /// Decimal scale for `value`.
+    pub decimals: u8,
 }
 
 /// Trait for oracle implementations. Implementations are expected to
@@ -12,27 +20,7 @@ pub enum OracleKind {
 /// On-chain program code should match `OracleKind` and parse the oracle
 /// account(s) appropriately in instruction handlers.
 pub trait Oracle {
-    /// Parse base units per asset atomic unit from raw account bytes. Return
-    /// None if data is unavailable or stale.
-    fn parse_base_units_per_asset_atom(data: &[u8]) -> Option<u128>;
-}
-
-/// Minimal Switchboard stub. Real parsing should live in the processor where
-/// account infos are available; this is a lightweight placeholder to record
-/// the expected shape and keep implementations testable off-chain.
-pub struct SwitchboardOracle {
-    pub feed: Pubkey,
-}
-
-impl SwitchboardOracle {
-    pub fn new(feed: Pubkey) -> Self {
-        Self { feed }
-    }
-}
-
-impl Oracle for SwitchboardOracle {
-    fn parse_base_units_per_asset_atom(_data: &[u8]) -> Option<u128> {
-        // Placeholder: actual Switchboard parsing depends on SB account layout
-        None
-    }
+    /// Parse a base-denominated price from raw account bytes. Return None if
+    /// data is unavailable, stale, or invalid.
+    fn parse_price(&self, data: &[u8]) -> Option<OraclePrice>;
 }

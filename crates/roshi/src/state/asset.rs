@@ -1,3 +1,4 @@
+use roshi_interface::oracle::OracleConfig;
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -10,16 +11,12 @@ pub struct Asset {
     pub asset_mint: [u8; 32],
     /// Token account controlled by the vault for this asset mint.
     pub custody_token_account: [u8; 32],
-    /// Oracle feed/account that reports this asset in vault base units.
-    pub oracle: [u8; 32],
-    /// Oracle kind discriminator. See `oracle::OracleKind`.
-    pub oracle_type: u8,
+    /// Oracle config that reports this asset in vault base atoms.
+    pub oracle: OracleConfig,
     /// Asset mint decimals.
     pub asset_decimals: u8,
     /// Vault base mint decimals.
     pub base_decimals: u8,
-    /// Maximum age for oracle data in seconds.
-    pub oracle_max_age: i64,
     /// Optional per-asset circuit-breaker for price moves.
     pub max_price_change_bps: u16,
     /// Maximum deposit amount in asset atomic units. Zero means unlimited.

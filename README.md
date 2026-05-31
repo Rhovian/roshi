@@ -7,9 +7,10 @@ reporting, share accounting, and queued withdrawals.
 
 ## Workspace
 
-- `crates/common`: reserved for shared helpers as the workspace grows.
+- `crates/interface`: reusable Roshi protocol/interface types.
 - `crates/roshi`: on-chain Roshi program crate.
-- `tests`: LiteSVM and Surfpool-oriented integration test harness.
+- `crates/client`: thin client helpers for building Roshi instructions.
+- `crates/tests`: LiteSVM and Surfpool-oriented integration test harness.
 
 ## Current Status
 
@@ -19,7 +20,7 @@ The scaffold includes the reusable Solana program infrastructure:
 - `initialize_program` with a `ProgramConfig` PDA and authority storage.
 - Generic indexed CPI execution in `manage` and `manage_batch`.
 - Vault-scoped RBAC, pause flags, and subaccount signer scaffolding.
-- Surfpool config/script and Makefile targets.
+- Surfpool config/script and Justfile targets.
 - LiteSVM tests for program initialization and authorized CPI execution.
 
 It also includes the Roshi protocol surface:
@@ -44,6 +45,8 @@ transfers, withdrawal queue processing, fee collection, and oracle support.
 
 - [Design Principles](docs/design.md)
 - [Accounting](docs/accounting.md)
+- [Accounting Math](docs/math.md)
+- [Vault Access](docs/access.md)
 - [NAV Reporting](docs/nav_reporting.md)
 - [Oracles](docs/oracles.md)
 - [Execution](docs/execution.md)
@@ -66,19 +69,12 @@ The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
 ```bash
 just build
 just check
+just surfpool-test
 just test-sbf
 ```
 
-The Makefile exposes the same legacy entry points:
-
-```bash
-make build
-make test
-make surfpool-test
-```
-
-`make build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
-artifact when present, and `make surfpool-test` starts a Surfpool mainnet fork
+`just build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
+artifact when present, and `just surfpool-test` starts a Surfpool mainnet fork
 before running ignored fork tests.
 
 Useful direct checks:

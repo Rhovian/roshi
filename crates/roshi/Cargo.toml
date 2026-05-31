@@ -14,6 +14,7 @@ entrypoint = ["dep:solana-program-entrypoint"]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(custom_heap)'] }
 
 [dependencies]
+roshi-interface = { path = "../interface" }
 solana-account-info = "3.1.1"
 solana-cpi = "3.1.0"
 solana-instruction = "3.4.0"
@@ -22,9 +23,9 @@ solana-program-entrypoint = { version = "3.1.1", optional = true }
 solana-program-error = "3.0.1"
 solana-program-memory = "3.1.0"
 solana-pubkey = "4.2.0"
-solana-sha256-hasher = { version = "3.1.0", features = ["sha2"] }
 solana-system-interface = { version = "3.2.0", features = ["bincode"] }
 solana-sysvar = "3.1.1"
 spl-associated-token-account-interface = "2.0.0"
 spl-token-interface = "2.0.0"
+switchboard-on-demand = { git = "https://github.com/Rhovian/solana-sdk.git", rev = "f1178eb09220864ec6203615dc0c0e11d7683958", default-features = false, features = ["native"] }
 wincode = { version = "0.5.4", features = ["derive"] }

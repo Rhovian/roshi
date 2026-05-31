@@ -15,6 +15,7 @@ withdrawal_authority: Pubkey,
 
 - update roles,
 - update pause flags,
+- update private/public access mode and access Merkle root,
 - configure supported assets,
 - authorize or revoke actions,
 - choose default deposit and withdrawal subaccounts.
@@ -65,6 +66,21 @@ SetPauseFlags {
 vault config replacement so emergency pause changes do not require resubmitting
 role, fee, guardrail, or subaccount configuration.
 
+## Access Mode
+
+Vault access mode has a dedicated instruction surface:
+
+```rust
+SetVaultAccess {
+    private,
+    access_merkle_root,
+}
+```
+
+`SetVaultAccess` should be admin-only. It is intentionally narrower than full
+vault config replacement so access root rotations do not require resubmitting
+roles, fees, guardrails, pause flags, or subaccount configuration.
+
 ## Invariants
 
 - Admin-only instructions must verify `vault.admin`.
@@ -72,3 +88,4 @@ role, fee, guardrail, or subaccount configuration.
 - NAV update instructions must verify `vault.nav_authority`.
 - Withdrawal processing must verify `vault.withdrawal_authority`.
 - Pause flags gate behavior, not role identity.
+- Private access gates deposits, not redemptions or withdrawal settlement.

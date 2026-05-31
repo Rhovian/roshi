@@ -12,14 +12,14 @@ use crate::instructions::InitializeAssetArgs;
 /// 1. `[]` Vault account that owns the asset config.
 /// 2. `[writable]` Asset PDA derived from `(vault, asset_mint)`.
 /// 3. `[]` Custody token account configured for this asset.
-/// 4. `[]` Oracle account configured for base-denominated pricing.
+/// 4.. `[]` Oracle accounts configured for base-denominated pricing.
 ///
 /// # Implementation
 ///
 /// This handler is currently a stub. The intended implementation verifies the
 /// vault admin, rejects the vault base mint, validates custody and oracle
 /// accounts, and writes the supported non-base asset config. The oracle must
-/// report this asset directly in vault base units.
+/// report this asset directly in vault base atoms.
 pub fn try_initialize_asset(
     _accounts: &[AccountInfo],
     _args: InitializeAssetArgs,

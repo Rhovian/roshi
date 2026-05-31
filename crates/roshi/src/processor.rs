@@ -3,7 +3,8 @@ use crate::{
         admin::{
             try_authorize_action, try_initialize_asset, try_initialize_program,
             try_initialize_sub_account, try_initialize_vault, try_process_withdrawals,
-            try_revoke_action, try_set_pause_flags, try_update_asset, try_update_vault_config,
+            try_revoke_action, try_set_pause_flags, try_set_vault_access, try_update_asset,
+            try_update_vault_config,
         },
         execution::{try_manage, try_manage_batch},
         update_total_assets::try_update_total_assets,
@@ -62,7 +63,8 @@ fn try_process_instruction(
             asset_mint,
             amount,
             min_shares_out,
-        } => try_deposit(accounts, asset_mint, amount, min_shares_out),
+            access_proof,
+        } => try_deposit(accounts, asset_mint, amount, min_shares_out, access_proof),
         RoshiInstruction::Redeem {
             ticket_index,
             shares,
@@ -76,5 +78,6 @@ fn try_process_instruction(
             try_initialize_sub_account(accounts, index)
         }
         RoshiInstruction::SetPauseFlags { args } => try_set_pause_flags(accounts, args),
+        RoshiInstruction::SetVaultAccess { args } => try_set_vault_access(accounts, args),
     }
 }

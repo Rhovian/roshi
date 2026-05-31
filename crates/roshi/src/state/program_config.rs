@@ -25,15 +25,21 @@ impl ProgramConfig {
         Pubkey::find_program_address(&[Self::SEED], &crate::ID)
     }
 
+    pub fn verify_address(config_acc: &AccountInfo) -> Result<u8, ProgramError> {
+        let (expected_config_key, config_bump) = Self::find_address();
+        if config_acc.key != &expected_config_key {
+            return Err(ProgramError::InvalidSeeds);
+        }
+
+        Ok(config_bump)
+    }
+
     pub fn authority(&self) -> Pubkey {
         Pubkey::from(self.authority)
     }
 
     pub fn verify_authority(config_acc: &AccountInfo, signer: &AccountInfo) -> ProgramResult {
-        let (expected_config_key, _) = Self::find_address();
-        if config_acc.key != &expected_config_key {
-            return Err(ProgramError::InvalidSeeds);
-        }
+        Self::verify_address(config_acc)?;
 
         let config = Account::load_as::<ProgramConfig>(config_acc)?;
 

@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dev-dependencies]
-roshi = { path = "../crates/roshi", default-features = false }
+roshi = { path = "../roshi", default-features = false }
+roshi-client = { path = "../client" }
 litesvm = "0.12"
 solana-instruction = "3.4.0"
 solana-pubkey = "4.2.0"

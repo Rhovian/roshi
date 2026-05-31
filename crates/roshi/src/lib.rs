@@ -5,4 +5,4 @@ pub mod oracle;
 mod processor;
 pub mod state;
 
-solana_pubkey::declare_id!("Roshi11111111111111111111111111111111111111");
+pub use roshi_interface::{check_id, id, ID};
