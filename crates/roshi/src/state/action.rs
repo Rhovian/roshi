@@ -9,7 +9,7 @@ use roshi_interface::action::{
 };
 use roshi_interface::error::RoshiError;
 
-pub use roshi_interface::action::{Op, Ops};
+pub use roshi_interface::action::{Op, Ops, StoredOp, MAX_ACTION_OPS};
 
 #[derive(SchemaWrite, SchemaRead)]
 #[repr(C)]
@@ -22,6 +22,7 @@ pub struct Action {
 
 impl Action {
     pub const SEED: &'static [u8] = b"action";
+    pub const SPACE: usize = std::mem::size_of::<Self>() + 1;
 
     pub fn find_address(vault: &Pubkey, action_hash: &[u8; 32]) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[Self::SEED, vault.as_ref(), action_hash], &crate::ID)
@@ -80,6 +81,7 @@ pub fn compute_action_hash_from_metas(
 
 fn action_hash_error_to_program_error(error: ActionHashError) -> ProgramError {
     match error {
+        ActionHashError::InvalidOp | ActionHashError::TooManyOps => RoshiError::InvalidOp.into(),
         ActionHashError::InstructionSliceOutOfBounds => {
             RoshiError::InstructionSliceOutOfBounds.into()
         }
@@ -97,9 +99,7 @@ mod tests {
         let program_id = Pubkey::new_unique();
         let account_key = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
-        let ops = Ops {
-            ops: vec![Op::IngestAccount { index: 0 }],
-        };
+        let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
         let ix_data = [];
 
         let mut lamports = 0;
@@ -146,5 +146,13 @@ mod tests {
 
         assert_ne!(readonly_hash, writable_hash);
         assert_ne!(readonly_hash, signer_hash);
+    }
+
+    #[test]
+    fn action_layout_is_fixed_size() {
+        assert_eq!(std::mem::size_of::<StoredOp>(), 4);
+        assert_eq!(std::mem::size_of::<Ops>(), MAX_ACTION_OPS * 4 + 1);
+        assert_eq!(std::mem::size_of::<Action>(), 194);
+        assert_eq!(Action::SPACE, 195);
     }
 }

@@ -118,7 +118,7 @@ mod tests {
         )
         .unwrap();
 
-        let ops = Ops { ops: vec![] };
+        let ops = Ops::empty();
         let action_hash =
             compute_action_hash(&system_program::ID, &ops, &[], &transfer_data).unwrap();
         let (action_pda, action_bump) = Action::find_address(&vault_pda, &action_hash);
