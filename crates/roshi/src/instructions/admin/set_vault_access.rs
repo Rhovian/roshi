@@ -16,7 +16,7 @@ use crate::instructions::{accounts::update_writable_vault_as_admin, SetVaultAcce
 /// subaccount configuration.
 pub fn try_set_vault_access(accounts: &[AccountInfo], args: SetVaultAccessArgs) -> ProgramResult {
     update_writable_vault_as_admin(accounts, |vault| {
-        vault.private = args.private;
+        vault.set_private(args.private);
         vault.access_merkle_root = args.access_merkle_root;
         Ok(())
     })
@@ -33,41 +33,29 @@ mod tests {
     use crate::state::{vault::Vault, Account};
 
     fn test_vault(admin: Pubkey, base_mint: Pubkey) -> (Pubkey, Vault) {
-        let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();
         let (vault_key, bump) = Vault::find_address(b"test", &base_mint).unwrap();
-        let vault = Vault {
-            tag,
-            tag_len,
-            admin: admin.to_bytes(),
-            strategist: admin.to_bytes(),
-            nav_authority: admin.to_bytes(),
-            withdrawal_authority: admin.to_bytes(),
-            base_mint: base_mint.to_bytes(),
-            share_mint: Pubkey::new_unique().to_bytes(),
-            base_decimals: 6,
-            base_oracle: OracleConfig::default(),
-            deposit_sub_account: 0,
-            withdraw_sub_account: 0,
-            fee_collector: admin.to_bytes(),
-            total_assets: 0,
-            last_report_hash: [0; 32],
-            total_shares: 0,
-            pending_withdrawal_assets: 0,
-            high_watermark: 0,
-            performance_fee_bps: 0,
-            withdrawal_buffer_bps: 0,
-            max_change_bps: 0,
-            min_update_interval: 0,
-            last_update_ts: 0,
-            current_withdrawal_epoch: 1,
-            processed_withdrawal_epoch: 0,
-            deposits_paused: false,
-            withdrawals_paused: false,
-            manage_paused: false,
-            private: false,
-            access_merkle_root: [0; 32],
+        let vault = Vault::new(
+            b"test",
+            admin.to_bytes(),
+            admin.to_bytes(),
+            admin.to_bytes(),
+            admin.to_bytes(),
+            base_mint.to_bytes(),
+            Pubkey::new_unique().to_bytes(),
+            6,
+            OracleConfig::default(),
+            0,
+            0,
+            admin.to_bytes(),
+            0,
+            0,
+            0,
+            0,
+            false,
+            [0; 32],
             bump,
-        };
+        )
+        .unwrap();
 
         (vault_key, vault)
     }
@@ -121,7 +109,7 @@ mod tests {
 
         let vault = load_vault(&vault_account);
 
-        assert!(vault.private);
+        assert_eq!(vault.private(), Ok(true));
         assert_eq!(vault.access_merkle_root, root);
     }
 
@@ -251,7 +239,7 @@ mod tests {
         let admin = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let (vault_key, mut vault) = test_vault(admin, base_mint);
-        vault.private = true;
+        vault.set_private(true);
         vault.access_merkle_root = [7; 32];
         let mut admin_lamports = 1;
         let mut vault_lamports = 1;
@@ -287,7 +275,7 @@ mod tests {
 
         let vault = load_vault(&vault_account);
 
-        assert!(!vault.private);
+        assert_eq!(vault.private(), Ok(false));
         assert_eq!(vault.access_merkle_root, [0; 32]);
     }
 
@@ -296,7 +284,7 @@ mod tests {
         let admin = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let (vault_key, mut vault) = test_vault(admin, base_mint);
-        vault.private = true;
+        vault.set_private(true);
         vault.access_merkle_root = [7; 32];
         let mut admin_lamports = 1;
         let mut vault_lamports = 1;
@@ -333,7 +321,7 @@ mod tests {
 
         let vault = load_vault(&vault_account);
 
-        assert!(vault.private);
+        assert_eq!(vault.private(), Ok(true));
         assert_eq!(vault.access_merkle_root, new_root);
     }
 }

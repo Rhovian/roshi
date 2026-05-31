@@ -7,6 +7,8 @@ use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
+use crate::state::flags;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
     Admin,
@@ -15,40 +17,42 @@ pub enum Role {
     WithdrawalAuthority,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct Vault {
+    pub base_oracle: OracleConfig,
+    pub total_assets: u64,
+    pub total_shares: u64,
+    pub pending_withdrawal_assets: u64,
+    pub high_watermark: u64,
+    pub min_update_interval: i64,
+    pub last_update_ts: i64,
+    pub current_withdrawal_epoch: u64,
+    pub processed_withdrawal_epoch: u64,
     pub tag: [u8; 32],
-    pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
-    pub base_decimals: u8,
-    pub base_oracle: OracleConfig,
-    pub deposit_sub_account: u8,
-    pub withdraw_sub_account: u8,
     pub fee_collector: [u8; 32],
-    pub total_assets: u64,
     pub last_report_hash: [u8; 32],
-    pub total_shares: u64,
-    pub pending_withdrawal_assets: u64,
-    pub high_watermark: u64,
+    pub access_merkle_root: [u8; 32],
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
-    pub min_update_interval: i64,
-    pub last_update_ts: i64,
-    pub current_withdrawal_epoch: u64,
-    pub processed_withdrawal_epoch: u64,
-    pub deposits_paused: bool,
-    pub withdrawals_paused: bool,
-    pub manage_paused: bool,
-    pub private: bool,
-    pub access_merkle_root: [u8; 32],
+    pub tag_len: u8,
+    pub base_decimals: u8,
+    pub deposit_sub_account: u8,
+    pub withdraw_sub_account: u8,
+    deposits_paused_flag: u8,
+    withdrawals_paused_flag: u8,
+    manage_paused_flag: u8,
+    private_flag: u8,
     pub bump: u8,
+    _padding: [u8; 1],
 }
 
 impl Vault {
@@ -85,41 +89,45 @@ impl Vault {
             max_change_bps,
             min_update_interval,
         )?;
+        base_oracle
+            .validate()
+            .map_err(|_| ProgramError::from(RoshiError::InvalidVaultState))?;
 
         let (tag, tag_len) = Self::pack_tag(tag)?;
 
         Ok(Self {
+            base_oracle,
+            total_assets: 0,
+            total_shares: 0,
+            pending_withdrawal_assets: 0,
+            high_watermark: 0,
+            min_update_interval,
+            last_update_ts: 0,
+            current_withdrawal_epoch: 1,
+            processed_withdrawal_epoch: 0,
             tag,
-            tag_len,
             admin,
             strategist,
             nav_authority,
             withdrawal_authority,
             base_mint,
             share_mint,
-            base_decimals,
-            base_oracle,
-            deposit_sub_account,
-            withdraw_sub_account,
             fee_collector,
-            total_assets: 0,
             last_report_hash: [0; 32],
-            total_shares: 0,
-            pending_withdrawal_assets: 0,
-            high_watermark: 0,
+            access_merkle_root,
             performance_fee_bps,
             withdrawal_buffer_bps,
             max_change_bps,
-            min_update_interval,
-            last_update_ts: 0,
-            current_withdrawal_epoch: 1,
-            processed_withdrawal_epoch: 0,
-            deposits_paused: false,
-            withdrawals_paused: false,
-            manage_paused: false,
-            private,
-            access_merkle_root,
+            tag_len,
+            base_decimals,
+            deposit_sub_account,
+            withdraw_sub_account,
+            deposits_paused_flag: flags::bool_to_flag(false),
+            withdrawals_paused_flag: flags::bool_to_flag(false),
+            manage_paused_flag: flags::bool_to_flag(false),
+            private_flag: flags::bool_to_flag(private),
             bump,
+            _padding: [0; 1],
         })
     }
 
@@ -219,7 +227,7 @@ impl Vault {
     }
 
     pub fn verify_manage_enabled(&self) -> ProgramResult {
-        if self.manage_paused {
+        if self.manage_paused()? {
             return Err(RoshiError::VaultPaused.into());
         }
 
@@ -227,7 +235,62 @@ impl Vault {
     }
 
     pub fn allows_depositor(&self, depositor: &Pubkey, proof: &[[u8; 32]]) -> bool {
-        !self.private || verify_access_merkle_proof(depositor, &self.access_merkle_root, proof)
+        match self.private() {
+            Ok(false) => true,
+            Ok(true) => verify_access_merkle_proof(depositor, &self.access_merkle_root, proof),
+            Err(_) => false,
+        }
+    }
+
+    pub fn deposits_paused(&self) -> Result<bool, ProgramError> {
+        flags::flag_to_bool(self.deposits_paused_flag, RoshiError::InvalidVaultState)
+    }
+
+    pub fn withdrawals_paused(&self) -> Result<bool, ProgramError> {
+        flags::flag_to_bool(self.withdrawals_paused_flag, RoshiError::InvalidVaultState)
+    }
+
+    pub fn manage_paused(&self) -> Result<bool, ProgramError> {
+        flags::flag_to_bool(self.manage_paused_flag, RoshiError::InvalidVaultState)
+    }
+
+    pub fn private(&self) -> Result<bool, ProgramError> {
+        flags::flag_to_bool(self.private_flag, RoshiError::InvalidVaultState)
+    }
+
+    pub fn set_deposits_paused(&mut self, deposits_paused: bool) {
+        self.deposits_paused_flag = flags::bool_to_flag(deposits_paused);
+    }
+
+    pub fn set_withdrawals_paused(&mut self, withdrawals_paused: bool) {
+        self.withdrawals_paused_flag = flags::bool_to_flag(withdrawals_paused);
+    }
+
+    pub fn set_manage_paused(&mut self, manage_paused: bool) {
+        self.manage_paused_flag = flags::bool_to_flag(manage_paused);
+    }
+
+    pub fn set_private(&mut self, private: bool) {
+        self.private_flag = flags::bool_to_flag(private);
+    }
+
+    pub fn validate_state(&self) -> ProgramResult {
+        Self::unpack_tag(&self.tag, self.tag_len)?;
+        Self::validate_config(
+            self.base_mint,
+            self.share_mint,
+            self.performance_fee_bps,
+            self.withdrawal_buffer_bps,
+            self.max_change_bps,
+            self.min_update_interval,
+        )?;
+        self.base_oracle
+            .validate()
+            .map_err(|_| ProgramError::from(RoshiError::InvalidVaultState))?;
+        flags::validate_flag(self.deposits_paused_flag, RoshiError::InvalidVaultState)?;
+        flags::validate_flag(self.withdrawals_paused_flag, RoshiError::InvalidVaultState)?;
+        flags::validate_flag(self.manage_paused_flag, RoshiError::InvalidVaultState)?;
+        flags::validate_flag(self.private_flag, RoshiError::InvalidVaultState)
     }
 }
 
@@ -235,7 +298,32 @@ impl Vault {
 mod tests {
     use super::*;
     use roshi_interface::access::{access_merkle_leaf, access_merkle_node};
-    use wincode::{deserialize, serialize};
+    use wincode::{
+        config::DefaultConfig, deserialize, serialize, SchemaRead, SchemaWrite, TypeMeta,
+    };
+
+    use crate::state::Account;
+
+    fn assert_zero_copy<T>()
+    where
+        T: wincode::ZeroCopy,
+        T: for<'de> SchemaRead<'de, DefaultConfig> + SchemaWrite<DefaultConfig>,
+    {
+        assert_eq!(
+            <T as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+        assert_eq!(
+            <T as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+    }
 
     fn new_test_vault(private: bool, access_merkle_root: [u8; 32]) -> Vault {
         let admin = Pubkey::new_unique();
@@ -293,28 +381,108 @@ mod tests {
         assert_eq!(vault.last_update_ts, 0);
         assert_eq!(vault.current_withdrawal_epoch, 1);
         assert_eq!(vault.processed_withdrawal_epoch, 0);
-        assert!(!vault.deposits_paused);
-        assert!(!vault.withdrawals_paused);
-        assert!(!vault.manage_paused);
-        assert!(vault.private);
+        assert_eq!(vault.deposits_paused(), Ok(false));
+        assert_eq!(vault.withdrawals_paused(), Ok(false));
+        assert_eq!(vault.manage_paused(), Ok(false));
+        assert_eq!(vault.private(), Ok(true));
         assert_eq!(vault.access_merkle_root, [10; 32]);
     }
 
     #[test]
     fn serialized_vault_fits_allocated_account_space() {
         let vault = new_test_vault(false, [0; 32]);
-        let serialized = serialize(&crate::state::Account::Vault(vault)).unwrap();
+        let serialized = serialize(&Account::Vault(vault)).unwrap();
 
         assert!(serialized.len() <= Vault::SPACE);
 
         let mut account_data = vec![0; Vault::SPACE];
         account_data[..serialized.len()].copy_from_slice(&serialized);
 
-        let decoded: crate::state::Account = deserialize(&account_data).unwrap();
-        let crate::state::Account::Vault(decoded_vault) = decoded else {
+        let decoded: Account = deserialize(&account_data).unwrap();
+        let Account::Vault(decoded_vault) = decoded else {
             panic!("expected vault account");
         };
         assert_eq!(decoded_vault.tag_seed().unwrap(), b"test");
+    }
+
+    #[test]
+    fn vault_is_zero_copy_with_explicit_padding() {
+        let vault = new_test_vault(false, [0; 32]);
+
+        assert_zero_copy::<Vault>();
+        assert_eq!(core::mem::size_of::<Vault>(), 568);
+        assert_eq!(Vault::SPACE, 569);
+        assert_eq!(
+            serialize(&vault).unwrap().len(),
+            core::mem::size_of::<Vault>()
+        );
+    }
+
+    #[test]
+    fn pause_and_access_flags_use_typed_accessors() {
+        let mut vault = new_test_vault(false, [0; 32]);
+
+        assert_eq!(vault.deposits_paused(), Ok(false));
+        assert_eq!(vault.withdrawals_paused(), Ok(false));
+        assert_eq!(vault.manage_paused(), Ok(false));
+        assert_eq!(vault.private(), Ok(false));
+
+        vault.set_deposits_paused(true);
+        vault.set_withdrawals_paused(true);
+        vault.set_manage_paused(true);
+        vault.set_private(true);
+
+        assert_eq!(vault.deposits_paused(), Ok(true));
+        assert_eq!(vault.withdrawals_paused(), Ok(true));
+        assert_eq!(vault.manage_paused(), Ok(true));
+        assert_eq!(vault.private(), Ok(true));
+    }
+
+    #[test]
+    fn load_as_rejects_invalid_vault_flags() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.manage_paused_flag = 255;
+        let mut data = serialize(&Account::Vault(vault)).unwrap();
+        let key = Pubkey::new_unique();
+        let owner = crate::ID;
+        let mut lamports = 1;
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+
+        assert_eq!(
+            Account::load_as::<Vault>(&account),
+            Err(ProgramError::from(RoshiError::InvalidVaultState))
+        );
+    }
+
+    #[test]
+    fn load_as_rejects_invalid_base_oracle_kind() {
+        let vault = new_test_vault(false, [0; 32]);
+        let mut data = serialize(&Account::Vault(vault)).unwrap();
+        let oracle_kind_offset = 1
+            + core::mem::size_of::<roshi_interface::oracle::SwitchboardOracleConfig>()
+            + core::mem::size_of::<roshi_interface::oracle::PythOracleConfig>();
+        data[oracle_kind_offset] = 255;
+        let key = Pubkey::new_unique();
+        let owner = crate::ID;
+        let mut lamports = 1;
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+
+        assert_eq!(
+            Account::load_as::<Vault>(&account),
+            Err(ProgramError::from(RoshiError::InvalidVaultState))
+        );
+    }
+
+    #[test]
+    fn verify_manage_enabled_rejects_paused_vault() {
+        let mut vault = new_test_vault(false, [0; 32]);
+
+        vault.set_manage_paused(true);
+
+        assert_eq!(
+            vault.verify_manage_enabled(),
+            Err(ProgramError::from(RoshiError::VaultPaused))
+        );
     }
 
     #[test]

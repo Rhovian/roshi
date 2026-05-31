@@ -58,7 +58,6 @@ mod tests {
 
         let base_mint = solana_pubkey::Pubkey::new_unique();
         let share_mint = solana_pubkey::Pubkey::new_unique();
-        let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();
         let (vault_pda, vault_bump) = Vault::find_address(b"test", &base_mint).unwrap();
         let (sub_account_pda, _) = VaultSubAccount::find_address(&vault_pda, 0);
         svm.set_account(
@@ -77,39 +76,30 @@ mod tests {
             vault_pda,
             Account {
                 lamports: 1_000_000,
-                data: serialize(&RoshiAccount::Vault(Vault {
-                    tag,
-                    tag_len,
-                    admin: authority.pubkey().to_bytes(),
-                    strategist: authority.pubkey().to_bytes(),
-                    nav_authority: authority.pubkey().to_bytes(),
-                    withdrawal_authority: authority.pubkey().to_bytes(),
-                    base_mint: base_mint.to_bytes(),
-                    share_mint: share_mint.to_bytes(),
-                    base_decimals: 0,
-                    base_oracle: OracleConfig::default(),
-                    deposit_sub_account: 0,
-                    withdraw_sub_account: 0,
-                    fee_collector: authority.pubkey().to_bytes(),
-                    total_assets: 0,
-                    last_report_hash: [0; 32],
-                    total_shares: 0,
-                    pending_withdrawal_assets: 0,
-                    high_watermark: 0,
-                    performance_fee_bps: 0,
-                    withdrawal_buffer_bps: 0,
-                    max_change_bps: 0,
-                    min_update_interval: 0,
-                    last_update_ts: 0,
-                    current_withdrawal_epoch: 1,
-                    processed_withdrawal_epoch: 0,
-                    deposits_paused: false,
-                    withdrawals_paused: false,
-                    manage_paused: false,
-                    private: false,
-                    access_merkle_root: [0; 32],
-                    bump: vault_bump,
-                }))
+                data: serialize(&RoshiAccount::Vault(
+                    Vault::new(
+                        b"test",
+                        authority.pubkey().to_bytes(),
+                        authority.pubkey().to_bytes(),
+                        authority.pubkey().to_bytes(),
+                        authority.pubkey().to_bytes(),
+                        base_mint.to_bytes(),
+                        share_mint.to_bytes(),
+                        0,
+                        OracleConfig::default(),
+                        0,
+                        0,
+                        authority.pubkey().to_bytes(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        false,
+                        [0; 32],
+                        vault_bump,
+                    )
+                    .unwrap(),
+                ))
                 .unwrap(),
                 owner: ID,
                 executable: false,

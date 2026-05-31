@@ -25,18 +25,23 @@ impl OracleKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidOracleKind;
+
 /// Switchboard On-Demand oracle configuration stored with the asset it prices.
 ///
 /// `price_decimals` is the scale of the raw oracle price. A price of `123`
 /// with `price_decimals = 2` represents `1.23`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct SwitchboardOracleConfig {
     pub quote_account: [u8; 32],
     pub queue_account: [u8; 32],
     pub feed_id: [u8; 32],
-    pub price_decimals: u8,
     pub max_age_slots: u64,
+    pub price_decimals: u8,
+    _padding: [u8; 7],
 }
 
 impl SwitchboardOracleConfig {
@@ -51,8 +56,9 @@ impl SwitchboardOracleConfig {
             quote_account,
             queue_account,
             feed_id,
-            price_decimals,
             max_age_slots,
+            price_decimals,
+            _padding: [0; 7],
         }
     }
 }
@@ -63,8 +69,9 @@ impl Default for SwitchboardOracleConfig {
             quote_account: [0; 32],
             queue_account: [0; 32],
             feed_id: [0; 32],
-            price_decimals: 0,
             max_age_slots: 0,
+            price_decimals: 0,
+            _padding: [0; 7],
         }
     }
 }
@@ -78,12 +85,14 @@ impl Default for SwitchboardOracleConfig {
 ///
 /// `max_confidence_bps = 0` disables the confidence-width guardrail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct PythOracleConfig {
     pub feed_id: [u8; 32],
-    pub price_decimals: u8,
     pub max_age_seconds: u64,
     pub max_confidence_bps: u16,
+    pub price_decimals: u8,
+    _padding: [u8; 5],
 }
 
 impl PythOracleConfig {
@@ -95,9 +104,10 @@ impl PythOracleConfig {
     ) -> Self {
         Self {
             feed_id,
-            price_decimals,
             max_age_seconds,
             max_confidence_bps,
+            price_decimals,
+            _padding: [0; 5],
         }
     }
 }
@@ -106,9 +116,10 @@ impl Default for PythOracleConfig {
     fn default() -> Self {
         Self {
             feed_id: [0; 32],
-            price_decimals: 0,
             max_age_seconds: 0,
             max_confidence_bps: 0,
+            price_decimals: 0,
+            _padding: [0; 5],
         }
     }
 }
@@ -119,42 +130,62 @@ impl Default for PythOracleConfig {
 /// the start. Switching implementations only changes `kind`, so account data
 /// size remains stable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct OracleConfig {
-    pub kind: OracleKind,
     pub switchboard: SwitchboardOracleConfig,
     pub pyth: PythOracleConfig,
+    kind: u8,
+    _padding: [u8; 7],
 }
 
 impl OracleConfig {
-    pub const fn kind(&self) -> OracleKind {
+    pub const fn raw_kind(&self) -> u8 {
         self.kind
+    }
+
+    pub const fn kind(&self) -> Result<OracleKind, InvalidOracleKind> {
+        match OracleKind::from_u8(self.kind) {
+            Some(kind) => Ok(kind),
+            None => Err(InvalidOracleKind),
+        }
+    }
+
+    pub const fn validate(&self) -> Result<(), InvalidOracleKind> {
+        match self.kind() {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub const fn switchboard(config: SwitchboardOracleConfig) -> Self {
         Self {
-            kind: OracleKind::Switchboard,
             switchboard: config,
             pyth: PythOracleConfig {
                 feed_id: [0; 32],
-                price_decimals: 0,
                 max_age_seconds: 0,
                 max_confidence_bps: 0,
+                price_decimals: 0,
+                _padding: [0; 5],
             },
+            kind: OracleKind::Switchboard.as_u8(),
+            _padding: [0; 7],
         }
     }
 
     pub const fn pyth(config: PythOracleConfig) -> Self {
         Self {
-            kind: OracleKind::Pyth,
             switchboard: SwitchboardOracleConfig {
                 quote_account: [0; 32],
                 queue_account: [0; 32],
                 feed_id: [0; 32],
-                price_decimals: 0,
                 max_age_slots: 0,
+                price_decimals: 0,
+                _padding: [0; 7],
             },
             pyth: config,
+            kind: OracleKind::Pyth.as_u8(),
+            _padding: [0; 7],
         }
     }
 
@@ -164,9 +195,10 @@ impl OracleConfig {
         pyth: PythOracleConfig,
     ) -> Self {
         Self {
-            kind,
             switchboard,
             pyth,
+            kind: kind.as_u8(),
+            _padding: [0; 7],
         }
     }
 }
@@ -180,7 +212,28 @@ impl Default for OracleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wincode::serialize;
+    use wincode::{config::DefaultConfig, serialize, SchemaRead, SchemaWrite, TypeMeta};
+
+    fn assert_zero_copy<T>()
+    where
+        T: wincode::ZeroCopy,
+        T: for<'de> SchemaRead<'de, DefaultConfig> + SchemaWrite<DefaultConfig>,
+    {
+        assert_eq!(
+            <T as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+        assert_eq!(
+            <T as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+    }
 
     #[test]
     fn oracle_config_size_is_fixed_across_implementations() {
@@ -193,8 +246,8 @@ mod tests {
             serialize(&switchboard).unwrap().len(),
             serialize(&pyth).unwrap().len()
         );
-        assert_eq!(switchboard.kind(), OracleKind::Switchboard);
-        assert_eq!(pyth.kind(), OracleKind::Pyth);
+        assert_eq!(switchboard.kind(), Ok(OracleKind::Switchboard));
+        assert_eq!(pyth.kind(), Ok(OracleKind::Pyth));
     }
 
     #[test]
@@ -204,8 +257,31 @@ mod tests {
 
         let config = OracleConfig::with_configs(OracleKind::Pyth, switchboard_config, pyth_config);
 
-        assert_eq!(config.kind(), OracleKind::Pyth);
+        assert_eq!(config.kind(), Ok(OracleKind::Pyth));
         assert_eq!(config.switchboard, switchboard_config);
         assert_eq!(config.pyth, pyth_config);
+    }
+
+    #[test]
+    fn oracle_configs_are_zero_copy() {
+        assert_zero_copy::<SwitchboardOracleConfig>();
+        assert_zero_copy::<PythOracleConfig>();
+        assert_zero_copy::<OracleConfig>();
+        assert_eq!(core::mem::size_of::<SwitchboardOracleConfig>(), 112);
+        assert_eq!(core::mem::size_of::<PythOracleConfig>(), 48);
+        assert_eq!(core::mem::size_of::<OracleConfig>(), 168);
+        assert_eq!(
+            serialize(&OracleConfig::default()).unwrap().len(),
+            core::mem::size_of::<OracleConfig>()
+        );
+    }
+
+    #[test]
+    fn oracle_config_rejects_invalid_kind() {
+        let mut config = OracleConfig::default();
+        config.kind = 255;
+
+        assert_eq!(config.kind(), Err(InvalidOracleKind));
+        assert_eq!(config.validate(), Err(InvalidOracleKind));
     }
 }

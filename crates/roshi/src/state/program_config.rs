@@ -5,7 +5,8 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::state::Account;
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct ProgramConfig {
     authority: [u8; 32],
@@ -56,5 +57,45 @@ impl ProgramConfig {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wincode::{config::DefaultConfig, serialize, SchemaRead, SchemaWrite, TypeMeta};
+
+    fn assert_zero_copy<T>()
+    where
+        T: wincode::ZeroCopy,
+        T: for<'de> SchemaRead<'de, DefaultConfig> + SchemaWrite<DefaultConfig>,
+    {
+        assert_eq!(
+            <T as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+        assert_eq!(
+            <T as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: core::mem::size_of::<T>(),
+                zero_copy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn program_config_is_zero_copy_without_padding() {
+        let config = ProgramConfig::new(Pubkey::new_unique());
+
+        assert_zero_copy::<ProgramConfig>();
+        assert_eq!(core::mem::size_of::<ProgramConfig>(), 32);
+        assert_eq!(ProgramConfig::SPACE, 33);
+        assert_eq!(
+            serialize(&config).unwrap().len(),
+            core::mem::size_of::<ProgramConfig>()
+        );
     }
 }

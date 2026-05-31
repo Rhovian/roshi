@@ -77,6 +77,8 @@ impl<'a, 'info> WritableVaultRoleContext<'a, 'info> {
     }
 
     pub(crate) fn store(self) -> ProgramResult {
+        self.vault.validate_state()?;
+
         let serialized =
             serialize(&Account::Vault(self.vault)).map_err(|_| ProgramError::InvalidAccountData)?;
         let mut data = self.vault_account.try_borrow_mut_data()?;

@@ -1,5 +1,6 @@
 pub mod action;
 pub mod asset;
+mod flags;
 pub mod program_config;
 pub mod sub_account;
 pub mod vault;
@@ -9,13 +10,19 @@ use action::Action;
 use asset::Asset;
 use program_config::ProgramConfig;
 use solana_account_info::AccountInfo;
-use solana_program_error::ProgramError;
+use solana_program_error::{ProgramError, ProgramResult};
 use vault::Vault;
 use wincode::{deserialize, SchemaRead, SchemaWrite};
 use withdrawal_ticket::WithdrawalTicket;
 
 use roshi_interface::error::RoshiError;
 
+/// Tagged account storage keeps owned deserialization for now.
+///
+/// The concrete fixed-size payload structs are zero-copy eligible, but the
+/// one-byte enum tag means the payload would start at offset 1 in account
+/// data. That can misalign 8-byte fields, so mutable zero-copy references need
+/// a different discriminator layout or explicit alignment handling first.
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub enum Account {
@@ -33,6 +40,10 @@ pub enum Account {
 
 pub trait AccountData: Sized {
     fn try_from_account(account: Account) -> Result<Self, ProgramError>;
+
+    fn validate(&self) -> ProgramResult {
+        Ok(())
+    }
 }
 
 impl Account {
@@ -46,7 +57,10 @@ impl Account {
     }
 
     pub fn load_as<T: AccountData>(account: &AccountInfo) -> Result<T, ProgramError> {
-        T::try_from_account(Self::load(account)?)
+        let value = T::try_from_account(Self::load(account)?)?;
+        value.validate()?;
+
+        Ok(value)
     }
 }
 
@@ -64,11 +78,53 @@ macro_rules! impl_account_data {
 }
 
 impl_account_data!(ProgramConfig, ProgramConfig, InvalidProgramConfigAccount);
-impl_account_data!(Vault, Vault, InvalidVaultAccount);
 impl_account_data!(Action, Action, InvalidActionAccount);
 impl_account_data!(
     WithdrawalTicket,
     WithdrawalTicket,
     InvalidWithdrawalTicketAccount
 );
-impl_account_data!(Asset, Asset, InvalidAssetAccount);
+
+impl AccountData for Vault {
+    fn try_from_account(account: Account) -> Result<Self, ProgramError> {
+        match account {
+            Account::Vault(value) => Ok(value),
+            _ => Err(RoshiError::InvalidVaultAccount.into()),
+        }
+    }
+
+    fn validate(&self) -> ProgramResult {
+        self.validate_state()
+    }
+}
+
+impl AccountData for Asset {
+    fn try_from_account(account: Account) -> Result<Self, ProgramError> {
+        match account {
+            Account::Asset(value) => Ok(value),
+            _ => Err(RoshiError::InvalidAssetAccount.into()),
+        }
+    }
+
+    fn validate(&self) -> ProgramResult {
+        self.validate_state()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tagged_account_payloads_are_not_loaded_by_zero_copy_yet() {
+        assert_eq!(core::mem::align_of::<ProgramConfig>(), 1);
+        assert_eq!(core::mem::align_of::<Vault>(), 8);
+        assert_eq!(core::mem::align_of::<Asset>(), 8);
+        assert_eq!(core::mem::align_of::<WithdrawalTicket>(), 8);
+
+        let tag_len = core::mem::size_of::<u8>();
+        assert_ne!(tag_len % core::mem::align_of::<Vault>(), 0);
+        assert_ne!(tag_len % core::mem::align_of::<Asset>(), 0);
+        assert_ne!(tag_len % core::mem::align_of::<WithdrawalTicket>(), 0);
+    }
+}
