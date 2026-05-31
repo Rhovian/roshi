@@ -3,11 +3,11 @@ use crate::{
         admin::{
             try_authorize_action, try_initialize_asset, try_initialize_program,
             try_initialize_sub_account, try_initialize_vault, try_process_withdrawals,
-            try_revoke_action, try_set_pause_flags, try_set_vault_access, try_update_asset,
-            try_update_vault_config,
+            try_revoke_action, try_set_nav_authority, try_set_pause_flags, try_set_strategist,
+            try_set_vault_access, try_set_withdrawal_authority, try_transfer_program_authority,
+            try_transfer_vault_authority, try_update_asset, try_update_vault_config,
         },
         execution::{try_manage, try_manage_batch},
-        update_total_assets::try_update_total_assets,
         user::{try_deposit, try_redeem},
         RoshiInstruction,
     },
@@ -55,10 +55,6 @@ fn try_process_instruction(
             ix_data,
         ),
         RoshiInstruction::ManageBatch { actions } => try_manage_batch(accounts, actions),
-        RoshiInstruction::UpdateTotalAssets {
-            total_assets,
-            report_hash,
-        } => try_update_total_assets(accounts, total_assets, report_hash),
         RoshiInstruction::Deposit {
             asset_mint,
             amount,
@@ -79,5 +75,16 @@ fn try_process_instruction(
         }
         RoshiInstruction::SetPauseFlags { args } => try_set_pause_flags(accounts, args),
         RoshiInstruction::SetVaultAccess { args } => try_set_vault_access(accounts, args),
+        RoshiInstruction::TransferProgramAuthority { new_authority } => {
+            try_transfer_program_authority(accounts, new_authority)
+        }
+        RoshiInstruction::TransferVaultAuthority { new_authority } => {
+            try_transfer_vault_authority(accounts, new_authority)
+        }
+        RoshiInstruction::SetStrategist { args } => try_set_strategist(accounts, args),
+        RoshiInstruction::SetNavAuthority { args } => try_set_nav_authority(accounts, args),
+        RoshiInstruction::SetWithdrawalAuthority { args } => {
+            try_set_withdrawal_authority(accounts, args)
+        }
     }
 }

@@ -17,6 +17,8 @@ pub enum Role {
 #[derive(SchemaWrite, SchemaRead)]
 #[repr(C)]
 pub struct Vault {
+    pub tag: [u8; 32],
+    pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
@@ -50,12 +52,44 @@ pub struct Vault {
 
 impl Vault {
     pub const SEED: &'static [u8] = b"vault";
+    pub const MAX_TAG_LEN: usize = 32;
 
-    pub fn find_address(admin: &Pubkey, base_mint: &Pubkey) -> (Pubkey, u8) {
-        Pubkey::find_program_address(
-            &[Self::SEED, admin.as_ref(), base_mint.as_ref()],
+    pub fn pack_tag(tag: &[u8]) -> Result<([u8; Self::MAX_TAG_LEN], u8), ProgramError> {
+        Self::validate_tag(tag)?;
+
+        let mut packed_tag = [0; Self::MAX_TAG_LEN];
+        packed_tag[..tag.len()].copy_from_slice(tag);
+
+        Ok((packed_tag, tag.len() as u8))
+    }
+
+    pub fn tag_seed(&self) -> Result<&[u8], ProgramError> {
+        let tag_len = usize::from(self.tag_len);
+        if tag_len > Self::MAX_TAG_LEN {
+            return Err(RoshiError::InvalidVaultTag.into());
+        }
+
+        let tag = &self.tag[..tag_len];
+        Self::validate_tag(tag)?;
+
+        Ok(tag)
+    }
+
+    pub fn find_address(tag: &[u8], base_mint: &Pubkey) -> Result<(Pubkey, u8), ProgramError> {
+        Self::validate_tag(tag)?;
+
+        Ok(Pubkey::find_program_address(
+            &[Self::SEED, tag, base_mint.as_ref()],
             &crate::ID,
-        )
+        ))
+    }
+
+    fn validate_tag(tag: &[u8]) -> ProgramResult {
+        if tag.is_empty() || tag.len() > Self::MAX_TAG_LEN {
+            return Err(RoshiError::InvalidVaultTag.into());
+        }
+
+        Ok(())
     }
 
     pub fn authority_for_role(&self, role: Role) -> Pubkey {
@@ -72,9 +106,8 @@ impl Vault {
     }
 
     pub fn verify_address(&self, vault_key: &Pubkey) -> ProgramResult {
-        let admin = Pubkey::from(self.admin);
         let base_mint = Pubkey::from(self.base_mint);
-        let (expected_vault_key, expected_bump) = Self::find_address(&admin, &base_mint);
+        let (expected_vault_key, expected_bump) = Self::find_address(self.tag_seed()?, &base_mint)?;
 
         if vault_key != &expected_vault_key || self.bump != expected_bump {
             return Err(ProgramError::InvalidSeeds);
@@ -116,9 +149,12 @@ mod tests {
     fn test_vault(private: bool, access_merkle_root: [u8; 32]) -> Vault {
         let admin = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
-        let (_, bump) = Vault::find_address(&admin, &base_mint);
+        let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();
+        let (_, bump) = Vault::find_address(b"test", &base_mint).unwrap();
 
         Vault {
+            tag,
+            tag_len,
             admin: admin.to_bytes(),
             strategist: admin.to_bytes(),
             nav_authority: admin.to_bytes(),

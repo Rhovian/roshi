@@ -3,38 +3,40 @@ use solana_program_error::{ProgramError, ProgramResult};
 use wincode::serialize;
 
 use crate::{
-    instructions::{accounts::next_account, SetVaultAccessArgs},
+    instructions::accounts::next_account,
     state::{
         vault::{Role, Vault},
         Account,
     },
 };
 
-/// Implements [`crate::instructions::RoshiInstruction::SetVaultAccess`].
+/// Implements [`crate::instructions::RoshiInstruction::TransferVaultAuthority`].
 ///
 /// # Accounts
 ///
-/// Planned layout:
-/// 0. `[signer]` Vault admin.
-/// 1. `[writable]` Vault account whose access mode is updated.
+/// 0. `[signer]` Current vault authority/admin.
+/// 1. `[writable]` Vault account whose authority is transferred.
 ///
-/// Verifies the vault admin and atomically updates `private` and
-/// `access_merkle_root` without touching role, fee, guardrail, pause, or
-/// subaccount configuration.
-pub fn try_set_vault_access(accounts: &[AccountInfo], args: SetVaultAccessArgs) -> ProgramResult {
+/// Verifies the current vault admin and replaces `vault.admin` with
+/// `new_authority`. The vault PDA is derived from the vault tag and base asset,
+/// so the vault address continues to verify after the admin changes.
+pub fn try_transfer_vault_authority(
+    accounts: &[AccountInfo],
+    new_authority: [u8; 32],
+) -> ProgramResult {
     let mut accounts_iter = accounts.iter();
-    let admin = next_account(&mut accounts_iter)?;
+    let authority = next_account(&mut accounts_iter)?;
     let vault_account = next_account(&mut accounts_iter)?;
+
     if !vault_account.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
 
     let mut vault = Account::load_as::<Vault>(vault_account)?;
     vault.verify_address(vault_account.key)?;
-    vault.verify_role(Role::Admin, admin)?;
+    vault.verify_role(Role::Admin, authority)?;
 
-    vault.private = args.private;
-    vault.access_merkle_root = args.access_merkle_root;
+    vault.admin = new_authority;
 
     let serialized =
         serialize(&Account::Vault(vault)).map_err(|_| ProgramError::InvalidAccountData)?;
@@ -105,20 +107,22 @@ mod tests {
     }
 
     #[test]
-    fn updates_vault_access_when_admin_signs() {
+    fn transfers_vault_authority_without_changing_vault_address() {
         let admin = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let (vault_key, vault) = test_vault(admin, base_mint);
+        let owner = crate::ID;
         let mut admin_lamports = 1;
+        let mut admin_data = [];
         let mut vault_lamports = 1;
         let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
         let admin_account = AccountInfo::new(
             &admin,
             true,
             false,
             &mut admin_lamports,
-            &mut [],
+            &mut admin_data,
             &owner,
             false,
         );
@@ -131,39 +135,36 @@ mod tests {
             &owner,
             false,
         );
-        let root = [7; 32];
 
-        try_set_vault_access(
+        try_transfer_vault_authority(
             &[admin_account, vault_account.clone()],
-            SetVaultAccessArgs {
-                private: true,
-                access_merkle_root: root,
-            },
+            new_authority.to_bytes(),
         )
         .unwrap();
 
         let vault = load_vault(&vault_account);
-
-        assert!(vault.private);
-        assert_eq!(vault.access_merkle_root, root);
+        assert_eq!(vault.admin, new_authority.to_bytes());
+        vault.verify_address(&vault_key).unwrap();
     }
 
     #[test]
-    fn rejects_non_admin_signer() {
-        let admin = Pubkey::new_unique();
-        let wrong_admin = Pubkey::new_unique();
+    fn rejects_old_authority_after_transfer() {
+        let old_authority = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
-        let (vault_key, vault) = test_vault(admin, base_mint);
-        let mut admin_lamports = 1;
+        let (vault_key, mut vault) = test_vault(old_authority, base_mint);
+        vault.admin = new_authority.to_bytes();
+        let owner = crate::ID;
+        let mut authority_lamports = 1;
+        let mut authority_data = [];
         let mut vault_lamports = 1;
         let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
-        let admin_account = AccountInfo::new(
-            &wrong_admin,
+        let authority_account = AccountInfo::new(
+            &old_authority,
             true,
             false,
-            &mut admin_lamports,
-            &mut [],
+            &mut authority_lamports,
+            &mut authority_data,
             &owner,
             false,
         );
@@ -178,32 +179,31 @@ mod tests {
         );
 
         assert_eq!(
-            try_set_vault_access(
-                &[admin_account, vault_account],
-                SetVaultAccessArgs {
-                    private: true,
-                    access_merkle_root: [7; 32],
-                },
+            try_transfer_vault_authority(
+                &[authority_account, vault_account],
+                Pubkey::new_unique().to_bytes(),
             ),
             Err(ProgramError::IllegalOwner)
         );
     }
 
     #[test]
-    fn rejects_missing_admin_signature() {
+    fn rejects_missing_authority_signature() {
         let admin = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let (vault_key, vault) = test_vault(admin, base_mint);
+        let owner = crate::ID;
         let mut admin_lamports = 1;
+        let mut admin_data = [];
         let mut vault_lamports = 1;
         let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
         let admin_account = AccountInfo::new(
             &admin,
             false,
             false,
             &mut admin_lamports,
-            &mut [],
+            &mut admin_data,
             &owner,
             false,
         );
@@ -218,13 +218,7 @@ mod tests {
         );
 
         assert_eq!(
-            try_set_vault_access(
-                &[admin_account, vault_account],
-                SetVaultAccessArgs {
-                    private: true,
-                    access_merkle_root: [7; 32],
-                },
-            ),
+            try_transfer_vault_authority(&[admin_account, vault_account], new_authority.to_bytes(),),
             Err(ProgramError::MissingRequiredSignature)
         );
     }
@@ -232,18 +226,20 @@ mod tests {
     #[test]
     fn rejects_non_writable_vault_account() {
         let admin = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let (vault_key, vault) = test_vault(admin, base_mint);
+        let owner = crate::ID;
         let mut admin_lamports = 1;
+        let mut admin_data = [];
         let mut vault_lamports = 1;
         let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
         let admin_account = AccountInfo::new(
             &admin,
             true,
             false,
             &mut admin_lamports,
-            &mut [],
+            &mut admin_data,
             &owner,
             false,
         );
@@ -258,105 +254,8 @@ mod tests {
         );
 
         assert_eq!(
-            try_set_vault_access(
-                &[admin_account, vault_account],
-                SetVaultAccessArgs {
-                    private: true,
-                    access_merkle_root: [7; 32],
-                },
-            ),
+            try_transfer_vault_authority(&[admin_account, vault_account], new_authority.to_bytes(),),
             Err(ProgramError::InvalidAccountData)
         );
-    }
-
-    #[test]
-    fn flips_private_vault_back_to_public() {
-        let admin = Pubkey::new_unique();
-        let base_mint = Pubkey::new_unique();
-        let (vault_key, mut vault) = test_vault(admin, base_mint);
-        vault.private = true;
-        vault.access_merkle_root = [7; 32];
-        let mut admin_lamports = 1;
-        let mut vault_lamports = 1;
-        let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
-        let admin_account = AccountInfo::new(
-            &admin,
-            true,
-            false,
-            &mut admin_lamports,
-            &mut [],
-            &owner,
-            false,
-        );
-        let vault_account = AccountInfo::new(
-            &vault_key,
-            false,
-            true,
-            &mut vault_lamports,
-            &mut vault_data,
-            &owner,
-            false,
-        );
-
-        try_set_vault_access(
-            &[admin_account, vault_account.clone()],
-            SetVaultAccessArgs {
-                private: false,
-                access_merkle_root: [0; 32],
-            },
-        )
-        .unwrap();
-
-        let vault = load_vault(&vault_account);
-
-        assert!(!vault.private);
-        assert_eq!(vault.access_merkle_root, [0; 32]);
-    }
-
-    #[test]
-    fn rotates_access_root_while_private() {
-        let admin = Pubkey::new_unique();
-        let base_mint = Pubkey::new_unique();
-        let (vault_key, mut vault) = test_vault(admin, base_mint);
-        vault.private = true;
-        vault.access_merkle_root = [7; 32];
-        let mut admin_lamports = 1;
-        let mut vault_lamports = 1;
-        let mut vault_data = serialize(&Account::Vault(vault)).unwrap();
-        let owner = crate::ID;
-        let admin_account = AccountInfo::new(
-            &admin,
-            true,
-            false,
-            &mut admin_lamports,
-            &mut [],
-            &owner,
-            false,
-        );
-        let vault_account = AccountInfo::new(
-            &vault_key,
-            false,
-            true,
-            &mut vault_lamports,
-            &mut vault_data,
-            &owner,
-            false,
-        );
-        let new_root = [8; 32];
-
-        try_set_vault_access(
-            &[admin_account, vault_account.clone()],
-            SetVaultAccessArgs {
-                private: true,
-                access_merkle_root: new_root,
-            },
-        )
-        .unwrap();
-
-        let vault = load_vault(&vault_account);
-
-        assert!(vault.private);
-        assert_eq!(vault.access_merkle_root, new_root);
     }
 }

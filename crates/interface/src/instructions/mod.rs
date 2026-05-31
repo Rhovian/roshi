@@ -1,8 +1,9 @@
 pub mod args;
 
 pub use args::{
-    IndexedActionArgs, InitializeAssetArgs, InitializeVaultArgs, SetPauseFlagsArgs,
-    SetVaultAccessArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+    IndexedActionArgs, InitializeAssetArgs, InitializeVaultArgs, SetNavAuthorityArgs,
+    SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    UpdateAssetArgs, UpdateVaultConfigArgs,
 };
 
 use crate::action::Ops;
@@ -29,11 +30,6 @@ pub enum RoshiInstruction {
     },
     #[wincode(tag = 5)]
     ManageBatch { actions: Vec<IndexedActionArgs> },
-    #[wincode(tag = 6)]
-    UpdateTotalAssets {
-        total_assets: u64,
-        report_hash: [u8; 32],
-    },
     #[wincode(tag = 7)]
     Deposit {
         asset_mint: [u8; 32],
@@ -61,6 +57,16 @@ pub enum RoshiInstruction {
     SetPauseFlags { args: SetPauseFlagsArgs },
     #[wincode(tag = 16)]
     SetVaultAccess { args: SetVaultAccessArgs },
+    #[wincode(tag = 17)]
+    TransferProgramAuthority { new_authority: [u8; 32] },
+    #[wincode(tag = 18)]
+    TransferVaultAuthority { new_authority: [u8; 32] },
+    #[wincode(tag = 19)]
+    SetStrategist { args: SetStrategistArgs },
+    #[wincode(tag = 20)]
+    SetNavAuthority { args: SetNavAuthorityArgs },
+    #[wincode(tag = 21)]
+    SetWithdrawalAuthority { args: SetWithdrawalAuthorityArgs },
 }
 
 #[cfg(test)]
@@ -113,6 +119,73 @@ mod tests {
             RoshiInstruction::SetVaultAccess { args } => {
                 assert!(args.private);
                 assert_eq!(args.access_merkle_root, [9; 32]);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn authority_transfer_instructions_round_trip() {
+        let encoded = serialize(&RoshiInstruction::TransferProgramAuthority {
+            new_authority: [3; 32],
+        })
+        .unwrap();
+
+        match deserialize(&encoded).unwrap() {
+            RoshiInstruction::TransferProgramAuthority { new_authority } => {
+                assert_eq!(new_authority, [3; 32]);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+
+        let encoded = serialize(&RoshiInstruction::TransferVaultAuthority {
+            new_authority: [4; 32],
+        })
+        .unwrap();
+
+        match deserialize(&encoded).unwrap() {
+            RoshiInstruction::TransferVaultAuthority { new_authority } => {
+                assert_eq!(new_authority, [4; 32]);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn rbac_setter_instructions_round_trip() {
+        let encoded = serialize(&RoshiInstruction::SetStrategist {
+            args: SetStrategistArgs {
+                strategist: [1; 32],
+            },
+        })
+        .unwrap();
+        match deserialize(&encoded).unwrap() {
+            RoshiInstruction::SetStrategist { args } => assert_eq!(args.strategist, [1; 32]),
+            _ => panic!("unexpected instruction"),
+        }
+
+        let encoded = serialize(&RoshiInstruction::SetNavAuthority {
+            args: SetNavAuthorityArgs {
+                nav_authority: [2; 32],
+            },
+        })
+        .unwrap();
+        match deserialize(&encoded).unwrap() {
+            RoshiInstruction::SetNavAuthority { args } => {
+                assert_eq!(args.nav_authority, [2; 32]);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+
+        let encoded = serialize(&RoshiInstruction::SetWithdrawalAuthority {
+            args: SetWithdrawalAuthorityArgs {
+                withdrawal_authority: [3; 32],
+            },
+        })
+        .unwrap();
+        match deserialize(&encoded).unwrap() {
+            RoshiInstruction::SetWithdrawalAuthority { args } => {
+                assert_eq!(args.withdrawal_authority, [3; 32]);
             }
             _ => panic!("unexpected instruction"),
         }

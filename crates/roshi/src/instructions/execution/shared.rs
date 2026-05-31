@@ -139,7 +139,7 @@ pub(super) struct ValidatedManageAccounts {
 /// # Checks
 ///
 /// - `vault_acc` must be a Roshi `Vault` account.
-/// - `vault_acc` must be the PDA for the loaded vault's `(admin, base_mint)`.
+/// - `vault_acc` must be the PDA for `[b"vault", tag, base_mint]`.
 /// - `strategist_acc` must sign and match the vault's strategist role.
 /// - `sub_account_acc` must be the PDA for `(vault_acc, sub_account_index)`.
 /// - `sub_account_acc` must be a non-executable system account with no data.

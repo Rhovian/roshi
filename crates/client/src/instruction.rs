@@ -1,5 +1,8 @@
 use roshi_interface::{
-    instructions::{IndexedActionArgs, RoshiInstruction, SetVaultAccessArgs},
+    instructions::{
+        IndexedActionArgs, RoshiInstruction, SetNavAuthorityArgs, SetStrategistArgs,
+        SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    },
     ID,
 };
 use solana_instruction::{AccountMeta, Instruction};
@@ -37,6 +40,86 @@ pub fn initialize_program(
         ],
         RoshiInstruction::InitializeProgram {
             authority: authority.to_bytes(),
+        },
+    )
+}
+
+pub fn transfer_program_authority(
+    authority: Pubkey,
+    program_config: Pubkey,
+    new_authority: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(program_config, false),
+        ],
+        RoshiInstruction::TransferProgramAuthority {
+            new_authority: new_authority.to_bytes(),
+        },
+    )
+}
+
+pub fn transfer_vault_authority(
+    authority: Pubkey,
+    vault: Pubkey,
+    new_authority: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(vault, false),
+        ],
+        RoshiInstruction::TransferVaultAuthority {
+            new_authority: new_authority.to_bytes(),
+        },
+    )
+}
+
+fn vault_admin_accounts(admin: Pubkey, vault: Pubkey) -> Vec<AccountMeta> {
+    vec![
+        AccountMeta::new_readonly(admin, true),
+        AccountMeta::new(vault, false),
+    ]
+}
+
+pub fn set_strategist(admin: Pubkey, vault: Pubkey, strategist: Pubkey) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        RoshiInstruction::SetStrategist {
+            args: SetStrategistArgs {
+                strategist: strategist.to_bytes(),
+            },
+        },
+    )
+}
+
+pub fn set_nav_authority(
+    admin: Pubkey,
+    vault: Pubkey,
+    nav_authority: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        RoshiInstruction::SetNavAuthority {
+            args: SetNavAuthorityArgs {
+                nav_authority: nav_authority.to_bytes(),
+            },
+        },
+    )
+}
+
+pub fn set_withdrawal_authority(
+    admin: Pubkey,
+    vault: Pubkey,
+    withdrawal_authority: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        RoshiInstruction::SetWithdrawalAuthority {
+            args: SetWithdrawalAuthorityArgs {
+                withdrawal_authority: withdrawal_authority.to_bytes(),
+            },
         },
     )
 }
@@ -135,10 +218,7 @@ pub fn set_vault_access(
     access_merkle_root: [u8; 32],
 ) -> Result<Instruction> {
     new(
-        vec![
-            AccountMeta::new_readonly(admin, true),
-            AccountMeta::new(vault, false),
-        ],
+        vault_admin_accounts(admin, vault),
         RoshiInstruction::SetVaultAccess {
             args: SetVaultAccessArgs {
                 private,
@@ -226,6 +306,87 @@ mod tests {
                 assert_eq!(accounts_start, 0);
                 assert_eq!(accounts_len, 1);
                 assert_eq!(decoded_ix_data, ix_data);
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_transfer_program_authority_instruction() {
+        let authority = Pubkey::new_unique();
+        let program_config = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
+
+        let ix = transfer_program_authority(authority, program_config, new_authority).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(authority, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(program_config, false));
+
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::TransferProgramAuthority {
+                new_authority: decoded,
+            } => {
+                assert_eq!(decoded, new_authority.to_bytes());
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_transfer_vault_authority_instruction() {
+        let authority = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let new_authority = Pubkey::new_unique();
+
+        let ix = transfer_vault_authority(authority, vault, new_authority).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(authority, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::TransferVaultAuthority {
+                new_authority: decoded,
+            } => {
+                assert_eq!(decoded, new_authority.to_bytes());
+            }
+            _ => panic!("unexpected instruction"),
+        }
+    }
+
+    #[test]
+    fn builds_vault_role_setter_instructions() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let strategist = Pubkey::new_unique();
+        let nav_authority = Pubkey::new_unique();
+        let withdrawal_authority = Pubkey::new_unique();
+
+        let ix = set_strategist(admin, vault, strategist).unwrap();
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::SetStrategist { args } => {
+                assert_eq!(args.strategist, strategist.to_bytes());
+            }
+            _ => panic!("unexpected instruction"),
+        }
+
+        let ix = set_nav_authority(admin, vault, nav_authority).unwrap();
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::SetNavAuthority { args } => {
+                assert_eq!(args.nav_authority, nav_authority.to_bytes());
+            }
+            _ => panic!("unexpected instruction"),
+        }
+
+        let ix = set_withdrawal_authority(admin, vault, withdrawal_authority).unwrap();
+        match wincode::deserialize(&ix.data).unwrap() {
+            RoshiInstruction::SetWithdrawalAuthority { args } => {
+                assert_eq!(args.withdrawal_authority, withdrawal_authority.to_bytes());
             }
             _ => panic!("unexpected instruction"),
         }

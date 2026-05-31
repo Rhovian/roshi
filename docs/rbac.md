@@ -13,12 +13,17 @@ withdrawal_authority: Pubkey,
 
 `admin` controls vault configuration:
 
-- update roles,
+- transfer vault admin authority,
+- update operational role authorities,
 - update pause flags,
 - update private/public access mode and access Merkle root,
 - configure supported assets,
 - authorize or revoke actions,
 - choose default deposit and withdrawal subaccounts.
+
+The vault PDA is derived from a fixed vault seed, a user-defined tag string,
+and the base asset: `[b"vault", tag, base_mint]`. It does not include the
+admin wallet, so admin transfers do not change the vault address.
 
 `strategist` executes authorized strategy CPIs through `manage` and
 `manage_batch`.
@@ -30,6 +35,41 @@ withdrawal_authority: Pubkey,
 These roles may be the same signer at launch, but the protocol models them
 separately so operations can move to distinct wallets, bots, or multisigs
 without changing account layout.
+
+Authority transfer has dedicated instruction surfaces:
+
+```rust
+TransferProgramAuthority {
+    new_authority,
+}
+
+TransferVaultAuthority {
+    new_authority,
+}
+```
+
+`TransferProgramAuthority` rotates the program-level authority that can create
+vaults. `TransferVaultAuthority` rotates `vault.admin`.
+
+Operational RBAC roles also have dedicated instruction surfaces:
+
+```rust
+SetStrategist {
+    strategist,
+}
+
+SetNavAuthority {
+    nav_authority,
+}
+
+SetWithdrawalAuthority {
+    withdrawal_authority,
+}
+```
+
+Other mutable vault config, such as fee collector, base oracle, default
+subaccounts, fee settings, and NAV guardrails, remains under
+`UpdateVaultConfig`.
 
 ## Pause Flags
 

@@ -14,6 +14,7 @@ pub enum RoshiError {
     InvalidWithdrawalTicketAccount = 9,
     InvalidAssetAccount = 10,
     InvalidAccessProof = 11,
+    InvalidVaultTag = 12,
 }
 
 impl From<RoshiError> for ProgramError {

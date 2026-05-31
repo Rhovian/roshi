@@ -38,6 +38,10 @@ impl ProgramConfig {
         Pubkey::from(self.authority)
     }
 
+    pub fn set_authority(&mut self, authority: Pubkey) {
+        self.authority = authority.to_bytes();
+    }
+
     pub fn verify_authority(config_acc: &AccountInfo, signer: &AccountInfo) -> ProgramResult {
         Self::verify_address(config_acc)?;
 
