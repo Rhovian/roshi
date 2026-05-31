@@ -1,7 +1,9 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-/// Implements [`crate::instructions::RoshiInstruction::Redeem`].
+use crate::instructions::RedeemArgs;
+
+/// Implements [`crate::instructions::RoshiInstructionTag::Redeem`].
 ///
 /// # Accounts
 ///
@@ -20,11 +22,6 @@ use solana_program_error::ProgramResult;
 /// current share price, enforces `min_assets_out`, burns or accounts shares,
 /// reduces `total_shares` and `total_assets`, and either pays immediately from
 /// `vault.withdraw_sub_account` custody or writes a queued withdrawal ticket.
-pub fn try_redeem(
-    _accounts: &[AccountInfo],
-    _ticket_index: u8,
-    _shares: u64,
-    _min_assets_out: u64,
-) -> ProgramResult {
+pub fn try_redeem(_accounts: &[AccountInfo], _args: RedeemArgs) -> ProgramResult {
     Ok(())
 }

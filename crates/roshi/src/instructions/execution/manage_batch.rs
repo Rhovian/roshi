@@ -1,4 +1,4 @@
-use crate::instructions::{accounts::next_account, IndexedActionArgs};
+use crate::instructions::{accounts::next_account, ManageBatchArgs};
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 
@@ -7,7 +7,7 @@ use super::shared::{
     ValidatedManageAccounts,
 };
 
-/// Implements [`crate::instructions::RoshiInstruction::ManageBatch`].
+/// Implements [`crate::instructions::RoshiInstructionTag::ManageBatch`].
 ///
 /// # Accounts
 ///
@@ -26,13 +26,10 @@ use super::shared::{
 /// using `accounts_start` and `accounts_len` as offsets into the shared CPI
 /// accounts. The target CPI program account must follow each selected CPI
 /// account meta slice.
-pub fn try_manage_batch(
-    accounts: &[AccountInfo],
-    actions: Vec<IndexedActionArgs>,
-) -> ProgramResult {
-    let accounts = ManageBatchAccounts::parse(accounts, actions.len())?;
+pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> ProgramResult {
+    let accounts = ManageBatchAccounts::parse(accounts, args.actions.len())?;
 
-    for (action, action_accounts) in actions.into_iter().zip(&accounts.action_accounts) {
+    for (action, action_accounts) in args.actions.into_iter().zip(&accounts.action_accounts) {
         let validated_accounts = accounts.validate_action(action_accounts, action.sub_account)?;
 
         let authorized_cpi = validate_authorized_cpi(

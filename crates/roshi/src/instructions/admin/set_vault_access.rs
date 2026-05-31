@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{admin::vault_update::update_vault_as_admin, SetVaultAccessArgs};
 
-/// Implements [`crate::instructions::RoshiInstruction::SetVaultAccess`].
+/// Implements [`crate::instructions::RoshiInstructionTag::SetVaultAccess`].
 ///
 /// # Accounts
 ///

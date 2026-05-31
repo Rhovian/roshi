@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::SetPauseFlagsArgs;
 
-/// Implements [`crate::instructions::RoshiInstruction::SetPauseFlags`].
+/// Implements [`crate::instructions::RoshiInstructionTag::SetPauseFlags`].
 ///
 /// # Accounts
 ///
@@ -17,6 +17,5 @@ use crate::instructions::SetPauseFlagsArgs;
 /// vault admin and atomically updates the deposit, withdrawal, and manage pause
 /// flags without touching the rest of the vault configuration.
 pub fn try_set_pause_flags(_accounts: &[AccountInfo], _args: SetPauseFlagsArgs) -> ProgramResult {
-    let _ = _args;
     Ok(())
 }

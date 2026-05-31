@@ -1,193 +1,133 @@
 pub mod args;
 
-pub use args::{
-    IndexedActionArgs, InitializeAssetArgs, InitializeVaultArgs, SetNavAuthorityArgs,
-    SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-    UpdateAssetArgs, UpdateVaultConfigArgs,
-};
+pub use args::*;
 
-use crate::action::Ops;
-use wincode::{SchemaRead, SchemaWrite};
+use wincode::{config::DefaultConfig, SchemaWrite};
 
-#[derive(SchemaWrite, SchemaRead)]
-#[wincode(tag_encoding = "u8")]
-pub enum RoshiInstruction {
-    #[wincode(tag = 0)]
-    InitializeProgram { authority: [u8; 32] },
-    #[wincode(tag = 1)]
-    InitializeVault { args: InitializeVaultArgs },
-    #[wincode(tag = 2)]
-    AuthorizeAction { action_hash: [u8; 32], ops: Ops },
-    #[wincode(tag = 3)]
-    RevokeAction { action_hash: [u8; 32] },
-    #[wincode(tag = 4)]
-    Manage {
-        sub_account: u8,
-        program_id: [u8; 32],
-        accounts_start: u8,
-        accounts_len: u8,
-        ix_data: Vec<u8>,
-    },
-    #[wincode(tag = 5)]
-    ManageBatch { actions: Vec<IndexedActionArgs> },
-    #[wincode(tag = 7)]
-    Deposit {
-        asset_mint: [u8; 32],
-        amount: u64,
-        min_shares_out: u64,
-        access_proof: Vec<[u8; 32]>,
-    },
-    #[wincode(tag = 8)]
-    Redeem {
-        ticket_index: u8,
-        shares: u64,
-        min_assets_out: u64,
-    },
-    #[wincode(tag = 10)]
-    ProcessWithdrawals,
-    #[wincode(tag = 11)]
-    UpdateVaultConfig { args: UpdateVaultConfigArgs },
-    #[wincode(tag = 12)]
-    InitializeAsset { args: InitializeAssetArgs },
-    #[wincode(tag = 13)]
-    UpdateAsset { args: UpdateAssetArgs },
-    #[wincode(tag = 14)]
-    InitializeSubAccount { index: u8 },
-    #[wincode(tag = 15)]
-    SetPauseFlags { args: SetPauseFlagsArgs },
-    #[wincode(tag = 16)]
-    SetVaultAccess { args: SetVaultAccessArgs },
-    #[wincode(tag = 17)]
-    TransferProgramAuthority { new_authority: [u8; 32] },
-    #[wincode(tag = 18)]
-    TransferVaultAuthority { new_authority: [u8; 32] },
-    #[wincode(tag = 19)]
-    SetStrategist { args: SetStrategistArgs },
-    #[wincode(tag = 20)]
-    SetNavAuthority { args: SetNavAuthorityArgs },
-    #[wincode(tag = 21)]
-    SetWithdrawalAuthority { args: SetWithdrawalAuthorityArgs },
+pub trait InstructionArgs: SchemaWrite<DefaultConfig, Src = Self> {
+    const TAG: RoshiInstructionTag;
+}
+
+macro_rules! roshi_instructions {
+    ($( $variant:ident = $tag:literal => $args:ty ),+ $(,)?) => {
+        #[repr(u8)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub enum RoshiInstructionTag {
+            $(
+                $variant = $tag,
+            )+
+        }
+
+        impl TryFrom<u8> for RoshiInstructionTag {
+            type Error = ();
+
+            fn try_from(value: u8) -> Result<Self, Self::Error> {
+                match value {
+                    $(
+                        $tag => Ok(Self::$variant),
+                    )+
+                    _ => Err(()),
+                }
+            }
+        }
+
+        impl From<RoshiInstructionTag> for u8 {
+            fn from(tag: RoshiInstructionTag) -> Self {
+                tag as u8
+            }
+        }
+
+        $(
+            impl InstructionArgs for $args {
+                const TAG: RoshiInstructionTag = RoshiInstructionTag::$variant;
+            }
+        )+
+
+        #[cfg(test)]
+        const TAG_CASES: &[(u8, RoshiInstructionTag)] = &[
+            $(
+                ($tag, RoshiInstructionTag::$variant),
+            )+
+        ];
+    };
+}
+
+roshi_instructions! {
+    InitializeProgram = 0 => InitializeProgramArgs,
+    InitializeVault = 1 => InitializeVaultArgs,
+    AuthorizeAction = 2 => AuthorizeActionArgs,
+    RevokeAction = 3 => RevokeActionArgs,
+    Manage = 4 => ManageArgs,
+    ManageBatch = 5 => ManageBatchArgs,
+    Deposit = 7 => DepositArgs,
+    Redeem = 8 => RedeemArgs,
+    ProcessWithdrawals = 10 => ProcessWithdrawalsArgs,
+    UpdateVaultConfig = 11 => UpdateVaultConfigArgs,
+    InitializeAsset = 12 => InitializeAssetArgs,
+    UpdateAsset = 13 => UpdateAssetArgs,
+    InitializeSubAccount = 14 => InitializeSubAccountArgs,
+    SetPauseFlags = 15 => SetPauseFlagsArgs,
+    SetVaultAccess = 16 => SetVaultAccessArgs,
+    TransferProgramAuthority = 17 => TransferProgramAuthorityArgs,
+    TransferVaultAuthority = 18 => TransferVaultAuthorityArgs,
+    SetStrategist = 19 => SetStrategistArgs,
+    SetNavAuthority = 20 => SetNavAuthorityArgs,
+    SetWithdrawalAuthority = 21 => SetWithdrawalAuthorityArgs,
+}
+
+pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
+where
+    T: InstructionArgs,
+{
+    let mut data = vec![u8::from(T::TAG)];
+    wincode::serialize_into(&mut data, args)?;
+    Ok(data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wincode::{deserialize, serialize};
+    use wincode::deserialize_exact;
 
     #[test]
-    fn deposit_round_trips_with_access_proof() {
-        let proof = vec![[1; 32], [2; 32], [3; 32]];
-        let encoded = serialize(&RoshiInstruction::Deposit {
+    fn instruction_tags_round_trip_from_wire_byte() {
+        for (wire_byte, tag) in TAG_CASES {
+            assert_eq!(u8::from(*tag), *wire_byte);
+            assert_eq!(RoshiInstructionTag::try_from(*wire_byte), Ok(*tag));
+        }
+    }
+
+    #[test]
+    fn instruction_tag_rejects_unknown_values() {
+        assert_eq!(RoshiInstructionTag::try_from(6), Err(()));
+        assert_eq!(RoshiInstructionTag::try_from(9), Err(()));
+        assert_eq!(RoshiInstructionTag::try_from(255), Err(()));
+    }
+
+    #[test]
+    fn serialize_instruction_writes_tag_then_args_payload() {
+        let args = DepositArgs {
             asset_mint: [4; 32],
             amount: 123,
             min_shares_out: 456,
-            access_proof: proof.clone(),
-        })
-        .unwrap();
+            access_proof: vec![[1; 32], [2; 32], [3; 32]],
+        };
 
-        let decoded = deserialize(&encoded).unwrap();
+        let encoded = serialize_instruction(&args).unwrap();
+        let decoded: DepositArgs = deserialize_exact(&encoded[1..]).unwrap();
 
-        match decoded {
-            RoshiInstruction::Deposit {
-                asset_mint,
-                amount,
-                min_shares_out,
-                access_proof,
-            } => {
-                assert_eq!(asset_mint, [4; 32]);
-                assert_eq!(amount, 123);
-                assert_eq!(min_shares_out, 456);
-                assert_eq!(access_proof, proof);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        assert_eq!(encoded[0], u8::from(RoshiInstructionTag::Deposit));
+        assert_eq!(decoded.asset_mint, [4; 32]);
+        assert_eq!(decoded.amount, 123);
+        assert_eq!(decoded.min_shares_out, 456);
+        assert_eq!(decoded.access_proof, vec![[1; 32], [2; 32], [3; 32]]);
     }
 
     #[test]
-    fn set_vault_access_round_trips() {
-        let encoded = serialize(&RoshiInstruction::SetVaultAccess {
-            args: SetVaultAccessArgs {
-                private: true,
-                access_merkle_root: [9; 32],
-            },
-        })
-        .unwrap();
-
-        let decoded = deserialize(&encoded).unwrap();
-
-        match decoded {
-            RoshiInstruction::SetVaultAccess { args } => {
-                assert!(args.private);
-                assert_eq!(args.access_merkle_root, [9; 32]);
-            }
-            _ => panic!("unexpected instruction"),
-        }
-    }
-
-    #[test]
-    fn authority_transfer_instructions_round_trip() {
-        let encoded = serialize(&RoshiInstruction::TransferProgramAuthority {
-            new_authority: [3; 32],
-        })
-        .unwrap();
-
-        match deserialize(&encoded).unwrap() {
-            RoshiInstruction::TransferProgramAuthority { new_authority } => {
-                assert_eq!(new_authority, [3; 32]);
-            }
-            _ => panic!("unexpected instruction"),
-        }
-
-        let encoded = serialize(&RoshiInstruction::TransferVaultAuthority {
-            new_authority: [4; 32],
-        })
-        .unwrap();
-
-        match deserialize(&encoded).unwrap() {
-            RoshiInstruction::TransferVaultAuthority { new_authority } => {
-                assert_eq!(new_authority, [4; 32]);
-            }
-            _ => panic!("unexpected instruction"),
-        }
-    }
-
-    #[test]
-    fn rbac_setter_instructions_round_trip() {
-        let encoded = serialize(&RoshiInstruction::SetStrategist {
-            args: SetStrategistArgs {
-                strategist: [1; 32],
-            },
-        })
-        .unwrap();
-        match deserialize(&encoded).unwrap() {
-            RoshiInstruction::SetStrategist { args } => assert_eq!(args.strategist, [1; 32]),
-            _ => panic!("unexpected instruction"),
-        }
-
-        let encoded = serialize(&RoshiInstruction::SetNavAuthority {
-            args: SetNavAuthorityArgs {
-                nav_authority: [2; 32],
-            },
-        })
-        .unwrap();
-        match deserialize(&encoded).unwrap() {
-            RoshiInstruction::SetNavAuthority { args } => {
-                assert_eq!(args.nav_authority, [2; 32]);
-            }
-            _ => panic!("unexpected instruction"),
-        }
-
-        let encoded = serialize(&RoshiInstruction::SetWithdrawalAuthority {
-            args: SetWithdrawalAuthorityArgs {
-                withdrawal_authority: [3; 32],
-            },
-        })
-        .unwrap();
-        match deserialize(&encoded).unwrap() {
-            RoshiInstruction::SetWithdrawalAuthority { args } => {
-                assert_eq!(args.withdrawal_authority, [3; 32]);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+    fn serialize_zero_sized_args_writes_only_tag() {
+        assert_eq!(
+            serialize_instruction(&ProcessWithdrawalsArgs).unwrap(),
+            vec![u8::from(RoshiInstructionTag::ProcessWithdrawals)]
+        );
     }
 }

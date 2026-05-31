@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::UpdateVaultConfigArgs;
 
-/// Implements [`crate::instructions::RoshiInstruction::UpdateVaultConfig`].
+/// Implements [`crate::instructions::RoshiInstructionTag::UpdateVaultConfig`].
 ///
 /// # Accounts
 ///
@@ -24,6 +24,5 @@ pub fn try_update_vault_config(
     _accounts: &[AccountInfo],
     _args: UpdateVaultConfigArgs,
 ) -> ProgramResult {
-    let _ = _args;
     Ok(())
 }

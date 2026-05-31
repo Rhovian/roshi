@@ -1,7 +1,9 @@
 use roshi_interface::{
     instructions::{
-        IndexedActionArgs, InitializeVaultArgs, RoshiInstruction, SetNavAuthorityArgs,
-        SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+        serialize_instruction, DepositArgs, InitializeProgramArgs, InitializeVaultArgs,
+        InstructionArgs, ManageArgs, ManageBatchArgs, SetNavAuthorityArgs, SetStrategistArgs,
+        SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
+        TransferVaultAuthorityArgs,
     },
     ID,
 };
@@ -11,19 +13,25 @@ use solana_system_interface::program as system_program;
 
 pub type Result<T> = core::result::Result<T, wincode::WriteError>;
 
-pub fn new(accounts: Vec<AccountMeta>, instruction: RoshiInstruction) -> Result<Instruction> {
-    new_with_program_id(ID, accounts, instruction)
+pub fn new<T>(accounts: Vec<AccountMeta>, args: &T) -> Result<Instruction>
+where
+    T: InstructionArgs,
+{
+    new_with_program_id(ID, accounts, args)
 }
 
-pub fn new_with_program_id(
+pub fn new_with_program_id<T>(
     program_id: Pubkey,
     accounts: Vec<AccountMeta>,
-    instruction: RoshiInstruction,
-) -> Result<Instruction> {
+    args: &T,
+) -> Result<Instruction>
+where
+    T: InstructionArgs,
+{
     Ok(Instruction {
         program_id,
         accounts,
-        data: wincode::serialize(&instruction)?,
+        data: serialize_instruction(args)?,
     })
 }
 
@@ -38,7 +46,7 @@ pub fn initialize_program(
             AccountMeta::new(program_config, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
-        RoshiInstruction::InitializeProgram {
+        &InitializeProgramArgs {
             authority: authority.to_bytes(),
         },
     )
@@ -59,7 +67,7 @@ pub fn initialize_vault(
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
-        RoshiInstruction::InitializeVault { args },
+        &args,
     )
 }
 
@@ -73,7 +81,7 @@ pub fn transfer_program_authority(
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(program_config, false),
         ],
-        RoshiInstruction::TransferProgramAuthority {
+        &TransferProgramAuthorityArgs {
             new_authority: new_authority.to_bytes(),
         },
     )
@@ -89,7 +97,7 @@ pub fn transfer_vault_authority(
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(vault, false),
         ],
-        RoshiInstruction::TransferVaultAuthority {
+        &TransferVaultAuthorityArgs {
             new_authority: new_authority.to_bytes(),
         },
     )
@@ -105,10 +113,8 @@ fn vault_admin_accounts(admin: Pubkey, vault: Pubkey) -> Vec<AccountMeta> {
 pub fn set_strategist(admin: Pubkey, vault: Pubkey, strategist: Pubkey) -> Result<Instruction> {
     new(
         vault_admin_accounts(admin, vault),
-        RoshiInstruction::SetStrategist {
-            args: SetStrategistArgs {
-                strategist: strategist.to_bytes(),
-            },
+        &SetStrategistArgs {
+            strategist: strategist.to_bytes(),
         },
     )
 }
@@ -120,10 +126,8 @@ pub fn set_nav_authority(
 ) -> Result<Instruction> {
     new(
         vault_admin_accounts(admin, vault),
-        RoshiInstruction::SetNavAuthority {
-            args: SetNavAuthorityArgs {
-                nav_authority: nav_authority.to_bytes(),
-            },
+        &SetNavAuthorityArgs {
+            nav_authority: nav_authority.to_bytes(),
         },
     )
 }
@@ -135,10 +139,8 @@ pub fn set_withdrawal_authority(
 ) -> Result<Instruction> {
     new(
         vault_admin_accounts(admin, vault),
-        RoshiInstruction::SetWithdrawalAuthority {
-            args: SetWithdrawalAuthorityArgs {
-                withdrawal_authority: withdrawal_authority.to_bytes(),
-            },
+        &SetWithdrawalAuthorityArgs {
+            withdrawal_authority: withdrawal_authority.to_bytes(),
         },
     )
 }
@@ -149,7 +151,7 @@ pub fn manage(
     sub_account_pda: Pubkey,
     action: Pubkey,
     cpi_accounts: Vec<AccountMeta>,
-    args: IndexedActionArgs,
+    args: ManageArgs,
 ) -> Result<Instruction> {
     let mut accounts = vec![
         AccountMeta::new_readonly(strategist, true),
@@ -159,16 +161,7 @@ pub fn manage(
     ];
     accounts.extend(cpi_accounts);
 
-    new(
-        accounts,
-        RoshiInstruction::Manage {
-            sub_account: args.sub_account,
-            program_id: args.program_id,
-            accounts_start: args.accounts_start,
-            accounts_len: args.accounts_len,
-            ix_data: args.ix_data,
-        },
-    )
+    new(accounts, &args)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -182,7 +175,7 @@ pub fn manage_batch(
     vault: Pubkey,
     action_accounts: Vec<ManageBatchActionAccounts>,
     cpi_accounts: Vec<AccountMeta>,
-    actions: Vec<IndexedActionArgs>,
+    actions: Vec<ManageArgs>,
 ) -> Result<Instruction> {
     let mut accounts = Vec::with_capacity(2 + action_accounts.len() * 2 + cpi_accounts.len());
     accounts.push(AccountMeta::new_readonly(strategist, true));
@@ -195,7 +188,7 @@ pub fn manage_batch(
 
     accounts.extend(cpi_accounts);
 
-    new(accounts, RoshiInstruction::ManageBatch { actions })
+    new(accounts, &ManageBatchArgs { actions })
 }
 
 pub fn deposit(
@@ -221,7 +214,7 @@ pub fn deposit(
 
     new(
         accounts,
-        RoshiInstruction::Deposit {
+        &DepositArgs {
             asset_mint: asset_mint.to_bytes(),
             amount,
             min_shares_out,
@@ -238,11 +231,9 @@ pub fn set_vault_access(
 ) -> Result<Instruction> {
     new(
         vault_admin_accounts(admin, vault),
-        RoshiInstruction::SetVaultAccess {
-            args: SetVaultAccessArgs {
-                private,
-                access_merkle_root,
-            },
+        &SetVaultAccessArgs {
+            private,
+            access_merkle_root,
         },
     )
 }
@@ -250,6 +241,15 @@ pub fn set_vault_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wincode::{config::DefaultConfig, SchemaRead};
+
+    fn decode_args<'a, T>(data: &'a [u8]) -> T
+    where
+        T: InstructionArgs + SchemaRead<'a, DefaultConfig, Dst = T>,
+    {
+        assert_eq!(data[0], u8::from(T::TAG));
+        wincode::deserialize_exact(&data[1..]).unwrap()
+    }
 
     #[test]
     fn builds_initialize_program_instruction() {
@@ -268,12 +268,8 @@ mod tests {
             AccountMeta::new_readonly(system_program::ID, false)
         );
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::InitializeProgram { authority: decoded } => {
-                assert_eq!(decoded, authority.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: InitializeProgramArgs = decode_args(&ix.data);
+        assert_eq!(args.authority, authority.to_bytes());
     }
 
     #[test]
@@ -325,16 +321,12 @@ mod tests {
             AccountMeta::new_readonly(system_program::ID, false)
         );
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::InitializeVault { args } => {
-                assert_eq!(args.tag, [1; 32]);
-                assert_eq!(args.tag_len, 4);
-                assert_eq!(args.base_mint, base_mint.to_bytes());
-                assert_eq!(args.share_mint, share_mint.to_bytes());
-                assert!(args.private);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: InitializeVaultArgs = decode_args(&ix.data);
+        assert_eq!(args.tag, [1; 32]);
+        assert_eq!(args.tag_len, 4);
+        assert_eq!(args.base_mint, base_mint.to_bytes());
+        assert_eq!(args.share_mint, share_mint.to_bytes());
+        assert!(args.private);
     }
 
     #[test]
@@ -356,7 +348,7 @@ mod tests {
                 AccountMeta::new(cpi_account, false),
                 AccountMeta::new_readonly(cpi_program, false),
             ],
-            IndexedActionArgs {
+            ManageArgs {
                 sub_account: 7,
                 program_id: cpi_program.to_bytes(),
                 accounts_start: 0,
@@ -373,22 +365,12 @@ mod tests {
         assert_eq!(ix.accounts[2], AccountMeta::new(sub_account_pda, false));
         assert_eq!(ix.accounts[3], AccountMeta::new_readonly(action, false));
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::Manage {
-                sub_account,
-                program_id,
-                accounts_start,
-                accounts_len,
-                ix_data: decoded_ix_data,
-            } => {
-                assert_eq!(sub_account, 7);
-                assert_eq!(program_id, cpi_program.to_bytes());
-                assert_eq!(accounts_start, 0);
-                assert_eq!(accounts_len, 1);
-                assert_eq!(decoded_ix_data, ix_data);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: ManageArgs = decode_args(&ix.data);
+        assert_eq!(args.sub_account, 7);
+        assert_eq!(args.program_id, cpi_program.to_bytes());
+        assert_eq!(args.accounts_start, 0);
+        assert_eq!(args.accounts_len, 1);
+        assert_eq!(args.ix_data, ix_data);
     }
 
     #[test]
@@ -404,14 +386,8 @@ mod tests {
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(authority, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(program_config, false));
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::TransferProgramAuthority {
-                new_authority: decoded,
-            } => {
-                assert_eq!(decoded, new_authority.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: TransferProgramAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.new_authority, new_authority.to_bytes());
     }
 
     #[test]
@@ -427,14 +403,8 @@ mod tests {
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(authority, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::TransferVaultAuthority {
-                new_authority: decoded,
-            } => {
-                assert_eq!(decoded, new_authority.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: TransferVaultAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.new_authority, new_authority.to_bytes());
     }
 
     #[test]
@@ -448,28 +418,16 @@ mod tests {
         let ix = set_strategist(admin, vault, strategist).unwrap();
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::SetStrategist { args } => {
-                assert_eq!(args.strategist, strategist.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: SetStrategistArgs = decode_args(&ix.data);
+        assert_eq!(args.strategist, strategist.to_bytes());
 
         let ix = set_nav_authority(admin, vault, nav_authority).unwrap();
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::SetNavAuthority { args } => {
-                assert_eq!(args.nav_authority, nav_authority.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: SetNavAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.nav_authority, nav_authority.to_bytes());
 
         let ix = set_withdrawal_authority(admin, vault, withdrawal_authority).unwrap();
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::SetWithdrawalAuthority { args } => {
-                assert_eq!(args.withdrawal_authority, withdrawal_authority.to_bytes());
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: SetWithdrawalAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.withdrawal_authority, withdrawal_authority.to_bytes());
     }
 
     #[test]
@@ -506,20 +464,11 @@ mod tests {
         assert_eq!(ix.accounts[4], AccountMeta::new(shares, false));
         assert_eq!(ix.accounts[5], AccountMeta::new_readonly(asset_pda, false));
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::Deposit {
-                asset_mint: decoded_asset_mint,
-                amount,
-                min_shares_out,
-                access_proof,
-            } => {
-                assert_eq!(decoded_asset_mint, asset_mint.to_bytes());
-                assert_eq!(amount, 123);
-                assert_eq!(min_shares_out, 456);
-                assert_eq!(access_proof, proof);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: DepositArgs = decode_args(&ix.data);
+        assert_eq!(args.asset_mint, asset_mint.to_bytes());
+        assert_eq!(args.amount, 123);
+        assert_eq!(args.min_shares_out, 456);
+        assert_eq!(args.access_proof, proof);
     }
 
     #[test]
@@ -535,12 +484,8 @@ mod tests {
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
 
-        match wincode::deserialize(&ix.data).unwrap() {
-            RoshiInstruction::SetVaultAccess { args } => {
-                assert!(args.private);
-                assert_eq!(args.access_merkle_root, root);
-            }
-            _ => panic!("unexpected instruction"),
-        }
+        let args: SetVaultAccessArgs = decode_args(&ix.data);
+        assert!(args.private);
+        assert_eq!(args.access_merkle_root, root);
     }
 }

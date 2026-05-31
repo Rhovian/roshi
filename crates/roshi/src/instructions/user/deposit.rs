@@ -1,9 +1,10 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
+use crate::instructions::DepositArgs;
 use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError};
 
-/// Implements [`crate::instructions::RoshiInstruction::Deposit`].
+/// Implements [`crate::instructions::RoshiInstructionTag::Deposit`].
 ///
 /// # Accounts
 ///
@@ -25,14 +26,8 @@ use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError};
 /// `vault.deposit_sub_account`, normalizes enabled non-base assets through
 /// their Asset PDA and oracle, mints or accounts shares, increases
 /// `total_assets` and `total_shares`, and enforces `min_shares_out`.
-pub fn try_deposit(
-    _accounts: &[AccountInfo],
-    _asset_mint: [u8; 32],
-    _amount: u64,
-    _min_shares_out: u64,
-    access_proof: Vec<[u8; 32]>,
-) -> ProgramResult {
-    if access_proof.len() > MAX_ACCESS_PROOF_LEN {
+pub fn try_deposit(_accounts: &[AccountInfo], args: DepositArgs) -> ProgramResult {
+    if args.access_proof.len() > MAX_ACCESS_PROOF_LEN {
         return Err(RoshiError::InvalidAccessProof.into());
     }
 
@@ -47,7 +42,15 @@ mod tests {
     #[test]
     fn rejects_oversized_access_proof() {
         assert_eq!(
-            try_deposit(&[], [0; 32], 1, 1, vec![[0; 32]; MAX_ACCESS_PROOF_LEN + 1],),
+            try_deposit(
+                &[],
+                DepositArgs {
+                    asset_mint: [0; 32],
+                    amount: 1,
+                    min_shares_out: 1,
+                    access_proof: vec![[0; 32]; MAX_ACCESS_PROOF_LEN + 1],
+                },
+            ),
             Err(ProgramError::from(RoshiError::InvalidAccessProof))
         );
     }

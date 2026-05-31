@@ -17,7 +17,7 @@ use crate::{
     state::{program_config::ProgramConfig, vault::Vault, Account},
 };
 
-/// Implements [`crate::instructions::RoshiInstruction::InitializeVault`].
+/// Implements [`crate::instructions::RoshiInstructionTag::InitializeVault`].
 ///
 /// # Accounts
 ///

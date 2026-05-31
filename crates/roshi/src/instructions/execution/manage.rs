@@ -5,9 +5,9 @@ use super::shared::{
     invoke_authorized_cpi, validate_authorized_cpi, validate_manage_accounts,
     ValidatedManageAccounts,
 };
-use crate::instructions::accounts::next_account;
+use crate::instructions::{accounts::next_account, ManageArgs};
 
-/// Implements [`crate::instructions::RoshiInstruction::Manage`].
+/// Implements [`crate::instructions::RoshiInstructionTag::Manage`].
 ///
 /// # Accounts
 ///
@@ -23,24 +23,17 @@ use crate::instructions::accounts::next_account;
 /// Consumes the fixed Roshi accounts from the front of the account list,
 /// validates their expected shapes, validates the CPI authorization against the
 /// remaining CPI account section, then invokes the prepared CPI.
-pub fn try_manage(
-    accounts: &[AccountInfo],
-    sub_account: u8,
-    program_id: [u8; 32],
-    accounts_start: u8,
-    accounts_len: u8,
-    ix_data: Vec<u8>,
-) -> ProgramResult {
+pub fn try_manage(accounts: &[AccountInfo], args: ManageArgs) -> ProgramResult {
     let accounts = ManageAccounts::parse(accounts)?;
-    let validated_accounts = accounts.validate(sub_account)?;
+    let validated_accounts = accounts.validate(args.sub_account)?;
 
     let authorized_cpi = validate_authorized_cpi(
         accounts.cpi_accounts,
         &validated_accounts,
-        program_id,
-        accounts_start,
-        accounts_len,
-        ix_data,
+        args.program_id,
+        args.accounts_start,
+        args.accounts_len,
+        args.ix_data,
     )?;
 
     invoke_authorized_cpi(&authorized_cpi)

@@ -4,11 +4,11 @@ use solana_pubkey::Pubkey;
 use wincode::serialize;
 
 use crate::{
-    instructions::accounts::next_account,
+    instructions::{accounts::next_account, TransferProgramAuthorityArgs},
     state::{program_config::ProgramConfig, Account},
 };
 
-/// Implements [`crate::instructions::RoshiInstruction::TransferProgramAuthority`].
+/// Implements [`crate::instructions::RoshiInstructionTag::TransferProgramAuthority`].
 ///
 /// # Accounts
 ///
@@ -19,7 +19,7 @@ use crate::{
 /// The program authority is the protocol-level role allowed to create vaults.
 pub fn try_transfer_program_authority(
     accounts: &[AccountInfo],
-    new_authority: [u8; 32],
+    args: TransferProgramAuthorityArgs,
 ) -> ProgramResult {
     let mut accounts_iter = accounts.iter();
     let authority = next_account(&mut accounts_iter)?;
@@ -32,7 +32,7 @@ pub fn try_transfer_program_authority(
     ProgramConfig::verify_authority(program_config_account, authority)?;
 
     let mut program_config = Account::load_as::<ProgramConfig>(program_config_account)?;
-    program_config.set_authority(Pubkey::from(new_authority));
+    program_config.set_authority(Pubkey::from(args.new_authority));
 
     let serialized = serialize(&Account::ProgramConfig(program_config))
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -89,7 +89,9 @@ mod tests {
 
         try_transfer_program_authority(
             &[authority_account, program_config_account.clone()],
-            new_authority.to_bytes(),
+            TransferProgramAuthorityArgs {
+                new_authority: new_authority.to_bytes(),
+            },
         )
         .unwrap();
 
@@ -132,7 +134,9 @@ mod tests {
         assert_eq!(
             try_transfer_program_authority(
                 &[authority_account, program_config_account],
-                new_authority.to_bytes(),
+                TransferProgramAuthorityArgs {
+                    new_authority: new_authority.to_bytes(),
+                },
             ),
             Err(ProgramError::IllegalOwner)
         );
@@ -170,7 +174,9 @@ mod tests {
         assert_eq!(
             try_transfer_program_authority(
                 &[authority_account, program_config_account],
-                new_authority.to_bytes(),
+                TransferProgramAuthorityArgs {
+                    new_authority: new_authority.to_bytes(),
+                },
             ),
             Err(ProgramError::MissingRequiredSignature)
         );
@@ -208,7 +214,9 @@ mod tests {
         assert_eq!(
             try_transfer_program_authority(
                 &[authority_account, program_config_account],
-                new_authority.to_bytes(),
+                TransferProgramAuthorityArgs {
+                    new_authority: new_authority.to_bytes(),
+                },
             ),
             Err(ProgramError::InvalidAccountData)
         );

@@ -1,13 +1,9 @@
-use crate::oracle::OracleConfig;
+use crate::{action::Ops, oracle::OracleConfig};
 use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(SchemaWrite, SchemaRead)]
-pub struct IndexedActionArgs {
-    pub sub_account: u8,
-    pub program_id: [u8; 32],
-    pub accounts_start: u8,
-    pub accounts_len: u8,
-    pub ix_data: Vec<u8>,
+pub struct InitializeProgramArgs {
+    pub authority: [u8; 32],
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -34,6 +30,61 @@ pub struct InitializeVaultArgs {
 }
 
 #[derive(SchemaWrite, SchemaRead)]
+pub struct AuthorizeActionArgs {
+    pub action_hash: [u8; 32],
+    pub ops: Ops,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct RevokeActionArgs {
+    pub action_hash: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct ManageArgs {
+    pub sub_account: u8,
+    pub program_id: [u8; 32],
+    pub accounts_start: u8,
+    pub accounts_len: u8,
+    pub ix_data: Vec<u8>,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct ManageBatchArgs {
+    pub actions: Vec<ManageArgs>,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct DepositArgs {
+    pub asset_mint: [u8; 32],
+    pub amount: u64,
+    pub min_shares_out: u64,
+    pub access_proof: Vec<[u8; 32]>,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct RedeemArgs {
+    pub ticket_index: u8,
+    pub shares: u64,
+    pub min_assets_out: u64,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct ProcessWithdrawalsArgs;
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct UpdateVaultConfigArgs {
+    pub fee_collector: [u8; 32],
+    pub deposit_sub_account: u8,
+    pub withdraw_sub_account: u8,
+    pub base_oracle: OracleConfig,
+    pub performance_fee_bps: u16,
+    pub withdrawal_buffer_bps: u16,
+    pub max_change_bps: u16,
+    pub min_update_interval: i64,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
 pub struct InitializeAssetArgs {
     pub asset_mint: [u8; 32],
     pub custody_token_account: [u8; 32],
@@ -55,15 +106,8 @@ pub struct UpdateAssetArgs {
 }
 
 #[derive(SchemaWrite, SchemaRead)]
-pub struct UpdateVaultConfigArgs {
-    pub fee_collector: [u8; 32],
-    pub deposit_sub_account: u8,
-    pub withdraw_sub_account: u8,
-    pub base_oracle: OracleConfig,
-    pub performance_fee_bps: u16,
-    pub withdrawal_buffer_bps: u16,
-    pub max_change_bps: u16,
-    pub min_update_interval: i64,
+pub struct InitializeSubAccountArgs {
+    pub index: u8,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -77,6 +121,16 @@ pub struct SetPauseFlagsArgs {
 pub struct SetVaultAccessArgs {
     pub private: bool,
     pub access_merkle_root: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct TransferProgramAuthorityArgs {
+    pub new_authority: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct TransferVaultAuthorityArgs {
+    pub new_authority: [u8; 32],
 }
 
 #[derive(SchemaWrite, SchemaRead)]

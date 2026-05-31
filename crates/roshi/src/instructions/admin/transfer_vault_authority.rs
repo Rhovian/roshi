@@ -1,9 +1,9 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use crate::instructions::admin::vault_update::update_vault_as_admin;
+use crate::instructions::{admin::vault_update::update_vault_as_admin, TransferVaultAuthorityArgs};
 
-/// Implements [`crate::instructions::RoshiInstruction::TransferVaultAuthority`].
+/// Implements [`crate::instructions::RoshiInstructionTag::TransferVaultAuthority`].
 ///
 /// # Accounts
 ///
@@ -15,10 +15,10 @@ use crate::instructions::admin::vault_update::update_vault_as_admin;
 /// so the vault address continues to verify after the admin changes.
 pub fn try_transfer_vault_authority(
     accounts: &[AccountInfo],
-    new_authority: [u8; 32],
+    args: TransferVaultAuthorityArgs,
 ) -> ProgramResult {
     update_vault_as_admin(accounts, |vault| {
-        vault.admin = new_authority;
+        vault.admin = args.new_authority;
         Ok(())
     })
 }
@@ -114,7 +114,9 @@ mod tests {
 
         try_transfer_vault_authority(
             &[admin_account, vault_account.clone()],
-            new_authority.to_bytes(),
+            TransferVaultAuthorityArgs {
+                new_authority: new_authority.to_bytes(),
+            },
         )
         .unwrap();
 
@@ -157,7 +159,9 @@ mod tests {
         assert_eq!(
             try_transfer_vault_authority(
                 &[authority_account, vault_account],
-                Pubkey::new_unique().to_bytes(),
+                TransferVaultAuthorityArgs {
+                    new_authority: Pubkey::new_unique().to_bytes(),
+                },
             ),
             Err(ProgramError::IllegalOwner)
         );
@@ -194,7 +198,12 @@ mod tests {
         );
 
         assert_eq!(
-            try_transfer_vault_authority(&[admin_account, vault_account], new_authority.to_bytes(),),
+            try_transfer_vault_authority(
+                &[admin_account, vault_account],
+                TransferVaultAuthorityArgs {
+                    new_authority: new_authority.to_bytes(),
+                },
+            ),
             Err(ProgramError::MissingRequiredSignature)
         );
     }
@@ -230,7 +239,12 @@ mod tests {
         );
 
         assert_eq!(
-            try_transfer_vault_authority(&[admin_account, vault_account], new_authority.to_bytes(),),
+            try_transfer_vault_authority(
+                &[admin_account, vault_account],
+                TransferVaultAuthorityArgs {
+                    new_authority: new_authority.to_bytes(),
+                },
+            ),
             Err(ProgramError::InvalidAccountData)
         );
     }

@@ -1,9 +1,9 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use crate::state::action::Ops;
+use crate::instructions::AuthorizeActionArgs;
 
-/// Implements [`crate::instructions::RoshiInstruction::AuthorizeAction`].
+/// Implements [`crate::instructions::RoshiInstructionTag::AuthorizeAction`].
 ///
 /// # Accounts
 ///
@@ -20,9 +20,7 @@ use crate::state::action::Ops;
 /// `action_hash`, `ops`, and PDA bump used later by manage instructions.
 pub fn try_authorize_action(
     _accounts: &[AccountInfo],
-    _action_hash: [u8; 32],
-    _ops: Ops,
+    _args: AuthorizeActionArgs,
 ) -> ProgramResult {
-    let _ = _ops;
     Ok(())
 }

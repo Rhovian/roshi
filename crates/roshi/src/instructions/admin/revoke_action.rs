@@ -1,7 +1,9 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-/// Implements [`crate::instructions::RoshiInstruction::RevokeAction`].
+use crate::instructions::RevokeActionArgs;
+
+/// Implements [`crate::instructions::RoshiInstructionTag::RevokeAction`].
 ///
 /// # Accounts
 ///
@@ -15,6 +17,6 @@ use solana_program_error::ProgramResult;
 /// This handler is currently a stub. The intended implementation verifies the
 /// vault admin, checks the Action PDA seeds and vault scope, and closes or
 /// clears the authorized action so the CPI pattern can no longer be executed.
-pub fn try_revoke_action(_accounts: &[AccountInfo], _action_hash: [u8; 32]) -> ProgramResult {
+pub fn try_revoke_action(_accounts: &[AccountInfo], _args: RevokeActionArgs) -> ProgramResult {
     Ok(())
 }

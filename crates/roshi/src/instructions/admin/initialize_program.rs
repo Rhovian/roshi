@@ -11,10 +11,11 @@ use crate::{
         next_account, require_system_program, require_uninitialized_account,
         require_writable_signer,
     },
+    instructions::InitializeProgramArgs,
     state::{program_config::ProgramConfig, Account},
 };
 
-/// Implements [`crate::instructions::RoshiInstruction::InitializeProgram`].
+/// Implements [`crate::instructions::RoshiInstructionTag::InitializeProgram`].
 ///
 /// # Accounts
 ///
@@ -27,11 +28,14 @@ use crate::{
 /// Validates the payer, rejects an already initialized config account, verifies
 /// the system program, checks the config PDA seeds, creates the config account
 /// with rent-exempt lamports, and stores the configured program authority.
-pub fn try_initialize_program(accounts: &[AccountInfo], authority: [u8; 32]) -> ProgramResult {
+pub fn try_initialize_program(
+    accounts: &[AccountInfo],
+    args: InitializeProgramArgs,
+) -> ProgramResult {
     let accounts = InitializeProgramAccounts::parse(accounts)?;
 
     accounts.create_config_account()?;
-    accounts.store_config(Pubkey::from(authority))
+    accounts.store_config(Pubkey::from(args.authority))
 }
 
 struct InitializeProgramAccounts<'a, 'info> {

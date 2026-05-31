@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::InitializeAssetArgs;
 
-/// Implements [`crate::instructions::RoshiInstruction::InitializeAsset`].
+/// Implements [`crate::instructions::RoshiInstructionTag::InitializeAsset`].
 ///
 /// # Accounts
 ///

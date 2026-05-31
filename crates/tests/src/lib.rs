@@ -4,7 +4,7 @@ mod helpers;
 #[cfg(test)]
 mod tests {
     use roshi::{
-        instructions::IndexedActionArgs,
+        instructions::ManageArgs,
         oracle::OracleConfig,
         state::{
             action::{compute_action_hash, Action, Ops},
@@ -140,7 +140,7 @@ mod tests {
         )
         .unwrap();
 
-        let manage_args = IndexedActionArgs {
+        let manage_args = ManageArgs {
             sub_account: 0,
             program_id: system_program::ID.to_bytes(),
             accounts_start: 0,
@@ -186,7 +186,7 @@ mod tests {
                 AccountMeta::new(scratch, false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
-            IndexedActionArgs {
+            ManageArgs {
                 sub_account: 0,
                 program_id: system_program::ID.to_bytes(),
                 accounts_start: 0,
