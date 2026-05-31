@@ -14,8 +14,10 @@ use crate::instructions::UpdateVaultConfigArgs;
 /// # Implementation
 ///
 /// This handler is currently a stub. The intended implementation verifies the
-/// vault admin and atomically replaces mutable role, base oracle, default
-/// subaccount, fee, and NAV guardrail fields. Pause flags are intentionally handled by
+/// vault admin and atomically replaces mutable non-RBAC config: fee collector,
+/// base oracle, default subaccounts, fee settings, and NAV guardrails. RBAC
+/// authorities are intentionally handled by explicit `Set*Authority` and
+/// transfer instructions. Pause flags are intentionally handled by
 /// `SetPauseFlags`; access mode and Merkle root are intentionally handled by
 /// `SetVaultAccess`.
 pub fn try_update_vault_config(

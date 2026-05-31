@@ -58,7 +58,8 @@ mod tests {
 
         let base_mint = solana_pubkey::Pubkey::new_unique();
         let share_mint = solana_pubkey::Pubkey::new_unique();
-        let (vault_pda, vault_bump) = Vault::find_address(&authority.pubkey(), &base_mint);
+        let (tag, tag_len) = Vault::pack_tag(b"test").unwrap();
+        let (vault_pda, vault_bump) = Vault::find_address(b"test", &base_mint).unwrap();
         let (sub_account_pda, _) = VaultSubAccount::find_address(&vault_pda, 0);
         svm.set_account(
             sub_account_pda,
@@ -77,6 +78,8 @@ mod tests {
             Account {
                 lamports: 1_000_000,
                 data: serialize(&RoshiAccount::Vault(Vault {
+                    tag,
+                    tag_len,
                     admin: authority.pubkey().to_bytes(),
                     strategist: authority.pubkey().to_bytes(),
                     nav_authority: authority.pubkey().to_bytes(),

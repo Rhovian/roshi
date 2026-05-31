@@ -12,6 +12,8 @@ pub struct IndexedActionArgs {
 
 #[derive(SchemaWrite, SchemaRead)]
 pub struct InitializeVaultArgs {
+    pub tag: [u8; 32],
+    pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
     pub nav_authority: [u8; 32],
@@ -54,9 +56,6 @@ pub struct UpdateAssetArgs {
 
 #[derive(SchemaWrite, SchemaRead)]
 pub struct UpdateVaultConfigArgs {
-    pub strategist: [u8; 32],
-    pub nav_authority: [u8; 32],
-    pub withdrawal_authority: [u8; 32],
     pub fee_collector: [u8; 32],
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
@@ -78,4 +77,19 @@ pub struct SetPauseFlagsArgs {
 pub struct SetVaultAccessArgs {
     pub private: bool,
     pub access_merkle_root: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct SetStrategistArgs {
+    pub strategist: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct SetNavAuthorityArgs {
+    pub nav_authority: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
+pub struct SetWithdrawalAuthorityArgs {
+    pub withdrawal_authority: [u8; 32],
 }

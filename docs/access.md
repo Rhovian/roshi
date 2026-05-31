@@ -30,6 +30,8 @@ deposits.
 `InitializeVaultArgs` includes:
 
 ```rust
+tag: [u8; 32],
+tag_len: u8,
 private: bool,
 access_merkle_root: [u8; 32],
 ```
