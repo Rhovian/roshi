@@ -65,7 +65,8 @@ roshi_instructions! {
     UpdateVaultConfig = 11 => UpdateVaultConfigArgs,
     InitializeAsset = 12 => InitializeAssetArgs,
     UpdateAsset = 13 => UpdateAssetArgs,
-    InitializeSubAccount = 14 => InitializeSubAccountArgs,
+    // 14 was InitializeSubAccount: removed — subaccounts are bare PDA signer
+    // seeds and need no on-chain initialization.
     SetPauseFlags = 15 => SetPauseFlagsArgs,
     SetVaultAccess = 16 => SetVaultAccessArgs,
     TransferProgramAuthority = 17 => TransferProgramAuthorityArgs,

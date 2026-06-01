@@ -2,19 +2,19 @@ use crate::{
     instructions::{
         admin::{
             try_authorize_action, try_initialize_asset, try_initialize_program,
-            try_initialize_sub_account, try_initialize_vault, try_process_withdrawals,
-            try_revoke_action, try_set_nav_authority, try_set_pause_flags, try_set_strategist,
-            try_set_vault_access, try_set_withdrawal_authority, try_transfer_program_authority,
+            try_initialize_vault, try_process_withdrawals, try_revoke_action,
+            try_set_nav_authority, try_set_pause_flags, try_set_strategist, try_set_vault_access,
+            try_set_withdrawal_authority, try_transfer_program_authority,
             try_transfer_vault_authority, try_update_asset, try_update_vault_config,
         },
         execution::{try_manage, try_manage_batch},
         user::{try_deposit, try_redeem},
         AuthorizeActionArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
-        InitializeSubAccountArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
-        ProcessWithdrawalsArgs, RedeemArgs, RevokeActionArgs, RoshiInstructionTag,
-        SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-        SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-        UpdateAssetArgs, UpdateVaultConfigArgs,
+        InitializeVaultArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs,
+        RevokeActionArgs, RoshiInstructionTag, SetNavAuthorityArgs, SetPauseFlagsArgs,
+        SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+        TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
+        UpdateVaultConfigArgs,
     },
     ID,
 };
@@ -111,14 +111,6 @@ fn try_process_instruction(
         }
         RoshiInstructionTag::UpdateAsset => {
             decode_and_process!(try_update_asset, accounts, payload, UpdateAssetArgs)
-        }
-        RoshiInstructionTag::InitializeSubAccount => {
-            decode_and_process!(
-                try_initialize_sub_account,
-                accounts,
-                payload,
-                InitializeSubAccountArgs
-            )
         }
         RoshiInstructionTag::SetPauseFlags => {
             decode_and_process!(try_set_pause_flags, accounts, payload, SetPauseFlagsArgs)
