@@ -4,8 +4,7 @@ Roshi is a base-denominated NAV vault.
 
 The program should stay small around the invariants it can enforce on-chain:
 role authorization, pause surfaces, account ownership, PDA derivations, custody
-movement, deposit access checks, share accounting, and explicit NAV update
-guardrails.
+movement, deposit access checks, share accounting, and explicit NAV reporting.
 
 ## Base-Denominated Accounting
 
@@ -48,8 +47,8 @@ Subaccounts are implementation details for custody and execution isolation.
 They are vault-scoped PDA signer authorities, not separate product domains.
 
 Internal accounting should be organized around NAV updates, share math, fee
-crystallization, guardrails, and payout configuration. These concepts should
-not become a separate user-facing domain unless doing so adds a real invariant.
+crystallization, and payout configuration. These concepts should not become a
+separate user-facing domain unless doing so adds a real invariant.
 
 ## Withdrawal Queue
 

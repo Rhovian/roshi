@@ -1,6 +1,0 @@
-# Surfpool configuration for Roshi
-[simnet]
-rpc_url = "https://api.mainnet-beta.solana.com"
-
-[programs]
-roshi = "target/deploy/roshi.so"

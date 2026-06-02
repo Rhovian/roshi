@@ -24,6 +24,7 @@ pub struct Vault {
     pub base_oracle: OracleConfig,
     pub total_assets: u64,
     pub pending_withdrawal_assets: u64,
+    pub fees_payable: u64,
     pub high_watermark: u64,
     pub last_update_ts: i64,
     pub tag: [u8; 32],
@@ -38,7 +39,6 @@ pub struct Vault {
     pub access_merkle_root: [u8; 32],
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
-    pub max_change_bps: u16,
     pub tag_len: u8,
     pub base_decimals: u8,
     pub deposit_sub_account: u8,
@@ -48,7 +48,7 @@ pub struct Vault {
     manage_paused_flag: u8,
     private_flag: u8,
     pub bump: u8,
-    _padding: [u8; 1],
+    _padding: [u8; 3],
 }
 
 impl Vault {
@@ -72,7 +72,6 @@ impl Vault {
         fee_collector: [u8; 32],
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
-        max_change_bps: u16,
         private: bool,
         access_merkle_root: [u8; 32],
         bump: u8,
@@ -82,7 +81,6 @@ impl Vault {
             share_mint,
             performance_fee_bps,
             withdrawal_buffer_bps,
-            max_change_bps,
         )?;
         base_oracle
             .validate()
@@ -94,6 +92,7 @@ impl Vault {
             base_oracle,
             total_assets: 0,
             pending_withdrawal_assets: 0,
+            fees_payable: 0,
             high_watermark: 0,
             last_update_ts: 0,
             tag,
@@ -108,7 +107,6 @@ impl Vault {
             access_merkle_root,
             performance_fee_bps,
             withdrawal_buffer_bps,
-            max_change_bps,
             tag_len,
             base_decimals,
             deposit_sub_account,
@@ -118,7 +116,7 @@ impl Vault {
             manage_paused_flag: flags::bool_to_flag(false),
             private_flag: flags::bool_to_flag(private),
             bump,
-            _padding: [0; 1],
+            _padding: [0; 3],
         })
     }
 
@@ -127,11 +125,9 @@ impl Vault {
         share_mint: [u8; 32],
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
-        max_change_bps: u16,
     ) -> ProgramResult {
         validate_percentage_bps(performance_fee_bps)?;
         validate_percentage_bps(withdrawal_buffer_bps)?;
-        validate_percentage_bps(max_change_bps)?;
 
         if base_mint == share_mint {
             return Err(ProgramError::InvalidArgument);
@@ -271,7 +267,6 @@ impl Vault {
             self.share_mint,
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
-            self.max_change_bps,
         )?;
         self.base_oracle
             .validate()
@@ -334,7 +329,6 @@ mod tests {
             [9; 32],
             100,
             250,
-            500,
             private,
             access_merkle_root,
             bump,
@@ -360,10 +354,10 @@ mod tests {
         assert_eq!(vault.fee_collector, [9; 32]);
         assert_eq!(vault.total_assets, 0);
         assert_eq!(vault.pending_withdrawal_assets, 0);
+        assert_eq!(vault.fees_payable, 0);
         assert_eq!(vault.high_watermark, 0);
         assert_eq!(vault.performance_fee_bps, 100);
         assert_eq!(vault.withdrawal_buffer_bps, 250);
-        assert_eq!(vault.max_change_bps, 500);
         assert_eq!(vault.last_update_ts, 0);
         assert_eq!(vault.deposits_paused(), Ok(false));
         assert_eq!(vault.withdrawals_paused(), Ok(false));
@@ -394,8 +388,8 @@ mod tests {
         let vault = new_test_vault(false, [0; 32]);
 
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 536);
-        assert_eq!(Vault::SPACE, 537);
+        assert_eq!(core::mem::size_of::<Vault>(), 544);
+        assert_eq!(Vault::SPACE, 545);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()
@@ -486,7 +480,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_invalid_bps() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [2; 32], 10_001, 0, 0),
+            Vault::validate_config([1; 32], [2; 32], 10_001, 0),
             Err(error) if error == ProgramError::from(RoshiError::InvalidBps)
         ));
     }
@@ -494,7 +488,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_matching_base_and_share_mints() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [1; 32], 0, 0, 0),
+            Vault::validate_config([1; 32], [1; 32], 0, 0),
             Err(ProgramError::InvalidArgument)
         ));
     }

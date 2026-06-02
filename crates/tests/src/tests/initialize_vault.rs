@@ -3,8 +3,8 @@ use solana_instruction::error::InstructionError;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_mint, setup_program,
-    VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_mint, set_token_account,
+    setup_program, VaultBuilder,
 };
 
 #[test]
@@ -42,7 +42,6 @@ fn test_initialize_vault() {
     assert_eq!(state.withdraw_sub_account, 1);
     assert_eq!(state.performance_fee_bps, 100);
     assert_eq!(state.withdrawal_buffer_bps, 250);
-    assert_eq!(state.max_change_bps, 500);
     assert_eq!(state.total_assets, 0);
     assert_eq!(state.private(), Ok(true));
     assert_eq!(state.access_merkle_root, [7; 32]);
@@ -145,7 +144,7 @@ fn test_initialize_vault_rejects_invalid_fee_bps() {
     };
 
     // 10_001 bps exceeds 100% and must be rejected by config validation.
-    let builder = VaultBuilder::new().fees(10_001, 0, 0);
+    let builder = VaultBuilder::new().fees(10_001, 0);
     let ix = builder.instruction(authority.pubkey(), config_pda);
 
     assert_roshi_error(send(&mut svm, ix, &authority), RoshiError::InvalidBps);
@@ -205,6 +204,33 @@ fn test_initialize_vault_rejects_wrong_share_mint_authority() {
         RoshiError::InvalidMintAccount,
     );
     assert!(svm.get_account(&vault_pda).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_fee_collector_for_wrong_mint() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fee_collector = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().fee_collector(fee_collector);
+    let vault_pda = builder.address().0;
+    set_mint(&mut svm, builder.base_mint_key(), &vault_pda, 6);
+    set_mint(&mut svm, builder.share_mint_key(), &vault_pda, 9);
+    set_token_account(
+        &mut svm,
+        fee_collector,
+        &solana_pubkey::Pubkey::new_unique(),
+        &solana_pubkey::Pubkey::new_unique(),
+        0,
+    );
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+
+    assert_roshi_error(
+        send(&mut svm, ix, &authority),
+        RoshiError::InvalidTokenAccount,
+    );
+    assert!(svm.get_account(&builder.address().0).is_none());
 }
 
 #[test]

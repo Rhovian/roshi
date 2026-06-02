@@ -77,6 +77,10 @@ impl<'a, 'info> WritableVaultRoleContext<'a, 'info> {
         &mut self.vault
     }
 
+    pub(crate) fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
     pub(crate) fn store(self) -> ProgramResult {
         self.vault.validate_state()?;
 
@@ -111,6 +115,7 @@ pub(crate) struct InitializeVaultContext<'a, 'info> {
     vault: &'a AccountInfo<'info>,
     base_mint_account: &'a AccountInfo<'info>,
     share_mint_account: &'a AccountInfo<'info>,
+    fee_collector: &'a AccountInfo<'info>,
     system_program_acc: &'a AccountInfo<'info>,
     tag: [u8; Vault::MAX_TAG_LEN],
     tag_len: u8,
@@ -135,6 +140,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
 
         let base_mint_account = next_account(accounts_iter)?;
         let share_mint_account = next_account(accounts_iter)?;
+        let fee_collector = next_account(accounts_iter)?;
 
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
@@ -154,6 +160,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             vault,
             base_mint_account,
             share_mint_account,
+            fee_collector,
             system_program_acc,
             tag,
             tag_len,
@@ -182,7 +189,13 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             &Pubkey::from(args.share_mint),
             SHARE_DECIMALS,
             Some(self.vault.key),
-        )
+        )?;
+        token::verify_token_account_mint(self.fee_collector, &self.base_mint)?;
+        if self.fee_collector.key != &Pubkey::from(args.fee_collector) {
+            return Err(roshi_interface::error::RoshiError::InvalidTokenAccount.into());
+        }
+
+        Ok(())
     }
 
     pub(crate) fn create_vault_account(&self) -> ProgramResult {

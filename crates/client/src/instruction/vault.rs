@@ -1,7 +1,8 @@
 use roshi_interface::instructions::{
-    InitializeVaultArgs, ProcessWithdrawalsArgs, ReportNavArgs, SetNavAuthorityArgs,
-    SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-    TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
+    CollectFeesArgs, InitializeVaultArgs, ProcessWithdrawalsArgs, ReportNavArgs,
+    SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+    SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+    UpdateVaultConfigArgs,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -18,6 +19,7 @@ pub fn initialize_vault(
 ) -> Result<Instruction> {
     let base_mint = Pubkey::from(args.base_mint);
     let share_mint = Pubkey::from(args.share_mint);
+    let fee_collector = Pubkey::from(args.fee_collector);
     new(
         vec![
             AccountMeta::new_readonly(program_authority, true),
@@ -26,6 +28,7 @@ pub fn initialize_vault(
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new_readonly(share_mint, false),
+            AccountMeta::new_readonly(fee_collector, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         &args,
@@ -143,12 +146,21 @@ pub fn update_vault_config(
     vault: Pubkey,
     args: UpdateVaultConfigArgs,
 ) -> Result<Instruction> {
-    new(vault_admin_accounts(admin, vault), &args)
+    let fee_collector = Pubkey::from(args.fee_collector);
+    new(
+        vec![
+            AccountMeta::new_readonly(admin, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(fee_collector, false),
+        ],
+        &args,
+    )
 }
 
 pub fn report_nav(
     nav_authority: Pubkey,
     vault: Pubkey,
+    share_mint: Pubkey,
     total_assets: u64,
     report_hash: [u8; 32],
 ) -> Result<Instruction> {
@@ -156,10 +168,36 @@ pub fn report_nav(
         vec![
             AccountMeta::new_readonly(nav_authority, true),
             AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(share_mint, false),
         ],
         &ReportNavArgs {
             total_assets,
             report_hash,
+        },
+    )
+}
+
+pub fn collect_fees(
+    admin: Pubkey,
+    vault: Pubkey,
+    fee_sub_account_index: u8,
+    fee_sub_account: Pubkey,
+    custody: Pubkey,
+    fee_collector: Pubkey,
+    amount: u64,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(admin, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(fee_sub_account, false),
+            AccountMeta::new(custody, false),
+            AccountMeta::new(fee_collector, false),
+            AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
+        ],
+        &CollectFeesArgs {
+            sub_account: fee_sub_account_index,
+            amount,
         },
     )
 }

@@ -76,6 +76,7 @@ roshi_instructions! {
     SetStrategist = 19 => SetStrategistArgs,
     SetNavAuthority = 20 => SetNavAuthorityArgs,
     SetWithdrawalAuthority = 21 => SetWithdrawalAuthorityArgs,
+    CollectFees = 22 => CollectFeesArgs,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>

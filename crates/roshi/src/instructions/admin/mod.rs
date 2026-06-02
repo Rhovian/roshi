@@ -1,4 +1,5 @@
 pub mod authorize_action;
+pub mod collect_fees;
 pub mod initialize_asset;
 pub mod initialize_program;
 pub mod initialize_vault;
@@ -16,6 +17,7 @@ pub mod update_asset;
 pub mod update_vault_config;
 
 pub use authorize_action::try_authorize_action;
+pub use collect_fees::try_collect_fees;
 pub use initialize_asset::try_initialize_asset;
 pub use initialize_program::try_initialize_program;
 pub use initialize_vault::try_initialize_vault;

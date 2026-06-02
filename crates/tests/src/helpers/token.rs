@@ -39,6 +39,13 @@ pub fn set_mint(svm: &mut LiteSVM, mint: Pubkey, authority: &Pubkey, decimals: u
     .unwrap();
 }
 
+/// Overwrite the `supply` field of an initialized SPL mint.
+pub fn set_mint_supply(svm: &mut LiteSVM, mint: &Pubkey, supply: u64) {
+    let mut account = svm.get_account(mint).unwrap();
+    account.data[36..44].copy_from_slice(&supply.to_le_bytes());
+    svm.set_account(*mint, account).unwrap();
+}
+
 /// Install an initialized SPL token account holding `amount` of `mint`.
 pub fn set_token_account(
     svm: &mut LiteSVM,

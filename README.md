@@ -10,7 +10,7 @@ accounting, access control, and queued withdrawals.
 - `crates/interface`: reusable Roshi protocol/interface types.
 - `crates/roshi`: on-chain Roshi program crate.
 - `crates/client`: thin client helpers for building Roshi instructions.
-- `crates/tests`: LiteSVM and Surfpool-oriented integration test harness.
+- `crates/tests`: LiteSVM integration test harness.
 
 ## Current Status
 
@@ -20,7 +20,6 @@ The program includes the reusable Solana infrastructure:
 - `initialize_program` with a `ProgramConfig` PDA and authority storage.
 - Generic indexed CPI execution in `manage` and `manage_batch`.
 - Vault-scoped RBAC, pause flags, and subaccount PDA signer authorities.
-- Surfpool config/script and Justfile targets.
 - LiteSVM tests for program initialization, authorized CPI execution, deposits,
   redemptions, and withdrawal settlement.
 
@@ -34,18 +33,18 @@ The Roshi protocol surface currently includes:
 - Implemented instruction handlers for program/vault initialization, action
   authorization/revocation, supported asset config, deposits, redemptions,
   redeem cancellation, queued withdrawal settlement, trusted NAV reporting,
-  pause/access flags, role rotation, program/vault authority transfer, vault
-  config updates, and strategist CPI execution.
+  performance-fee accrual/collection, pause/access flags, role rotation,
+  program/vault authority transfer, vault config updates, and strategist CPI
+  execution.
 - Instruction handlers are grouped by domain under `admin`, `execution`, and
   `user` modules where that grouping carries its weight.
 
-The main remaining protocol work is fee crystallization and operational
-tooling:
+The main remaining protocol work is operational tooling and hardening:
 
-- Finalize performance-fee mechanics around `performance_fee_bps`,
-  `high_watermark`, and `fee_collector`.
 - Expand operational tooling around NAV reports, strategist workflows, and
   deployment/runbooks.
+- Add runbooks for admin-triggered fee collection and trusted NAV-report
+  workflows.
 
 ## Design Docs
 
@@ -75,13 +74,11 @@ The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
 ```bash
 just build
 just check
-just surfpool-test
 just test-sbf
 ```
 
 `just build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
-artifact when present, and `just surfpool-test` starts a Surfpool mainnet fork
-before running ignored fork tests.
+artifact when present.
 
 Useful direct checks:
 

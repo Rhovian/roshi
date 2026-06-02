@@ -24,9 +24,9 @@ mod tests {
     use roshi_interface::{
         action::Ops,
         instructions::{
-            AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
-            InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs,
-            ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs,
+            AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
+            InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs, InstructionArgs,
+            ManageArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs,
             SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
             SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
             UpdateAssetArgs, UpdateVaultConfigArgs,
@@ -75,6 +75,7 @@ mod tests {
         let vault = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let share_mint = Pubkey::new_unique();
+        let fee_collector = Pubkey::new_unique();
         let args = InitializeVaultArgs {
             tag: [1; 32],
             tag_len: 4,
@@ -88,10 +89,9 @@ mod tests {
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             deposit_sub_account: 0,
             withdraw_sub_account: 1,
-            fee_collector: Pubkey::new_unique().to_bytes(),
+            fee_collector: fee_collector.to_bytes(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
-            max_change_bps: 500,
             private: true,
             access_merkle_root: [2; 32],
         };
@@ -99,7 +99,7 @@ mod tests {
         let ix = initialize_vault(program_authority, program_config, payer, vault, args).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 7);
+        assert_eq!(ix.accounts.len(), 8);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(program_authority, true)
@@ -114,6 +114,10 @@ mod tests {
         assert_eq!(ix.accounts[5], AccountMeta::new_readonly(share_mint, false));
         assert_eq!(
             ix.accounts[6],
+            AccountMeta::new_readonly(fee_collector, false)
+        );
+        assert_eq!(
+            ix.accounts[7],
             AccountMeta::new_readonly(system_program::ID, false)
         );
 
@@ -410,21 +414,54 @@ mod tests {
     fn builds_report_nav_instruction() {
         let nav_authority = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
         let report_hash = [7; 32];
 
-        let ix = report_nav(nav_authority, vault, 123, report_hash).unwrap();
+        let ix = report_nav(nav_authority, vault, share_mint, 123, report_hash).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts.len(), 3);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(nav_authority, true)
         );
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new_readonly(share_mint, false));
 
         let args: ReportNavArgs = decode_args(&ix.data);
         assert_eq!(args.total_assets, 123);
         assert_eq!(args.report_hash, report_hash);
+    }
+
+    #[test]
+    fn builds_collect_fees_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let fee_sub_account = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let fee_collector = Pubkey::new_unique();
+
+        let ix =
+            collect_fees(admin, vault, 7, fee_sub_account, custody, fee_collector, 42).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[2],
+            AccountMeta::new_readonly(fee_sub_account, false)
+        );
+        assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(fee_collector, false));
+        assert_eq!(
+            ix.accounts[5],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+
+        let args: CollectFeesArgs = decode_args(&ix.data);
+        assert_eq!(args.sub_account, 7);
+        assert_eq!(args.amount, 42);
     }
 
     #[test]
@@ -551,20 +588,24 @@ mod tests {
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             performance_fee_bps: 150,
             withdrawal_buffer_bps: 300,
-            max_change_bps: 600,
         };
 
         let ix = update_vault_config(admin, vault, args).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts.len(), 3);
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[2],
+            AccountMeta::new_readonly(fee_collector, false)
+        );
 
         let args: UpdateVaultConfigArgs = decode_args(&ix.data);
         assert_eq!(args.fee_collector, fee_collector.to_bytes());
         assert_eq!(args.deposit_sub_account, 2);
         assert_eq!(args.withdraw_sub_account, 3);
         assert_eq!(args.performance_fee_bps, 150);
+        assert_eq!(args.withdrawal_buffer_bps, 300);
     }
 }

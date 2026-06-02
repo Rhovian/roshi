@@ -30,8 +30,9 @@ withdraw_sub_account: u8,
 
 Deposits should route custody into the deposit subaccount by default.
 
-Immediate redemptions and queued withdrawal settlement should pay from the
-withdraw subaccount by default.
+Queued withdrawal settlement should pay from the withdraw subaccount by default.
+Open withdrawal tickets remain vault-scoped wallet liabilities; rotating the
+default withdraw subaccount only changes the default payment source.
 
 Strategy execution is explicit: every `manage` or `manage_batch` action selects
 the subaccount that signs that CPI.

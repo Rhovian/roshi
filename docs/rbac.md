@@ -68,8 +68,7 @@ SetWithdrawalAuthority {
 ```
 
 Other mutable vault config, such as fee collector, base oracle, default
-subaccounts, fee settings, and NAV guardrails, remains under
-`UpdateVaultConfig`.
+subaccounts, and fee settings, remains under `UpdateVaultConfig`.
 
 ## Pause Flags
 
@@ -89,8 +88,7 @@ not block authority-driven processing of already queued withdrawals.
 `manage_paused` blocks strategist CPI execution across all subaccounts.
 
 NAV reports are not separately paused in the current scaffold. If the
-`nav_authority` is compromised, the admin can rotate it and use NAV guardrails
-to limit accepted report movement.
+`nav_authority` is compromised, the admin can rotate it.
 
 Pause flags have a dedicated instruction surface:
 
@@ -104,7 +102,7 @@ SetPauseFlags {
 
 `SetPauseFlags` should be admin-only. It is intentionally narrower than full
 vault config replacement so emergency pause changes do not require resubmitting
-role, fee, guardrail, or subaccount configuration.
+role, fee, or subaccount configuration.
 
 ## Access Mode
 
@@ -119,7 +117,7 @@ SetVaultAccess {
 
 `SetVaultAccess` should be admin-only. It is intentionally narrower than full
 vault config replacement so access root rotations do not require resubmitting
-roles, fees, guardrails, pause flags, or subaccount configuration.
+roles, fees, pause flags, or subaccount configuration.
 
 ## Invariants
 

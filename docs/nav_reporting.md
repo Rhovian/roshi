@@ -12,12 +12,16 @@ The vault stores the last accepted total NAV report:
 
 ```rust
 total_assets: u64,
+fees_payable: u64,
 last_report_hash: [u8; 32],
 last_update_ts: i64,
-max_change_bps: u16,
+high_watermark: u64,
 ```
 
-`total_assets` is denominated in vault base atoms.
+`total_assets` is fee-adjusted and denominated in vault base atoms.
+
+`fees_payable` tracks base-asset fees accrued from NAV reporting but not yet
+collected.
 
 `last_report_hash` commits to the private report bundle used to produce the NAV.
 The report bundle can contain whatever the vault team, auditor, or investor
@@ -39,8 +43,11 @@ The program should:
 
 - verify the caller is `vault.nav_authority`,
 - reject an all-zero `report_hash`,
-- enforce `max_change_bps` after the first accepted report,
-- store `total_assets`,
+- read `share_mint.supply`,
+- compute any performance fee against `high_watermark`,
+- accrue the fee into `fees_payable`,
+- store fee-adjusted `total_assets`,
+- update `high_watermark`,
 - store `last_report_hash = report_hash`,
 - store `last_update_ts`.
 
@@ -53,7 +60,7 @@ inputs on-chain.
 NAV and liquidity are separate concepts:
 
 ```text
-NAV = nav_authority reported total assets in base atoms
+NAV = fee-adjusted total assets in base atoms
 Liquidity = actual token balances available for settlement
 ```
 
@@ -66,13 +73,24 @@ Token balances are still checked when the program needs to pay:
 Those balances are settlement capacity. They are not used to recompute total
 NAV.
 
-## Guardrails
+## Fee Accrual
 
-`max_change_bps` limits the size of a single accepted NAV move.
+`ReportNav` treats `total_assets` in the instruction args as gross NAV. Gross
+NAV must include the full portfolio value before subtracting Roshi-tracked
+liabilities, including assets reserved or owed for pending withdrawals and
+unpaid fees. Existing `fees_payable` and `pending_withdrawal_assets` are
+subtracted from reported gross NAV before new fees are computed, so unpaid fees
+and already-owed withdrawals do not leak back into active share accounting.
 
-The first accepted report establishes the baseline and is not delta-limited.
-After that, each report is compared against the previously stored
-`total_assets`.
+If gross share price exceeds `high_watermark` after those existing liabilities
+are removed, the program accrues a base-asset performance fee, stores net NAV,
+and records the fee in `fees_payable`.
+
+Fee collection is separate from fee accrual. Admin-gated `CollectFees` transfers
+base tokens from a supplied vault subaccount's custody account to the configured
+fee collector token account and decrements `fees_payable`. Fees are
+vault-scoped, not withdrawal-subaccount-scoped, and collection does not change
+`total_assets` because NAV already excluded the fee.
 
 ## Future Trust Minimization
 
@@ -124,7 +142,8 @@ research path, not a requirement for the v1 trusted-authority model.
 ## Invariants
 
 - Only `nav_authority` can submit NAV reports.
-- `total_assets` equals the last accepted NAV report.
+- `total_assets` equals the last accepted fee-adjusted NAV report.
+- `fees_payable` tracks accrued fees already excluded from NAV.
 - `last_report_hash` commits to the report bundle for `total_assets`.
 - The all-zero report hash is reserved for "no accepted report yet".
 - Deposits and redemptions update `total_assets` according to share accounting

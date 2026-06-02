@@ -58,8 +58,8 @@ This lets the admin:
 - disable new private deposits by setting `access_merkle_root = [0; 32]` while
   private mode is enabled.
 
-Access updates should not touch roles, fees, guardrails, subaccounts, pause
-flags, assets, NAV, shares, or withdrawal state.
+Access updates should not touch roles, fees, subaccounts, pause flags, assets,
+NAV, shares, or withdrawal state.
 
 ## Proofs
 

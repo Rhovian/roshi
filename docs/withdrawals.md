@@ -35,7 +35,8 @@ pending_withdrawal_assets: u64,
 ```
 
 `pending_withdrawal_assets` is the total base-asset amount owed across open
-withdrawal tickets.
+withdrawal tickets. It is vault-scoped and independent from the currently
+configured withdrawal subaccount.
 
 The vault does not store a separate reserved or settlement balance. Custody
 token account balances are the source of truth for settlement capacity.
@@ -96,6 +97,10 @@ A recipient token account may have up to 256 open queued tickets per vault.
 Reusing a ticket slot requires the withdrawal authority to process and clear the
 existing ticket in that slot.
 
+The ticket is the user-facing liability record. It is not tied to the vault's
+current `withdraw_sub_account`; that subaccount is only the default custody
+source for settlement.
+
 ## Processing Flow
 
 Withdrawal authority calls:
@@ -135,6 +140,8 @@ withdrawals once the vault is ready to satisfy them.
 
 - Shares are burned before a queued withdrawal ticket is created.
 - A ticket PDA is bounded by `(vault, recipient_token_account, ticket_index)`.
+- A ticket liability is scoped to the vault and recorded owner/recipient, not to
+  any withdrawal subaccount.
 - A ticket is settled only by `ProcessWithdrawals`.
 - Settlement capacity is determined by custody token account balances.
 - The vault does not maintain a separate reserved-assets counter.

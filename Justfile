@@ -16,6 +16,3 @@ check:
     cargo test -p roshi
     cargo build-sbf --manifest-path crates/roshi/Cargo.toml
     cargo test -p roshi-tests
-
-surfpool-test:
-    ./scripts/surfpool-test.sh

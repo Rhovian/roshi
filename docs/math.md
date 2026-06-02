@@ -64,7 +64,6 @@ conservative for the vault:
 - oracle normalization floors,
 - deposit share minting floors,
 - redeem asset payout floors,
-- max NAV delta guardrails floor,
 - withdrawal buffer minimum targets ceil.
 
 User protection belongs in instruction-level minimums such as
@@ -88,17 +87,17 @@ base_atoms_from_asset_atoms(asset_atoms, price_value, price_decimals) -> Result<
 initial_shares_from_base_atoms(base_atoms, base_decimals) -> Result<u64>
 shares_for_deposit(base_atoms, total_assets, total_shares) -> Result<u64>
 assets_for_redeem(shares, total_assets, total_shares) -> Result<u64>
-nav_delta_within_bps(old_total_assets, new_total_assets, max_change_bps) -> Result<bool>
+share_price_from_assets(total_assets, total_shares) -> Result<u64>
+performance_fee_for_nav(gross_total_assets, total_shares, high_watermark, performance_fee_bps)
+    -> Result<(fee_assets, net_total_assets, high_watermark)>
 ```
 
 The exact result type should match the program error model used during
 implementation.
 
-`bps_floor` and `bps_ceil` only apply the `10_000` denominator. They should not
-reject values above `10_000`, because basis points are a scale and some
-guardrail fields may intentionally allow moves above 100%. Fields that represent
-a percentage cap, such as fees and withdrawal buffer targets, should use
-`validate_percentage_bps`.
+`bps_floor` and `bps_ceil` only apply the `10_000` denominator. Fields that
+represent a percentage cap, such as fees and withdrawal buffer targets, should
+use `validate_percentage_bps`.
 
 ## Formulas
 
@@ -140,12 +139,31 @@ Compute a withdrawal buffer minimum:
 target_idle_assets = ceil(total_assets * withdrawal_buffer_bps / 10_000)
 ```
 
-Check a NAV update guardrail:
+Compute a fixed-scale share price:
 
 ```text
-delta = abs(new_total_assets - old_total_assets)
-max_delta = floor(old_total_assets * max_change_bps / 10_000)
-delta <= max_delta
+share_price = floor(total_assets * 10^SHARE_DECIMALS / total_shares)
+```
+
+Compute performance fees during NAV reporting:
+
+```text
+gross_share_price = floor(gross_total_assets * 10^SHARE_DECIMALS / total_shares)
+
+if high_watermark == 0:
+    fee_assets = 0
+    net_total_assets = gross_total_assets
+    new_high_watermark = gross_share_price
+
+if gross_share_price > high_watermark:
+    high_watermark_assets = ceil(high_watermark * total_shares / 10^SHARE_DECIMALS)
+    profit_assets = gross_total_assets - high_watermark_assets
+    fee_assets = floor(profit_assets * performance_fee_bps / 10_000)
+    net_total_assets = gross_total_assets - fee_assets
+    new_high_watermark = max(
+        high_watermark,
+        floor(net_total_assets * 10^SHARE_DECIMALS / total_shares)
+    )
 ```
 
 ## Edge Cases
@@ -172,7 +190,7 @@ Math tests should cover:
 - deposit monotonicity,
 - redeem monotonicity,
 - deposit/redeem round trips never overpay because of rounding,
-- NAV guardrail boundary values,
+- share price and performance-fee crystallization examples,
 - withdrawal buffer ceiling behavior.
 
 Property tests should cover broad generated input ranges for:
@@ -182,5 +200,4 @@ Property tests should cover broad generated input ranges for:
 - deposit share monotonicity,
 - redeem asset monotonicity,
 - deposit-then-redeem no-overpay behavior,
-- full redeem returning all assets,
-- NAV guardrail equivalence to the documented formula.
+- full redeem returning all assets.

@@ -49,7 +49,6 @@ mod tests {
             admin.to_bytes(),
             0,
             0,
-            0,
             false,
             [0; 32],
             bump,

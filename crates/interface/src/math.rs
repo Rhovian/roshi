@@ -115,19 +115,57 @@ pub fn assets_for_redeem(shares: u64, total_assets: u64, total_shares: u64) -> M
     checked_nonzero_u64(assets)
 }
 
-pub fn nav_delta_within_bps(
-    old_total_assets: u64,
-    new_total_assets: u64,
-    max_change_bps: u16,
-) -> MathResult<bool> {
-    let delta = old_total_assets.abs_diff(new_total_assets);
-    let max_delta = mul_div_floor(
-        u128::from(old_total_assets),
-        u128::from(max_change_bps),
-        u128::from(BPS_DENOMINATOR),
-    )?;
+pub fn share_price_from_assets(total_assets: u64, total_shares: u64) -> MathResult<u64> {
+    if total_shares == 0 {
+        return Err(RoshiError::InvalidVaultState);
+    }
 
-    Ok(u128::from(delta) <= max_delta)
+    let share_scale = pow10(SHARE_DECIMALS)?;
+    let share_price = mul_div_floor(
+        u128::from(total_assets),
+        share_scale,
+        u128::from(total_shares),
+    )?;
+    checked_u64(share_price)
+}
+
+pub fn performance_fee_for_nav(
+    gross_total_assets: u64,
+    total_shares: u64,
+    high_watermark: u64,
+    performance_fee_bps: u16,
+) -> MathResult<(u64, u64, u64)> {
+    validate_percentage_bps(performance_fee_bps)?;
+
+    if total_shares == 0 {
+        return Ok((0, gross_total_assets, high_watermark));
+    }
+
+    let gross_share_price = share_price_from_assets(gross_total_assets, total_shares)?;
+    if high_watermark == 0 || gross_share_price <= high_watermark || performance_fee_bps == 0 {
+        return Ok((0, gross_total_assets, high_watermark.max(gross_share_price)));
+    }
+
+    let share_scale = pow10(SHARE_DECIMALS)?;
+    let high_watermark_assets = checked_u64(mul_div_ceil(
+        u128::from(high_watermark),
+        u128::from(total_shares),
+        share_scale,
+    )?)?;
+    let profit_assets = gross_total_assets
+        .checked_sub(high_watermark_assets)
+        .ok_or(RoshiError::Overflow)?;
+    let fee_assets = bps_floor(profit_assets, performance_fee_bps)?;
+    let net_total_assets = gross_total_assets
+        .checked_sub(fee_assets)
+        .ok_or(RoshiError::Overflow)?;
+    let net_share_price = share_price_from_assets(net_total_assets, total_shares)?;
+
+    Ok((
+        fee_assets,
+        net_total_assets,
+        high_watermark.max(net_share_price),
+    ))
 }
 
 fn checked_nonzero_u64(value: u128) -> MathResult<u64> {
@@ -301,31 +339,51 @@ mod tests {
     }
 
     #[test]
-    fn nav_delta_guardrail_uses_floor_bps() {
-        assert_eq!(nav_delta_within_bps(1_000, 1_100, 1_000), Ok(true));
-        assert_eq!(nav_delta_within_bps(1_000, 1_101, 1_000), Ok(false));
-        assert_eq!(nav_delta_within_bps(0, 0, 1_000), Ok(true));
-        assert_eq!(nav_delta_within_bps(0, 1, 1_000), Ok(false));
-        assert_eq!(nav_delta_within_bps(100, 700, 60_000), Ok(true));
+    fn share_price_uses_fixed_share_scale() {
         assert_eq!(
-            nav_delta_within_bps(u64::MAX, u64::MAX / 2, 60_000),
-            Ok(true)
+            share_price_from_assets(1_000_000, 1_000_000_000),
+            Ok(1_000_000)
+        );
+        assert_eq!(
+            share_price_from_assets(1_100_000, 1_000_000_000),
+            Ok(1_100_000)
+        );
+        assert_eq!(
+            share_price_from_assets(1_000_000, 0),
+            Err(RoshiError::InvalidVaultState)
         );
     }
 
     #[test]
-    fn nav_delta_guardrail_handles_large_boundary_values() {
-        let old = u64::MAX;
-        let max_delta = (u128::from(old) / u128::from(BPS_DENOMINATOR)) as u64;
+    fn performance_fee_for_nav_accrues_on_high_watermark_gains() {
+        assert_eq!(
+            performance_fee_for_nav(1_100_000, 1_000_000_000, 1_000_000, 1_000),
+            Ok((10_000, 1_090_000, 1_090_000))
+        );
+    }
 
-        assert_eq!(nav_delta_within_bps(old, old - max_delta, 1), Ok(true));
-        assert_eq!(nav_delta_within_bps(old, old - max_delta - 1, 1), Ok(false));
+    #[test]
+    fn performance_fee_for_nav_sets_initial_high_watermark_without_fee() {
+        assert_eq!(
+            performance_fee_for_nav(1_000_000, 1_000_000_000, 0, 1_000),
+            Ok((0, 1_000_000, 1_000_000))
+        );
+    }
 
-        let old = u64::MAX / 2;
-        let max_delta = (u128::from(old) / u128::from(BPS_DENOMINATOR)) as u64;
+    #[test]
+    fn performance_fee_for_nav_keeps_high_watermark_on_drawdown() {
+        assert_eq!(
+            performance_fee_for_nav(900_000, 1_000_000_000, 1_000_000, 1_000),
+            Ok((0, 900_000, 1_000_000))
+        );
+    }
 
-        assert_eq!(nav_delta_within_bps(old, old + max_delta, 1), Ok(true));
-        assert_eq!(nav_delta_within_bps(old, old + max_delta + 1, 1), Ok(false));
+    #[test]
+    fn performance_fee_for_nav_ceil_rounds_high_watermark_assets() {
+        assert_eq!(
+            performance_fee_for_nav(2, 3, 333_333_334, 10_000),
+            Ok((0, 2, 666_666_666))
+        );
     }
 
     #[test]
@@ -428,21 +486,5 @@ mod tests {
             );
         }
 
-        #[test]
-        fn prop_nav_delta_matches_floor_bps_guardrail(
-            old_total_assets in any::<u64>(),
-            new_total_assets in any::<u64>(),
-            max_change_bps in any::<u16>(),
-        ) {
-            let delta = u128::from(old_total_assets.abs_diff(new_total_assets));
-            let max_delta = u128::from(old_total_assets)
-                * u128::from(max_change_bps)
-                / u128::from(BPS_DENOMINATOR);
-
-            prop_assert_eq!(
-                nav_delta_within_bps(old_total_assets, new_total_assets, max_change_bps).unwrap(),
-                delta <= max_delta
-            );
-        }
     }
 }

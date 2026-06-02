@@ -65,7 +65,6 @@ pub struct VaultBuilder {
     fee_collector: Pubkey,
     performance_fee_bps: u16,
     withdrawal_buffer_bps: u16,
-    max_change_bps: u16,
     private: bool,
     access_merkle_root: [u8; 32],
     roles: VaultRoles,
@@ -84,7 +83,6 @@ impl Default for VaultBuilder {
             fee_collector: Pubkey::new_unique(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
-            max_change_bps: 500,
             private: false,
             access_merkle_root: [0; 32],
             roles: VaultRoles::generate(),
@@ -112,6 +110,14 @@ impl VaultBuilder {
         self
     }
 
+    pub fn base_mint_key(&self) -> Pubkey {
+        self.base_mint
+    }
+
+    pub fn share_mint_key(&self) -> Pubkey {
+        self.share_mint
+    }
+
     pub fn base_decimals(mut self, base_decimals: u8) -> Self {
         self.base_decimals = base_decimals;
         self
@@ -133,15 +139,9 @@ impl VaultBuilder {
         self
     }
 
-    pub fn fees(
-        mut self,
-        performance_bps: u16,
-        withdrawal_buffer_bps: u16,
-        max_change_bps: u16,
-    ) -> Self {
+    pub fn fees(mut self, performance_bps: u16, withdrawal_buffer_bps: u16) -> Self {
         self.performance_fee_bps = performance_bps;
         self.withdrawal_buffer_bps = withdrawal_buffer_bps;
-        self.max_change_bps = max_change_bps;
         self
     }
 
@@ -183,7 +183,6 @@ impl VaultBuilder {
             fee_collector: self.fee_collector.to_bytes(),
             performance_fee_bps: self.performance_fee_bps,
             withdrawal_buffer_bps: self.withdrawal_buffer_bps,
-            max_change_bps: self.max_change_bps,
             private: self.private,
             access_merkle_root: self.access_merkle_root,
         }
@@ -216,12 +215,19 @@ impl VaultBuilder {
 
     /// Install valid SPL base and share mints for this vault so
     /// `InitializeVault`'s mint validation passes: the base mint with the
-    /// configured decimals and the share mint with 9 decimals owned by the
-    /// vault PDA.
+    /// configured decimals, the share mint with 9 decimals owned by the vault
+    /// PDA, and the base fee collector token account.
     pub fn install_mints(&self, svm: &mut LiteSVM) {
         let vault_pda = self.address().0;
         set_mint(svm, self.base_mint, &vault_pda, self.base_decimals);
         set_mint(svm, self.share_mint, &vault_pda, 9);
+        super::token::set_token_account(
+            svm,
+            self.fee_collector,
+            &self.base_mint,
+            &Pubkey::new_unique(),
+            0,
+        );
     }
 
     /// Create the vault through the real `InitializeVault` instruction, signed
@@ -255,7 +261,6 @@ impl VaultBuilder {
             self.fee_collector.to_bytes(),
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
-            self.max_change_bps,
             self.private,
             self.access_merkle_root,
             bump,

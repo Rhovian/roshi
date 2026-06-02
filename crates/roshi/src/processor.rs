@@ -1,7 +1,7 @@
 use crate::{
     instructions::{
         admin::{
-            try_authorize_action, try_initialize_asset, try_initialize_program,
+            try_authorize_action, try_collect_fees, try_initialize_asset, try_initialize_program,
             try_initialize_vault, try_process_withdrawals, try_report_nav, try_revoke_action,
             try_set_nav_authority, try_set_pause_flags, try_set_strategist, try_set_vault_access,
             try_set_withdrawal_authority, try_transfer_program_authority,
@@ -9,7 +9,7 @@ use crate::{
         },
         execution::{try_manage, try_manage_batch},
         user::{try_cancel_redeem, try_deposit, try_redeem},
-        AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
+        AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs, InitializeAssetArgs,
         InitializeProgramArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
         ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs, RoshiInstructionTag,
         SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
@@ -163,6 +163,9 @@ fn try_process_instruction<'info>(
                 payload,
                 SetWithdrawalAuthorityArgs
             )
+        }
+        RoshiInstructionTag::CollectFees => {
+            decode_and_process!(try_collect_fees, accounts, payload, CollectFeesArgs)
         }
     }
 }

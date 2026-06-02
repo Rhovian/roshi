@@ -15,7 +15,7 @@ fn test_initialize_program() {
 
 #[test]
 #[ignore]
-fn surfpool_smoke_uses_local_rpc() {
+fn local_rpc_smoke_uses_rpc_url() {
     let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8899".to_string());
     assert!(rpc_url.starts_with("http"));
 }

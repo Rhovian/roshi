@@ -16,4 +16,6 @@ pub(crate) use manage::{ManageBatchContext, ManageContext, ValidatedManageAccoun
 pub(crate) use program_config::{InitializeProgramContext, WritableProgramConfigAuthorityContext};
 pub(crate) use redeem::RedeemContext;
 pub(crate) use shared::next_account;
-pub(crate) use vault::{update_writable_vault_as_admin, InitializeVaultContext};
+pub(crate) use vault::{
+    update_writable_vault_as_admin, InitializeVaultContext, WritableVaultRoleContext,
+};

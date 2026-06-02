@@ -18,16 +18,16 @@ use crate::{
 /// 3. `[writable]` Vault PDA derived from `[b"vault", tag, base_mint]`.
 /// 4. `[]` Base mint (decimals must equal `base_decimals`).
 /// 5. `[]` Share mint (must have 9 decimals and the vault PDA as mint authority).
-/// 6. `[]` System program.
+/// 6. `[]` Base fee collector token account.
+/// 7. `[]` System program.
 ///
 /// # Implementation
 ///
 /// Verifies the program authority gate, validates the vault tag and PDA seeds,
 /// validates the base and share mint accounts, creates the vault account with
 /// rent-exempt lamports, records configured role authorities, base-asset oracle
-/// config, and default subaccounts, initializes fee, access, and NAV guardrail
-/// config, clears pause flags, and starts accounting from an empty-share,
-/// empty-asset state.
+/// config, and default subaccounts, initializes fee and access config, clears
+/// pause flags, and starts accounting from an empty-share, empty-asset state.
 pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs) -> ProgramResult {
     let accounts = InitializeVaultContext::load(accounts, &args)?;
     let tag = Vault::unpack_tag(&args.tag, args.tag_len)?;
@@ -46,7 +46,6 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.fee_collector,
         args.performance_fee_bps,
         args.withdrawal_buffer_bps,
-        args.max_change_bps,
         args.private,
         args.access_merkle_root,
         accounts.vault_bump(),
