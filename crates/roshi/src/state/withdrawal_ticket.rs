@@ -10,7 +10,6 @@ pub struct WithdrawalTicket {
     pub vault: [u8; 32],
     pub owner: [u8; 32],
     pub recipient_token_account: [u8; 32],
-    pub request_epoch: u64,
     pub shares_burned: u64,
     pub assets_owed: u64,
     pub ticket_index: u8,
@@ -28,7 +27,6 @@ impl WithdrawalTicket {
         owner: [u8; 32],
         recipient_token_account: [u8; 32],
         ticket_index: u8,
-        request_epoch: u64,
         shares_burned: u64,
         assets_owed: u64,
         bump: u8,
@@ -37,7 +35,6 @@ impl WithdrawalTicket {
             vault,
             owner,
             recipient_token_account,
-            request_epoch,
             shares_burned,
             assets_owed,
             ticket_index,
@@ -91,11 +88,11 @@ mod tests {
 
     #[test]
     fn withdrawal_ticket_is_zero_copy_with_explicit_padding() {
-        let ticket = WithdrawalTicket::new([1; 32], [2; 32], [3; 32], 4, 5, 6, 7, 8);
+        let ticket = WithdrawalTicket::new([1; 32], [2; 32], [3; 32], 4, 5, 6, 7);
 
         assert_zero_copy::<WithdrawalTicket>();
-        assert_eq!(core::mem::size_of::<WithdrawalTicket>(), 128);
-        assert_eq!(WithdrawalTicket::SPACE, 129);
+        assert_eq!(core::mem::size_of::<WithdrawalTicket>(), 120);
+        assert_eq!(WithdrawalTicket::SPACE, 121);
         assert_eq!(
             serialize(&ticket).unwrap().len(),
             core::mem::size_of::<WithdrawalTicket>()

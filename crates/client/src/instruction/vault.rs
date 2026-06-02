@@ -1,7 +1,7 @@
 use roshi_interface::instructions::{
-    InitializeVaultArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
-    SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
-    TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
+    InitializeVaultArgs, ProcessWithdrawalsArgs, SetNavAuthorityArgs, SetPauseFlagsArgs,
+    SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -144,4 +144,28 @@ pub fn update_vault_config(
     args: UpdateVaultConfigArgs,
 ) -> Result<Instruction> {
     new(vault_admin_accounts(admin, vault), &args)
+}
+
+pub fn process_withdrawals(
+    withdrawal_authority: Pubkey,
+    vault: Pubkey,
+    withdraw_sub_account: Pubkey,
+    custody: Pubkey,
+    settlements: Vec<(Pubkey, Pubkey, Pubkey)>,
+) -> Result<Instruction> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(withdrawal_authority, true),
+        AccountMeta::new(vault, false),
+        AccountMeta::new_readonly(withdraw_sub_account, false),
+        AccountMeta::new(custody, false),
+        AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
+    ];
+
+    for (ticket, owner, destination) in settlements {
+        accounts.push(AccountMeta::new(ticket, false));
+        accounts.push(AccountMeta::new(owner, false));
+        accounts.push(AccountMeta::new(destination, false));
+    }
+
+    new(accounts, &ProcessWithdrawalsArgs)
 }

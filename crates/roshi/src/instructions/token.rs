@@ -136,6 +136,36 @@ pub(crate) fn transfer<'info>(
     )
 }
 
+/// CPI an SPL token transfer authorized by a PDA via `signer_seeds`.
+pub(crate) fn transfer_signed<'info>(
+    token_program: &AccountInfo<'info>,
+    source: &AccountInfo<'info>,
+    destination: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    amount: u64,
+    signer_seeds: &[&[u8]],
+) -> ProgramResult {
+    let instruction = spl_token_interface::instruction::transfer(
+        token_program.key,
+        source.key,
+        destination.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+
+    invoke_signed(
+        &instruction,
+        &[
+            source.clone(),
+            destination.clone(),
+            authority.clone(),
+            token_program.clone(),
+        ],
+        &[signer_seeds],
+    )
+}
+
 /// CPI an SPL token burn authorized by `authority` (a transaction signer that
 /// owns `account`).
 pub(crate) fn burn<'info>(

@@ -55,10 +55,9 @@ not become a separate user-facing domain unless doing so adds a real invariant.
 
 The withdrawal queue is operational.
 
-It exists to handle cases where shares should be burned immediately but base
-liquidity is not currently idle in withdrawal custody. The strategist returns
-liquidity and the withdrawal authority processes queued tickets through
-settlement.
+Redemptions always burn shares immediately and create queued withdrawal tickets.
+The strategist returns liquidity to withdrawal custody, and the withdrawal
+authority processes queued tickets through settlement.
 
 The queue is not a solver market. Roshi does not model withdrawal discounts,
 maturity auctions, or deadline markets in the core vault.

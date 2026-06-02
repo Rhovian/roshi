@@ -60,7 +60,6 @@ Liquidity = actual token balances available for settlement
 
 Token balances are still checked when the program needs to pay:
 
-- immediate base-asset redemptions,
 - queued withdrawal settlement,
 - fee collection,
 - strategy withdrawals.

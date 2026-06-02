@@ -46,8 +46,6 @@ fn test_initialize_vault() {
     assert_eq!(state.min_update_interval, 60);
     assert_eq!(state.total_assets, 0);
     assert_eq!(state.total_shares, 0);
-    assert_eq!(state.current_withdrawal_epoch, 1);
-    assert_eq!(state.processed_withdrawal_epoch, 0);
     assert_eq!(state.private(), Ok(true));
     assert_eq!(state.access_merkle_root, [7; 32]);
 }

@@ -25,10 +25,11 @@ mod tests {
         action::Ops,
         instructions::{
             AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
-            InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs, RedeemArgs,
-            RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
-            SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
-            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+            InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs,
+            ProcessWithdrawalsArgs, RedeemArgs, RevokeActionArgs, SetNavAuthorityArgs,
+            SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+            TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
+            UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -344,6 +345,48 @@ mod tests {
 
         let args: CancelRedeemArgs = decode_args(&ix.data);
         assert_eq!(args.min_shares_out, 123);
+    }
+
+    #[test]
+    fn builds_process_withdrawals_instruction() {
+        let withdrawal_authority = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let withdraw_sub_account = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let ticket = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+
+        let ix = process_withdrawals(
+            withdrawal_authority,
+            vault,
+            withdraw_sub_account,
+            custody,
+            vec![(ticket, owner, destination)],
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(withdrawal_authority, true)
+        );
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[2],
+            AccountMeta::new_readonly(withdraw_sub_account, false)
+        );
+        assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
+        assert_eq!(
+            ix.accounts[4],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+        assert_eq!(ix.accounts[5], AccountMeta::new(ticket, false));
+        assert_eq!(ix.accounts[6], AccountMeta::new(owner, false));
+        assert_eq!(ix.accounts[7], AccountMeta::new(destination, false));
+
+        let _args: ProcessWithdrawalsArgs = decode_args(&ix.data);
     }
 
     #[test]

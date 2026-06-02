@@ -28,8 +28,6 @@ pub struct Vault {
     pub high_watermark: u64,
     pub min_update_interval: i64,
     pub last_update_ts: i64,
-    pub current_withdrawal_epoch: u64,
-    pub processed_withdrawal_epoch: u64,
     pub tag: [u8; 32],
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
@@ -104,8 +102,6 @@ impl Vault {
             high_watermark: 0,
             min_update_interval,
             last_update_ts: 0,
-            current_withdrawal_epoch: 1,
-            processed_withdrawal_epoch: 0,
             tag,
             admin,
             strategist,
@@ -380,8 +376,6 @@ mod tests {
         assert_eq!(vault.max_change_bps, 500);
         assert_eq!(vault.min_update_interval, 60);
         assert_eq!(vault.last_update_ts, 0);
-        assert_eq!(vault.current_withdrawal_epoch, 1);
-        assert_eq!(vault.processed_withdrawal_epoch, 0);
         assert_eq!(vault.deposits_paused(), Ok(false));
         assert_eq!(vault.withdrawals_paused(), Ok(false));
         assert_eq!(vault.manage_paused(), Ok(false));
@@ -411,8 +405,8 @@ mod tests {
         let vault = new_test_vault(false, [0; 32]);
 
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 568);
-        assert_eq!(Vault::SPACE, 569);
+        assert_eq!(core::mem::size_of::<Vault>(), 552);
+        assert_eq!(Vault::SPACE, 553);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()

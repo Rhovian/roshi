@@ -23,8 +23,8 @@ use roshi_interface::{error::RoshiError, math::assets_for_redeem};
 /// Redemptions are asynchronous: vault assets are deployed off-chain, so a
 /// redeem locks in the current share price, burns the shares immediately (so
 /// they cannot be redeemed twice or transferred while a claim is outstanding),
-/// and records a withdrawal ticket for the current epoch. The owed base assets
-/// are paid out later by `process_withdrawals`.
+/// and records a withdrawal ticket. The owed base assets are paid out later by
+/// `process_withdrawals`.
 ///
 /// Rejects redemptions while withdrawals are paused, computes the owed base
 /// assets at the current price, enforces `min_assets_out`, burns the shares,
@@ -59,7 +59,6 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
         context.owner.key.to_bytes(),
         context.recipient_token_account.key.to_bytes(),
         args.ticket_index,
-        vault.current_withdrawal_epoch,
         args.shares,
         assets_owed,
         context.ticket_bump(),

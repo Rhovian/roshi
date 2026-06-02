@@ -31,7 +31,7 @@ the last accepted NAV update.
 It is used for performance fee accounting.
 
 `withdrawal_buffer_bps` is the target percentage of total assets to keep idle in
-withdrawal custody for immediate withdrawals.
+withdrawal custody for queued settlement.
 
 `max_change_bps` and `min_update_interval` bound NAV updates.
 
@@ -76,7 +76,6 @@ and provides a hash commitment to the private report bundle.
 Token account balances remain important, but for settlement liquidity rather
 than NAV truth:
 
-- immediate redemptions can only pay from actual base custody liquidity,
 - queued withdrawal processing can only settle when the relevant custody account
   can pay,
 - NAV can include positions that are not directly observable in the instruction.
@@ -194,8 +193,8 @@ The redeem flow should:
 - burn or otherwise account the user's shares,
 - reduce `total_shares` by `shares`,
 - reduce `total_assets` by `assets_out`,
-- either pay immediately from liquidity owned by `vault.withdraw_sub_account` or
-  create a withdrawal ticket.
+- create a withdrawal ticket for later settlement from liquidity owned by
+  `vault.withdraw_sub_account`.
 
 Shares are burned before creating a queued withdrawal ticket. That prevents a
 user from both keeping shares and being owed queued assets.
@@ -211,9 +210,9 @@ target_idle_assets = ceil(total_assets * withdrawal_buffer_bps / 10_000)
 ```
 
 Strategists should manage deployed positions so the withdraw subaccount can
-serve normal withdrawals. The vault does not store a separate reserved-assets
-counter; custody token account balances are the source of truth for immediate
-payment capacity.
+settle queued withdrawals. The vault does not store a separate reserved-assets
+counter; custody token account balances are the source of truth for settlement
+capacity.
 
 ## Guardrails
 
@@ -267,8 +266,8 @@ crystallization can be inserted without changing user-facing share semantics.
 - Redeems decrease both assets and shares proportionally.
 - NAV updates must respect `min_update_interval` and `max_change_bps`.
 - Withdrawal tickets represent assets already removed from share accounting.
-- Custody token account balances are the payment source of truth for immediate
-  withdrawals and queued withdrawal settlement.
+- Custody token account balances are the payment source of truth for queued
+  withdrawal settlement.
 
 ## Non-Goals
 

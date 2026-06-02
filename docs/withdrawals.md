@@ -1,14 +1,11 @@
 # Withdrawal System
 
-Roshi uses a hybrid withdrawal model:
+Roshi uses a queued withdrawal model:
 
-- If the vault has enough idle liquidity, a redeem is paid immediately.
-- Otherwise, shares are burned immediately and the user receives a queued
-  withdrawal ticket. The withdrawal authority later processes that ticket all
-  the way through settlement.
-
-The design avoids epoch-derived ticket PDAs. Withdrawal epochs are queue state,
-not account address space.
+Shares are burned immediately and the user receives a queued withdrawal ticket.
+The withdrawal authority later processes that ticket all the way through
+settlement after the strategist has returned enough base liquidity to withdrawal
+custody.
 
 ## Goals
 
@@ -31,31 +28,25 @@ not account address space.
 
 ### Vault
 
-The vault account stores the queue-level withdrawal state:
+The vault account stores aggregate pending withdrawal state:
 
 ```rust
 pending_withdrawal_assets: u64,
-current_withdrawal_epoch: u64,
-processed_withdrawal_epoch: u64,
 ```
 
-`pending_withdrawal_assets` is the total asset amount requested in the current
-unprocessed withdrawal batch.
-
-`current_withdrawal_epoch` is assigned to new queued withdrawal tickets.
-
-`processed_withdrawal_epoch` is the highest withdrawal epoch that has been fully
-processed by the withdrawal authority.
+`pending_withdrawal_assets` is the total base-asset amount owed across open
+withdrawal tickets.
 
 The vault does not store a separate reserved or settlement balance. Custody
 token account balances are the source of truth for settlement capacity.
 
 ### WithdrawalTicket
 
-Each user has a bounded ring of 256 reusable withdrawal ticket PDAs per vault:
+Each recipient token account has a bounded ring of 256 reusable withdrawal
+ticket PDAs per vault:
 
 ```rust
-Seeds: [b"ticket", vault, owner, ticket_index]
+Seeds: [b"ticket", vault, recipient_token_account, ticket_index]
 ```
 
 where `ticket_index` is a `u8`.
@@ -64,16 +55,13 @@ where `ticket_index` is a `u8`.
 WithdrawalTicket {
     vault: Pubkey,
     owner: Pubkey,
+    recipient_token_account: Pubkey,
     ticket_index: u8,
-    request_epoch: u64,
     shares_burned: u64,
     assets_owed: u64,
     bump: u8,
 }
 ```
-
-The ticket stores `request_epoch` as data. The epoch is never part of the PDA
-seed.
 
 ## Redeem Flow
 
@@ -96,24 +84,17 @@ assets_owed = floor(shares * total_assets / total_shares)
 
 See [Accounting Math](./math.md) for the shared helper contract.
 
-If the withdraw subaccount has enough idle liquidity for immediate payment:
+The redeem flow:
 
-- Burn the user's shares.
-- Transfer `assets_owed` to the user.
-- Do not create or modify a withdrawal ticket.
+- burns the user's shares,
+- derives the ticket PDA from `(vault, recipient_token_account, ticket_index)`,
+- requires the selected ticket slot to be empty or otherwise reusable,
+- writes `owner`, `recipient_token_account`, `shares_burned`, and `assets_owed`,
+- increments `vault.pending_withdrawal_assets` by `assets_owed`.
 
-If the withdraw subaccount does not have enough idle liquidity:
-
-- Burn the user's shares.
-- Derive the ticket PDA from `(vault, owner, ticket_index)`.
-- Require the selected ticket slot to be empty or otherwise reusable.
-- Write `request_epoch = vault.current_withdrawal_epoch`.
-- Write `shares_burned` and `assets_owed`.
-- Increment `vault.pending_withdrawal_assets` by `assets_owed`.
-
-The user may have up to 256 open queued tickets per vault. Reusing a ticket slot
-requires the withdrawal authority to process and clear the existing ticket in
-that slot.
+A recipient token account may have up to 256 open queued tickets per vault.
+Reusing a ticket slot requires the withdrawal authority to process and clear the
+existing ticket in that slot.
 
 ## Processing Flow
 
@@ -127,18 +108,18 @@ This settles queued withdrawal tickets. The instruction should:
 
 - verify the caller is the vault's withdrawal authority,
 - verify the withdraw subaccount custody can pay each supplied ticket,
-- transfer each ticket's `assets_owed` to its owner,
+- transfer each ticket's `assets_owed` to its recorded recipient token account,
 - close or clear settled ticket slots,
-- advance `processed_withdrawal_epoch` for fully processed batches,
 - decrement or clear `pending_withdrawal_assets` for settled tickets.
 
 For each ticket, the program verifies:
 
 ```rust
 ticket.vault == vault.key()
+ticket.owner == owner.key()
+ticket.recipient_token_account == destination.key()
 ticket.assets_owed > 0
-ticket.request_epoch <= vault.current_withdrawal_epoch
-ticket.key() == find_ticket(vault, user, ticket.ticket_index)
+ticket.key() == find_ticket(vault, destination, ticket.ticket_index)
 ```
 
 Processing is both the eligibility and payment step. The withdrawal authority is
@@ -153,7 +134,7 @@ withdrawals once the vault is ready to satisfy them.
 ## Invariants
 
 - Shares are burned before a queued withdrawal ticket is created.
-- A ticket PDA is bounded by `(vault, owner, ticket_index)`, not by epoch.
+- A ticket PDA is bounded by `(vault, recipient_token_account, ticket_index)`.
 - A ticket is settled only by `ProcessWithdrawals`.
 - Settlement capacity is determined by custody token account balances.
 - The vault does not maintain a separate reserved-assets counter.
