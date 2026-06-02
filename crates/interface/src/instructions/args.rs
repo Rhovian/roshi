@@ -64,6 +64,7 @@ pub struct DepositArgs {
 
 #[derive(SchemaWrite, SchemaRead)]
 pub struct RedeemArgs {
+    pub recipient_token_account: [u8; 32],
     pub ticket_index: u8,
     pub shares: u64,
     pub min_assets_out: u64,

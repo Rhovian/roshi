@@ -18,6 +18,9 @@ const MINT_AUTHORITY_KEY: usize = 4;
 const MINT_DECIMALS: usize = 44;
 const MINT_IS_INITIALIZED: usize = 45;
 const MINT_LEN: usize = 82;
+const TOKEN_ACCOUNT_MINT: usize = 0;
+const TOKEN_ACCOUNT_STATE: usize = 108;
+const TOKEN_ACCOUNT_LEN: usize = 165;
 
 /// Derive the associated token account address for `wallet` and `mint` under
 /// the classic SPL Token program.
@@ -62,6 +65,29 @@ pub(crate) fn verify_mint(
     Ok(())
 }
 
+/// Verify `account` is an initialized SPL token account for `expected_mint`.
+pub(crate) fn verify_token_account_mint(
+    account: &AccountInfo,
+    expected_mint: &Pubkey,
+) -> ProgramResult {
+    if account.owner != &TOKEN_PROGRAM_ID {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let mint = Pubkey::try_from(&data[TOKEN_ACCOUNT_MINT..TOKEN_ACCOUNT_MINT + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &mint != expected_mint {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
 /// CPI an SPL token transfer authorized by `authority` (a transaction signer).
 pub(crate) fn transfer<'info>(
     token_program: &AccountInfo<'info>,
@@ -84,6 +110,35 @@ pub(crate) fn transfer<'info>(
         &[
             source.clone(),
             destination.clone(),
+            authority.clone(),
+            token_program.clone(),
+        ],
+    )
+}
+
+/// CPI an SPL token burn authorized by `authority` (a transaction signer that
+/// owns `account`).
+pub(crate) fn burn<'info>(
+    token_program: &AccountInfo<'info>,
+    account: &AccountInfo<'info>,
+    mint: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    amount: u64,
+) -> ProgramResult {
+    let instruction = spl_token_interface::instruction::burn(
+        token_program.key,
+        account.key,
+        mint.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+
+    invoke(
+        &instruction,
+        &[
+            account.clone(),
+            mint.clone(),
             authority.clone(),
             token_program.clone(),
         ],

@@ -1,352 +1,40 @@
-use roshi_interface::{
-    action::Ops,
-    instructions::{
-        serialize_instruction, AuthorizeActionArgs, DepositArgs, InitializeAssetArgs,
-        InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs, ManageBatchArgs,
-        RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
-        SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
-        TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
-    },
-    ID,
-};
-use solana_instruction::{AccountMeta, Instruction};
-use solana_pubkey::Pubkey;
-use solana_system_interface::program as system_program;
+mod action;
+mod asset;
+mod core;
+mod execution;
+mod program;
+mod user;
+mod vault;
 
-pub type Result<T> = core::result::Result<T, wincode::WriteError>;
-
-pub fn new<T>(accounts: Vec<AccountMeta>, args: &T) -> Result<Instruction>
-where
-    T: InstructionArgs,
-{
-    new_with_program_id(ID, accounts, args)
-}
-
-pub fn new_with_program_id<T>(
-    program_id: Pubkey,
-    accounts: Vec<AccountMeta>,
-    args: &T,
-) -> Result<Instruction>
-where
-    T: InstructionArgs,
-{
-    Ok(Instruction {
-        program_id,
-        accounts,
-        data: serialize_instruction(args)?,
-    })
-}
-
-pub fn initialize_program(
-    payer: Pubkey,
-    program_config: Pubkey,
-    authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new(payer, true),
-            AccountMeta::new(program_config, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ],
-        &InitializeProgramArgs {
-            authority: authority.to_bytes(),
-        },
-    )
-}
-
-pub fn initialize_vault(
-    program_authority: Pubkey,
-    program_config: Pubkey,
-    payer: Pubkey,
-    vault: Pubkey,
-    args: InitializeVaultArgs,
-) -> Result<Instruction> {
-    let base_mint = Pubkey::from(args.base_mint);
-    let share_mint = Pubkey::from(args.share_mint);
-    new(
-        vec![
-            AccountMeta::new_readonly(program_authority, true),
-            AccountMeta::new_readonly(program_config, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new(vault, false),
-            AccountMeta::new_readonly(base_mint, false),
-            AccountMeta::new_readonly(share_mint, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ],
-        &args,
-    )
-}
-
-pub fn transfer_program_authority(
-    authority: Pubkey,
-    program_config: Pubkey,
-    new_authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new_readonly(authority, true),
-            AccountMeta::new(program_config, false),
-        ],
-        &TransferProgramAuthorityArgs {
-            new_authority: new_authority.to_bytes(),
-        },
-    )
-}
-
-pub fn transfer_vault_authority(
-    authority: Pubkey,
-    vault: Pubkey,
-    new_authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new_readonly(authority, true),
-            AccountMeta::new(vault, false),
-        ],
-        &TransferVaultAuthorityArgs {
-            new_authority: new_authority.to_bytes(),
-        },
-    )
-}
-
-pub fn authorize_action(
-    admin: Pubkey,
-    vault: Pubkey,
-    action: Pubkey,
-    action_hash: [u8; 32],
-    ops: Ops,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new(admin, true),
-            AccountMeta::new_readonly(vault, false),
-            AccountMeta::new(action, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ],
-        &AuthorizeActionArgs { action_hash, ops },
-    )
-}
-
-pub fn revoke_action(
-    admin: Pubkey,
-    vault: Pubkey,
-    action: Pubkey,
-    action_hash: [u8; 32],
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new(admin, true),
-            AccountMeta::new_readonly(vault, false),
-            AccountMeta::new(action, false),
-        ],
-        &RevokeActionArgs { action_hash },
-    )
-}
-
-pub fn initialize_asset(
-    admin: Pubkey,
-    vault: Pubkey,
-    asset: Pubkey,
-    args: InitializeAssetArgs,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new(admin, true),
-            AccountMeta::new_readonly(vault, false),
-            AccountMeta::new(asset, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ],
-        &args,
-    )
-}
-
-pub fn update_asset(
-    admin: Pubkey,
-    vault: Pubkey,
-    asset: Pubkey,
-    args: UpdateAssetArgs,
-) -> Result<Instruction> {
-    new(
-        vec![
-            AccountMeta::new_readonly(admin, true),
-            AccountMeta::new_readonly(vault, false),
-            AccountMeta::new(asset, false),
-        ],
-        &args,
-    )
-}
-
-fn vault_admin_accounts(admin: Pubkey, vault: Pubkey) -> Vec<AccountMeta> {
-    vec![
-        AccountMeta::new_readonly(admin, true),
-        AccountMeta::new(vault, false),
-    ]
-}
-
-pub fn set_strategist(admin: Pubkey, vault: Pubkey, strategist: Pubkey) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetStrategistArgs {
-            strategist: strategist.to_bytes(),
-        },
-    )
-}
-
-pub fn set_nav_authority(
-    admin: Pubkey,
-    vault: Pubkey,
-    nav_authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetNavAuthorityArgs {
-            nav_authority: nav_authority.to_bytes(),
-        },
-    )
-}
-
-pub fn set_withdrawal_authority(
-    admin: Pubkey,
-    vault: Pubkey,
-    withdrawal_authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetWithdrawalAuthorityArgs {
-            withdrawal_authority: withdrawal_authority.to_bytes(),
-        },
-    )
-}
-
-pub fn manage(
-    strategist: Pubkey,
-    vault: Pubkey,
-    sub_account_pda: Pubkey,
-    action: Pubkey,
-    cpi_accounts: Vec<AccountMeta>,
-    args: ManageArgs,
-) -> Result<Instruction> {
-    let mut accounts = vec![
-        AccountMeta::new_readonly(strategist, true),
-        AccountMeta::new_readonly(vault, false),
-        AccountMeta::new(sub_account_pda, false),
-        AccountMeta::new_readonly(action, false),
-    ];
-    accounts.extend(cpi_accounts);
-
-    new(accounts, &args)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ManageBatchActionAccounts {
-    pub sub_account_pda: Pubkey,
-    pub action: Pubkey,
-}
-
-pub fn manage_batch(
-    strategist: Pubkey,
-    vault: Pubkey,
-    action_accounts: Vec<ManageBatchActionAccounts>,
-    cpi_accounts: Vec<AccountMeta>,
-    actions: Vec<ManageArgs>,
-) -> Result<Instruction> {
-    let mut accounts = Vec::with_capacity(2 + action_accounts.len() * 2 + cpi_accounts.len());
-    accounts.push(AccountMeta::new_readonly(strategist, true));
-    accounts.push(AccountMeta::new_readonly(vault, false));
-
-    for action_accounts in action_accounts {
-        accounts.push(AccountMeta::new(action_accounts.sub_account_pda, false));
-        accounts.push(AccountMeta::new_readonly(action_accounts.action, false));
-    }
-
-    accounts.extend(cpi_accounts);
-
-    new(accounts, &ManageBatchArgs { actions })
-}
+pub use self::action::*;
+pub use self::asset::*;
+pub use self::core::*;
+pub use self::execution::*;
+pub use self::program::*;
+pub use self::user::*;
+pub use self::vault::*;
 
 /// SPL Token program id (classic).
-pub const TOKEN_PROGRAM_ID: Pubkey =
+pub const TOKEN_PROGRAM_ID: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-
-#[allow(clippy::too_many_arguments)]
-pub fn deposit(
-    depositor: Pubkey,
-    vault: Pubkey,
-    user_source_token_account: Pubkey,
-    vault_custody_token_account: Pubkey,
-    user_share_account: Pubkey,
-    share_mint: Pubkey,
-    asset_mint: Pubkey,
-    amount: u64,
-    min_shares_out: u64,
-    access_proof: Vec<[u8; 32]>,
-    additional_accounts: Vec<AccountMeta>,
-) -> Result<Instruction> {
-    let mut accounts = vec![
-        AccountMeta::new_readonly(depositor, true),
-        AccountMeta::new(vault, false),
-        AccountMeta::new(user_source_token_account, false),
-        AccountMeta::new(vault_custody_token_account, false),
-        AccountMeta::new(user_share_account, false),
-        AccountMeta::new(share_mint, false),
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-    ];
-    accounts.extend(additional_accounts);
-
-    new(
-        accounts,
-        &DepositArgs {
-            asset_mint: asset_mint.to_bytes(),
-            amount,
-            min_shares_out,
-            access_proof,
-        },
-    )
-}
-
-pub fn set_vault_access(
-    admin: Pubkey,
-    vault: Pubkey,
-    private: bool,
-    access_merkle_root: [u8; 32],
-) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetVaultAccessArgs {
-            private,
-            access_merkle_root,
-        },
-    )
-}
-
-pub fn set_pause_flags(
-    admin: Pubkey,
-    vault: Pubkey,
-    deposits_paused: bool,
-    withdrawals_paused: bool,
-    manage_paused: bool,
-) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetPauseFlagsArgs {
-            deposits_paused,
-            withdrawals_paused,
-            manage_paused,
-        },
-    )
-}
-
-pub fn update_vault_config(
-    admin: Pubkey,
-    vault: Pubkey,
-    args: UpdateVaultConfigArgs,
-) -> Result<Instruction> {
-    new(vault_admin_accounts(admin, vault), &args)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roshi_interface::{
+        action::Ops,
+        instructions::{
+            AuthorizeActionArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
+            InitializeVaultArgs, InstructionArgs, ManageArgs, RedeemArgs, RevokeActionArgs,
+            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+            SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+            UpdateAssetArgs, UpdateVaultConfigArgs,
+        },
+        ID,
+    };
+    use solana_instruction::AccountMeta;
+    use solana_pubkey::Pubkey;
+    use solana_system_interface::program as system_program;
     use wincode::{config::DefaultConfig, SchemaRead};
 
     fn decode_args<'a, T>(data: &'a [u8]) -> T
@@ -584,6 +272,52 @@ mod tests {
         assert_eq!(args.amount, 123);
         assert_eq!(args.min_shares_out, 456);
         assert_eq!(args.access_proof, proof);
+    }
+
+    #[test]
+    fn builds_redeem_instruction() {
+        let owner = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let share_source = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let ticket = Pubkey::new_unique();
+
+        let ix = redeem(
+            owner,
+            vault,
+            share_source,
+            share_mint,
+            recipient,
+            ticket,
+            7,
+            123,
+            456,
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(ix.accounts[0], AccountMeta::new(owner, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(share_source, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new(share_mint, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new_readonly(recipient, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new(ticket, false));
+        assert_eq!(
+            ix.accounts[6],
+            AccountMeta::new_readonly(system_program::ID, false)
+        );
+        assert_eq!(
+            ix.accounts[7],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+
+        let args: RedeemArgs = decode_args(&ix.data);
+        assert_eq!(args.recipient_token_account, recipient.to_bytes());
+        assert_eq!(args.ticket_index, 7);
+        assert_eq!(args.shares, 123);
+        assert_eq!(args.min_assets_out, 456);
     }
 
     #[test]

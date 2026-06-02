@@ -8,7 +8,7 @@ pub const WITHDRAWAL_TICKET_COUNT: u16 = 256;
 #[repr(C)]
 pub struct WithdrawalTicket {
     pub vault: [u8; 32],
-    pub owner: [u8; 32],
+    pub recipient_token_account: [u8; 32],
     pub request_epoch: u64,
     pub shares_burned: u64,
     pub assets_owed: u64,
@@ -23,7 +23,7 @@ impl WithdrawalTicket {
 
     pub const fn new(
         vault: [u8; 32],
-        owner: [u8; 32],
+        recipient_token_account: [u8; 32],
         ticket_index: u8,
         request_epoch: u64,
         shares_burned: u64,
@@ -32,7 +32,7 @@ impl WithdrawalTicket {
     ) -> Self {
         Self {
             vault,
-            owner,
+            recipient_token_account,
             request_epoch,
             shares_burned,
             assets_owed,
@@ -42,9 +42,18 @@ impl WithdrawalTicket {
         }
     }
 
-    pub fn find_address(vault: &Pubkey, owner: &Pubkey, ticket_index: u8) -> (Pubkey, u8) {
+    pub fn find_address(
+        vault: &Pubkey,
+        recipient_token_account: &Pubkey,
+        ticket_index: u8,
+    ) -> (Pubkey, u8) {
         Pubkey::find_program_address(
-            &[Self::SEED, vault.as_ref(), owner.as_ref(), &[ticket_index]],
+            &[
+                Self::SEED,
+                vault.as_ref(),
+                recipient_token_account.as_ref(),
+                &[ticket_index],
+            ],
             &crate::ID,
         )
     }

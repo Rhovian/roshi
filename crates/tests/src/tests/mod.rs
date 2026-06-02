@@ -8,5 +8,6 @@ mod deposit;
 mod initialize_vault;
 mod manage;
 mod program;
+mod redeem;
 mod role_authorities;
 mod vault_config;

@@ -17,8 +17,9 @@ use crate::instructions::ProcessWithdrawalsArgs;
 ///
 /// This handler is currently a stub. The intended implementation verifies the
 /// withdrawal authority, validates queued tickets, transfers owed base assets
-/// from withdraw-subaccount custody to each ticket owner, closes or clears
-/// settled ticket slots, advances processed epochs, and reduces pending assets.
+/// from withdraw-subaccount custody to each ticket recipient token account,
+/// closes or clears settled ticket slots, advances processed epochs, and
+/// reduces pending assets.
 pub fn try_process_withdrawals(
     _accounts: &[AccountInfo],
     _args: ProcessWithdrawalsArgs,
