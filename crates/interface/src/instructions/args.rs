@@ -106,11 +106,6 @@ pub struct UpdateAssetArgs {
 }
 
 #[derive(SchemaWrite, SchemaRead)]
-pub struct InitializeSubAccountArgs {
-    pub index: u8,
-}
-
-#[derive(SchemaWrite, SchemaRead)]
 pub struct SetPauseFlagsArgs {
     pub deposits_paused: bool,
     pub withdrawals_paused: bool,

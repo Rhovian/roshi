@@ -1,9 +1,11 @@
 use roshi_interface::{
+    action::Ops,
     instructions::{
-        serialize_instruction, DepositArgs, InitializeProgramArgs, InitializeVaultArgs,
-        InstructionArgs, ManageArgs, ManageBatchArgs, SetNavAuthorityArgs, SetStrategistArgs,
-        SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
-        TransferVaultAuthorityArgs,
+        serialize_instruction, AuthorizeActionArgs, DepositArgs, InitializeProgramArgs,
+        InitializeVaultArgs, InstructionArgs, ManageArgs, ManageBatchArgs, RevokeActionArgs,
+        SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+        SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+        UpdateVaultConfigArgs,
     },
     ID,
 };
@@ -100,6 +102,40 @@ pub fn transfer_vault_authority(
         &TransferVaultAuthorityArgs {
             new_authority: new_authority.to_bytes(),
         },
+    )
+}
+
+pub fn authorize_action(
+    admin: Pubkey,
+    vault: Pubkey,
+    action: Pubkey,
+    action_hash: [u8; 32],
+    ops: Ops,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new(action, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        &AuthorizeActionArgs { action_hash, ops },
+    )
+}
+
+pub fn revoke_action(
+    admin: Pubkey,
+    vault: Pubkey,
+    action: Pubkey,
+    action_hash: [u8; 32],
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new(action, false),
+        ],
+        &RevokeActionArgs { action_hash },
     )
 }
 
@@ -236,6 +272,31 @@ pub fn set_vault_access(
             access_merkle_root,
         },
     )
+}
+
+pub fn set_pause_flags(
+    admin: Pubkey,
+    vault: Pubkey,
+    deposits_paused: bool,
+    withdrawals_paused: bool,
+    manage_paused: bool,
+) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        &SetPauseFlagsArgs {
+            deposits_paused,
+            withdrawals_paused,
+            manage_paused,
+        },
+    )
+}
+
+pub fn update_vault_config(
+    admin: Pubkey,
+    vault: Pubkey,
+    args: UpdateVaultConfigArgs,
+) -> Result<Instruction> {
+    new(vault_admin_accounts(admin, vault), &args)
 }
 
 #[cfg(test)]
@@ -487,5 +548,95 @@ mod tests {
         let args: SetVaultAccessArgs = decode_args(&ix.data);
         assert!(args.private);
         assert_eq!(args.access_merkle_root, root);
+    }
+
+    #[test]
+    fn builds_authorize_action_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let action = Pubkey::new_unique();
+
+        let ix = authorize_action(admin, vault, action, [9; 32], Ops::empty()).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 4);
+        assert_eq!(ix.accounts[0], AccountMeta::new(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(action, false));
+        assert_eq!(
+            ix.accounts[3],
+            AccountMeta::new_readonly(system_program::ID, false)
+        );
+
+        let args: AuthorizeActionArgs = decode_args(&ix.data);
+        assert_eq!(args.action_hash, [9; 32]);
+        assert_eq!(args.ops, Ops::empty());
+    }
+
+    #[test]
+    fn builds_revoke_action_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let action = Pubkey::new_unique();
+
+        let ix = revoke_action(admin, vault, action, [9; 32]).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 3);
+        assert_eq!(ix.accounts[0], AccountMeta::new(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(action, false));
+
+        let args: RevokeActionArgs = decode_args(&ix.data);
+        assert_eq!(args.action_hash, [9; 32]);
+    }
+
+    #[test]
+    fn builds_set_pause_flags_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+
+        let ix = set_pause_flags(admin, vault, true, false, true).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+
+        let args: SetPauseFlagsArgs = decode_args(&ix.data);
+        assert!(args.deposits_paused);
+        assert!(!args.withdrawals_paused);
+        assert!(args.manage_paused);
+    }
+
+    #[test]
+    fn builds_update_vault_config_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let fee_collector = Pubkey::new_unique();
+        let args = UpdateVaultConfigArgs {
+            fee_collector: fee_collector.to_bytes(),
+            deposit_sub_account: 2,
+            withdraw_sub_account: 3,
+            base_oracle: roshi_interface::oracle::OracleConfig::default(),
+            performance_fee_bps: 150,
+            withdrawal_buffer_bps: 300,
+            max_change_bps: 600,
+            min_update_interval: 120,
+        };
+
+        let ix = update_vault_config(admin, vault, args).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+
+        let args: UpdateVaultConfigArgs = decode_args(&ix.data);
+        assert_eq!(args.fee_collector, fee_collector.to_bytes());
+        assert_eq!(args.deposit_sub_account, 2);
+        assert_eq!(args.withdraw_sub_account, 3);
+        assert_eq!(args.performance_fee_bps, 150);
+        assert_eq!(args.min_update_interval, 120);
     }
 }

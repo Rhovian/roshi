@@ -1,0 +1,155 @@
+use roshi::{error::RoshiError, state::vault::Vault, ID};
+use solana_instruction::error::InstructionError;
+use solana_sdk::{signature::Keypair, signer::Signer};
+
+use crate::helpers::{
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, setup_program, VaultBuilder,
+};
+
+#[test]
+fn test_initialize_vault() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new()
+        .tag(b"main")
+        .private(true, [7; 32])
+        .create(&mut svm, &authority, config_pda);
+
+    let account = svm.get_account(&vault.address).unwrap();
+    assert_eq!(account.owner, ID);
+    assert_eq!(account.data.len(), Vault::SPACE);
+
+    let state = vault.load(&svm);
+    assert_eq!(state.tag_seed().unwrap(), b"main");
+    assert_eq!(state.admin, vault.roles.admin.pubkey().to_bytes());
+    assert_eq!(state.strategist, vault.roles.strategist.pubkey().to_bytes());
+    assert_eq!(
+        state.nav_authority,
+        vault.roles.nav_authority.pubkey().to_bytes()
+    );
+    assert_eq!(
+        state.withdrawal_authority,
+        vault.roles.withdrawal_authority.pubkey().to_bytes()
+    );
+    assert_eq!(state.base_mint, vault.base_mint.to_bytes());
+    assert_eq!(state.share_mint, vault.share_mint.to_bytes());
+    assert_eq!(state.fee_collector, vault.fee_collector.to_bytes());
+    assert_eq!(state.base_decimals, 6);
+    assert_eq!(state.deposit_sub_account, 0);
+    assert_eq!(state.withdraw_sub_account, 1);
+    assert_eq!(state.performance_fee_bps, 100);
+    assert_eq!(state.withdrawal_buffer_bps, 250);
+    assert_eq!(state.max_change_bps, 500);
+    assert_eq!(state.min_update_interval, 60);
+    assert_eq!(state.total_assets, 0);
+    assert_eq!(state.total_shares, 0);
+    assert_eq!(state.current_withdrawal_epoch, 1);
+    assert_eq!(state.processed_withdrawal_epoch, 0);
+    assert_eq!(state.private(), Ok(true));
+    assert_eq!(state.access_merkle_root, [7; 32]);
+}
+
+#[test]
+fn test_initialize_vault_rejects_non_program_authority() {
+    let Some((mut svm, _authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let imposter = Keypair::new();
+    fund(&mut svm, &imposter);
+
+    let builder = VaultBuilder::new();
+    let ix = builder.instruction(imposter.pubkey(), config_pda);
+
+    assert_instruction_error(
+        send(&mut svm, ix, &imposter),
+        InstructionError::IllegalOwner,
+    );
+    assert!(svm.get_account(&builder.address().0).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_mismatched_seeds() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    // Correct args, but the vault account passed in does not match the PDA
+    // derived from [b"vault", tag, base_mint].
+    let builder = VaultBuilder::new();
+    let wrong_vault = solana_pubkey::Pubkey::new_unique();
+    let ix = builder.instruction_with_vault(authority.pubkey(), config_pda, wrong_vault);
+
+    assert_instruction_error(
+        send(&mut svm, ix, &authority),
+        InstructionError::InvalidSeeds,
+    );
+    assert!(svm.get_account(&builder.address().0).is_none());
+    assert!(svm.get_account(&wrong_vault).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_reinitialization() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    let vault_pda = builder.address().0;
+
+    send_ok(
+        &mut svm,
+        builder.instruction(authority.pubkey(), config_pda),
+        &authority,
+    );
+
+    // Advance the blockhash so the retry is a distinct transaction rather
+    // than a duplicate; it must now fail on the uninitialized-account guard.
+    svm.expire_blockhash();
+    assert_instruction_error(
+        send(
+            &mut svm,
+            builder.instruction(authority.pubkey(), config_pda),
+            &authority,
+        ),
+        InstructionError::AccountAlreadyInitialized,
+    );
+
+    // The original vault is untouched.
+    let account = svm.get_account(&vault_pda).unwrap();
+    assert_eq!(account.owner, ID);
+    assert_eq!(account.data.len(), Vault::SPACE);
+}
+
+#[test]
+fn test_initialize_vault_rejects_matching_base_and_share_mints() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let mint = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().base_mint(mint).share_mint(mint);
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+
+    assert_instruction_error(
+        send(&mut svm, ix, &authority),
+        InstructionError::InvalidArgument,
+    );
+    assert!(svm.get_account(&builder.address().0).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_invalid_fee_bps() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    // 10_001 bps exceeds 100% and must be rejected by config validation.
+    let builder = VaultBuilder::new().fees(10_001, 0, 0);
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+
+    assert_roshi_error(send(&mut svm, ix, &authority), RoshiError::InvalidBps);
+    assert!(svm.get_account(&builder.address().0).is_none());
+}

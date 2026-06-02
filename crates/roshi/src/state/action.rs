@@ -79,6 +79,17 @@ pub fn compute_action_hash_from_metas(
         .map_err(action_hash_error_to_program_error)
 }
 
+/// Validates that `ops` is structurally well-formed: within the op-count limit
+/// and canonically encoded. Index/slice bounds depend on the CPI accounts and
+/// instruction data, so those are checked at execution time by manage.
+pub fn validate_ops(ops: &Ops) -> ProgramResult {
+    for op in ops.iter().map_err(action_hash_error_to_program_error)? {
+        op.map_err(action_hash_error_to_program_error)?;
+    }
+
+    Ok(())
+}
+
 fn action_hash_error_to_program_error(error: ActionHashError) -> ProgramError {
     match error {
         ActionHashError::InvalidOp | ActionHashError::TooManyOps => RoshiError::InvalidOp.into(),
