@@ -15,7 +15,7 @@ use roshi_interface::{error::RoshiError, math::performance_fee_for_nav};
 
 const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 
-/// Implements [`crate::instructions::RoshiInstructionTag::ReportNav`].
+/// Implements [`crate::instructions::RoshiInstruction::ReportNav`].
 ///
 /// # Accounts
 ///

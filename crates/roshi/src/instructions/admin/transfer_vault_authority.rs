@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_vault_as_admin, TransferVaultAuthorityArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::TransferVaultAuthority`].
+/// Implements [`crate::instructions::RoshiInstruction::TransferVaultAuthority`].
 ///
 /// # Accounts
 ///

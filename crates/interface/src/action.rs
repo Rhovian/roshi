@@ -10,7 +10,7 @@ use wincode::{SchemaRead, SchemaWrite};
 /// authorized actions rather than growing this account dynamically.
 pub const MAX_ACTION_OPS: usize = 32;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub enum Op {
     #[wincode(tag = 0)]
@@ -23,7 +23,7 @@ pub enum Op {
     IngestInstructionDataSize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[repr(C)]
 pub struct StoredOp {
     pub kind: u8,
@@ -95,10 +95,10 @@ impl From<Op> for StoredOp {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[repr(C)]
 pub struct Ops {
-    pub ops: [StoredOp; MAX_ACTION_OPS],
+    pub ops: [StoredOp; 32],
     pub ops_len: u8,
 }
 

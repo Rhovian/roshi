@@ -6,7 +6,7 @@ use crate::{
     state::asset::Asset,
 };
 
-/// Implements [`crate::instructions::RoshiInstructionTag::InitializeAsset`].
+/// Implements [`crate::instructions::RoshiInstruction::InitializeAsset`].
 ///
 /// # Accounts
 ///

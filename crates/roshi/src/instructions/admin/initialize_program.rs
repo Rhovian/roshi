@@ -6,7 +6,7 @@ use crate::{
     instructions::accounts::InitializeProgramContext, instructions::InitializeProgramArgs,
 };
 
-/// Implements [`crate::instructions::RoshiInstructionTag::InitializeProgram`].
+/// Implements [`crate::instructions::RoshiInstruction::InitializeProgram`].
 ///
 /// # Accounts
 ///

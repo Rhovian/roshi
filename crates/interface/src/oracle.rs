@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 /// Discriminator for oracle implementations.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub enum OracleKind {
     #[wincode(tag = 0)]
@@ -32,7 +32,9 @@ pub struct InvalidOracleKind;
 ///
 /// `price_decimals` is the scale of the raw oracle price. A price of `123`
 /// with `price_decimals = 2` represents `1.23`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
+)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct SwitchboardOracleConfig {
@@ -71,7 +73,9 @@ impl SwitchboardOracleConfig {
 /// `price_decimals = 8` is returned as `123456789`.
 ///
 /// `max_confidence_bps = 0` disables the confidence-width guardrail.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
+)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct PythOracleConfig {
@@ -104,7 +108,7 @@ impl PythOracleConfig {
 /// The serialized shape includes every supported oracle implementation from
 /// the start. Switching implementations only changes `kind`, so account data
 /// size remains stable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct OracleConfig {

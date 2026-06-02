@@ -1,12 +1,12 @@
 use crate::{action::Ops, oracle::OracleConfig};
 use wincode::{SchemaRead, SchemaWrite};
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct InitializeProgramArgs {
     pub authority: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct InitializeVaultArgs {
     pub tag: [u8; 32],
     pub tag_len: u8,
@@ -27,18 +27,18 @@ pub struct InitializeVaultArgs {
     pub access_merkle_root: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct AuthorizeActionArgs {
     pub action_hash: [u8; 32],
     pub ops: Ops,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct RevokeActionArgs {
     pub action_hash: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageArgs {
     pub sub_account: u8,
     pub program_id: [u8; 32],
@@ -47,12 +47,12 @@ pub struct ManageArgs {
     pub ix_data: Vec<u8>,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageBatchArgs {
     pub actions: Vec<ManageArgs>,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct DepositArgs {
     pub asset_mint: [u8; 32],
     pub amount: u64,
@@ -60,34 +60,34 @@ pub struct DepositArgs {
     pub access_proof: Vec<[u8; 32]>,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct RedeemArgs {
     pub recipient_token_account: [u8; 32],
     pub ticket_index: u8,
     pub shares: u64,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct CancelRedeemArgs {
     pub min_shares_out: u64,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ProcessWithdrawalsArgs;
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct CollectFeesArgs {
     pub sub_account: u8,
     pub amount: u64,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ReportNavArgs {
     pub total_assets: u64,
     pub report_hash: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct UpdateVaultConfigArgs {
     pub fee_collector: [u8; 32],
     pub deposit_sub_account: u8,
@@ -97,7 +97,7 @@ pub struct UpdateVaultConfigArgs {
     pub withdrawal_buffer_bps: u16,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct InitializeAssetArgs {
     pub asset_mint: [u8; 32],
     pub oracle: OracleConfig,
@@ -105,46 +105,46 @@ pub struct InitializeAssetArgs {
     pub enabled: bool,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct UpdateAssetArgs {
     pub oracle: OracleConfig,
     pub enabled: bool,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetPauseFlagsArgs {
     pub deposits_paused: bool,
     pub withdrawals_paused: bool,
     pub manage_paused: bool,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetVaultAccessArgs {
     pub private: bool,
     pub access_merkle_root: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct TransferProgramAuthorityArgs {
     pub new_authority: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct TransferVaultAuthorityArgs {
     pub new_authority: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetStrategistArgs {
     pub strategist: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetNavAuthorityArgs {
     pub nav_authority: [u8; 32],
 }
 
-#[derive(SchemaWrite, SchemaRead)]
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetWithdrawalAuthorityArgs {
     pub withdrawal_authority: [u8; 32],
 }

@@ -20,7 +20,7 @@ use crate::{
 use roshi_interface::error::RoshiError;
 use roshi_interface::math::assets_for_redeem;
 
-/// Implements [`crate::instructions::RoshiInstructionTag::ProcessWithdrawals`].
+/// Implements [`crate::instructions::RoshiInstruction::ProcessWithdrawals`].
 ///
 /// # Accounts
 ///

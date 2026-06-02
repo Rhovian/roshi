@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_vault_as_admin, SetWithdrawalAuthorityArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::SetWithdrawalAuthority`].
+/// Implements [`crate::instructions::RoshiInstruction::SetWithdrawalAuthority`].
 ///
 /// # Accounts
 ///

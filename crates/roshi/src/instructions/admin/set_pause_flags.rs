@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_vault_as_admin, SetPauseFlagsArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::SetPauseFlags`].
+/// Implements [`crate::instructions::RoshiInstruction::SetPauseFlags`].
 ///
 /// # Accounts
 ///

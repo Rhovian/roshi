@@ -4,7 +4,7 @@ use solana_program_error::ProgramResult;
 
 use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::ManageBatch`].
+/// Implements [`crate::instructions::RoshiInstruction::ManageBatch`].
 ///
 /// # Accounts
 ///

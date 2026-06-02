@@ -11,7 +11,7 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-/// Implements [`crate::instructions::RoshiInstructionTag::UpdateVaultConfig`].
+/// Implements [`crate::instructions::RoshiInstruction::UpdateVaultConfig`].
 ///
 /// # Accounts
 ///

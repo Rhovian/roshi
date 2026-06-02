@@ -8,7 +8,7 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-/// Implements [`crate::instructions::RoshiInstructionTag::Redeem`].
+/// Implements [`crate::instructions::RoshiInstruction::Redeem`].
 ///
 /// # Accounts
 ///

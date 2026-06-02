@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_vault_as_admin, SetNavAuthorityArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::SetNavAuthority`].
+/// Implements [`crate::instructions::RoshiInstruction::SetNavAuthority`].
 ///
 /// # Accounts
 ///

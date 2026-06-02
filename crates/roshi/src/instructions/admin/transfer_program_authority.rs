@@ -7,7 +7,7 @@ use crate::instructions::{
     TransferProgramAuthorityArgs,
 };
 
-/// Implements [`crate::instructions::RoshiInstructionTag::TransferProgramAuthority`].
+/// Implements [`crate::instructions::RoshiInstruction::TransferProgramAuthority`].
 ///
 /// # Accounts
 ///

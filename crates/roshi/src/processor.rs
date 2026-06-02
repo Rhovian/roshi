@@ -9,45 +9,15 @@ use crate::{
         },
         execution::{try_manage, try_manage_batch},
         user::{try_cancel_redeem, try_deposit, try_redeem},
-        AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs, InitializeAssetArgs,
-        InitializeProgramArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
-        ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs, RoshiInstructionTag,
-        SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-        SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-        UpdateAssetArgs, UpdateVaultConfigArgs,
+        ProcessWithdrawalsArgs, RoshiInstruction,
     },
     ID,
 };
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use wincode::{config::DefaultConfig, deserialize_exact, SchemaRead};
 
 solana_program_entrypoint::entrypoint!(try_process_instruction);
-
-fn split_instruction_data(data: &[u8]) -> Result<(RoshiInstructionTag, &[u8]), ProgramError> {
-    let (tag, payload) = data
-        .split_first()
-        .ok_or(ProgramError::InvalidInstructionData)?;
-    let tag =
-        RoshiInstructionTag::try_from(*tag).map_err(|_| ProgramError::InvalidInstructionData)?;
-
-    Ok((tag, payload))
-}
-
-fn decode_payload<'a, T>(payload: &'a [u8]) -> Result<T, ProgramError>
-where
-    T: SchemaRead<'a, DefaultConfig, Dst = T>,
-{
-    deserialize_exact(payload).map_err(|_| ProgramError::InvalidInstructionData)
-}
-
-macro_rules! decode_and_process {
-    ($handler:ident, $accounts:expr, $payload:expr, $args:ty) => {{
-        let args: $args = decode_payload($payload)?;
-        $handler($accounts, args)
-    }};
-}
 
 // Accounts are pinned to a single `'info` lifetime (reference lifetime tied to
 // the account-data lifetime). `deposit` reads a Switchboard quote, and
@@ -63,120 +33,50 @@ fn try_process_instruction<'info>(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    let (tag, payload) = split_instruction_data(data)?;
+    let instruction =
+        RoshiInstruction::decode(data).map_err(|_| ProgramError::InvalidInstructionData)?;
 
-    match tag {
-        RoshiInstructionTag::InitializeProgram => {
-            decode_and_process!(
-                try_initialize_program,
-                accounts,
-                payload,
-                InitializeProgramArgs
-            )
+    match instruction {
+        RoshiInstruction::InitializeProgram(args) => try_initialize_program(accounts, args),
+        RoshiInstruction::InitializeVault(args) => try_initialize_vault(accounts, args),
+        RoshiInstruction::AuthorizeAction(args) => try_authorize_action(accounts, args),
+        RoshiInstruction::RevokeAction(args) => try_revoke_action(accounts, args),
+        RoshiInstruction::Manage(args) => try_manage(accounts, args),
+        RoshiInstruction::ManageBatch(args) => try_manage_batch(accounts, args),
+        RoshiInstruction::ReportNav(args) => try_report_nav(accounts, args),
+        RoshiInstruction::Deposit(args) => try_deposit(accounts, args),
+        RoshiInstruction::Redeem(args) => try_redeem(accounts, args),
+        RoshiInstruction::CancelRedeem(args) => try_cancel_redeem(accounts, args),
+        RoshiInstruction::ProcessWithdrawals => {
+            try_process_withdrawals(accounts, ProcessWithdrawalsArgs)
         }
-        RoshiInstructionTag::InitializeVault => {
-            decode_and_process!(try_initialize_vault, accounts, payload, InitializeVaultArgs)
+        RoshiInstruction::UpdateVaultConfig(args) => try_update_vault_config(accounts, args),
+        RoshiInstruction::InitializeAsset(args) => try_initialize_asset(accounts, args),
+        RoshiInstruction::UpdateAsset(args) => try_update_asset(accounts, args),
+        RoshiInstruction::SetPauseFlags(args) => try_set_pause_flags(accounts, args),
+        RoshiInstruction::SetVaultAccess(args) => try_set_vault_access(accounts, args),
+        RoshiInstruction::TransferProgramAuthority(args) => {
+            try_transfer_program_authority(accounts, args)
         }
-        RoshiInstructionTag::AuthorizeAction => {
-            decode_and_process!(try_authorize_action, accounts, payload, AuthorizeActionArgs)
+        RoshiInstruction::TransferVaultAuthority(args) => {
+            try_transfer_vault_authority(accounts, args)
         }
-        RoshiInstructionTag::RevokeAction => {
-            decode_and_process!(try_revoke_action, accounts, payload, RevokeActionArgs)
+        RoshiInstruction::SetStrategist(args) => try_set_strategist(accounts, args),
+        RoshiInstruction::SetNavAuthority(args) => try_set_nav_authority(accounts, args),
+        RoshiInstruction::SetWithdrawalAuthority(args) => {
+            try_set_withdrawal_authority(accounts, args)
         }
-        RoshiInstructionTag::Manage => {
-            decode_and_process!(try_manage, accounts, payload, ManageArgs)
-        }
-        RoshiInstructionTag::ManageBatch => {
-            decode_and_process!(try_manage_batch, accounts, payload, ManageBatchArgs)
-        }
-        RoshiInstructionTag::ReportNav => {
-            decode_and_process!(try_report_nav, accounts, payload, ReportNavArgs)
-        }
-        RoshiInstructionTag::Deposit => {
-            decode_and_process!(try_deposit, accounts, payload, DepositArgs)
-        }
-        RoshiInstructionTag::Redeem => {
-            decode_and_process!(try_redeem, accounts, payload, RedeemArgs)
-        }
-        RoshiInstructionTag::CancelRedeem => {
-            decode_and_process!(try_cancel_redeem, accounts, payload, CancelRedeemArgs)
-        }
-        RoshiInstructionTag::ProcessWithdrawals => {
-            decode_and_process!(
-                try_process_withdrawals,
-                accounts,
-                payload,
-                ProcessWithdrawalsArgs
-            )
-        }
-        RoshiInstructionTag::UpdateVaultConfig => {
-            decode_and_process!(
-                try_update_vault_config,
-                accounts,
-                payload,
-                UpdateVaultConfigArgs
-            )
-        }
-        RoshiInstructionTag::InitializeAsset => {
-            decode_and_process!(try_initialize_asset, accounts, payload, InitializeAssetArgs)
-        }
-        RoshiInstructionTag::UpdateAsset => {
-            decode_and_process!(try_update_asset, accounts, payload, UpdateAssetArgs)
-        }
-        RoshiInstructionTag::SetPauseFlags => {
-            decode_and_process!(try_set_pause_flags, accounts, payload, SetPauseFlagsArgs)
-        }
-        RoshiInstructionTag::SetVaultAccess => {
-            decode_and_process!(try_set_vault_access, accounts, payload, SetVaultAccessArgs)
-        }
-        RoshiInstructionTag::TransferProgramAuthority => {
-            decode_and_process!(
-                try_transfer_program_authority,
-                accounts,
-                payload,
-                TransferProgramAuthorityArgs
-            )
-        }
-        RoshiInstructionTag::TransferVaultAuthority => {
-            decode_and_process!(
-                try_transfer_vault_authority,
-                accounts,
-                payload,
-                TransferVaultAuthorityArgs
-            )
-        }
-        RoshiInstructionTag::SetStrategist => {
-            decode_and_process!(try_set_strategist, accounts, payload, SetStrategistArgs)
-        }
-        RoshiInstructionTag::SetNavAuthority => {
-            decode_and_process!(
-                try_set_nav_authority,
-                accounts,
-                payload,
-                SetNavAuthorityArgs
-            )
-        }
-        RoshiInstructionTag::SetWithdrawalAuthority => {
-            decode_and_process!(
-                try_set_withdrawal_authority,
-                accounts,
-                payload,
-                SetWithdrawalAuthorityArgs
-            )
-        }
-        RoshiInstructionTag::CollectFees => {
-            decode_and_process!(try_collect_fees, accounts, payload, CollectFeesArgs)
-        }
+        RoshiInstruction::CollectFees(args) => try_collect_fees(accounts, args),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roshi_interface::instructions::serialize_instruction;
+    use roshi_interface::instructions::{serialize_instruction, DepositArgs, InstructionArgs};
 
     #[test]
-    fn decodes_payload_after_splitting_encoded_instruction() {
+    fn decodes_payload_from_encoded_instruction() {
         let encoded = serialize_instruction(&DepositArgs {
             asset_mint: [1; 32],
             amount: 123,
@@ -185,10 +85,10 @@ mod tests {
         })
         .unwrap();
 
-        let (tag, payload) = split_instruction_data(&encoded).unwrap();
-        let args: DepositArgs = decode_payload(payload).unwrap();
+        let RoshiInstruction::Deposit(args) = RoshiInstruction::decode(&encoded).unwrap() else {
+            panic!("expected deposit instruction");
+        };
 
-        assert_eq!(tag, RoshiInstructionTag::Deposit);
         assert_eq!(args.asset_mint, [1; 32]);
         assert_eq!(args.amount, 123);
         assert_eq!(args.min_shares_out, 456);
@@ -206,12 +106,7 @@ mod tests {
         .unwrap();
         encoded.push(0);
 
-        let (_, payload) = split_instruction_data(&encoded).unwrap();
-
-        assert!(matches!(
-            decode_payload::<DepositArgs>(payload),
-            Err(ProgramError::InvalidInstructionData)
-        ));
+        assert!(RoshiInstruction::decode(&encoded).is_err());
     }
 
     #[test]
@@ -232,7 +127,7 @@ mod tests {
             try_process_instruction(
                 &ID,
                 &[],
-                &[u8::from(RoshiInstructionTag::ProcessWithdrawals), 0],
+                &[<ProcessWithdrawalsArgs as InstructionArgs>::TAG, 0],
             ),
             Err(ProgramError::InvalidInstructionData)
         );

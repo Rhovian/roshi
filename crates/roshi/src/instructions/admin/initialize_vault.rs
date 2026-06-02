@@ -7,7 +7,7 @@ use crate::{
     state::{vault::Vault, Account},
 };
 
-/// Implements [`crate::instructions::RoshiInstructionTag::InitializeVault`].
+/// Implements [`crate::instructions::RoshiInstruction::InitializeVault`].
 ///
 /// # Accounts
 ///

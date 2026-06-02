@@ -17,7 +17,7 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-/// Implements [`crate::instructions::RoshiInstructionTag::CollectFees`].
+/// Implements [`crate::instructions::RoshiInstruction::CollectFees`].
 ///
 /// # Accounts
 ///

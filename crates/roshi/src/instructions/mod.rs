@@ -8,7 +8,7 @@ pub mod user;
 pub use roshi_interface::instructions::{
     AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs, InitializeAssetArgs,
     InitializeProgramArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
-    ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs, RoshiInstructionTag,
+    ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs, RoshiInstruction,
     SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
     SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
     UpdateAssetArgs, UpdateVaultConfigArgs,

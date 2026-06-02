@@ -4,7 +4,7 @@ use solana_program_error::ProgramResult;
 use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 use crate::instructions::{accounts::ManageContext, ManageArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::Manage`].
+/// Implements [`crate::instructions::RoshiInstruction::Manage`].
 ///
 /// # Accounts
 ///

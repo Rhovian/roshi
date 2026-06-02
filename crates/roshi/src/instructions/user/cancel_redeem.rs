@@ -11,7 +11,7 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-/// Implements [`crate::instructions::RoshiInstructionTag::CancelRedeem`].
+/// Implements [`crate::instructions::RoshiInstruction::CancelRedeem`].
 ///
 /// # Accounts
 ///

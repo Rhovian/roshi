@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::RevokeActionContext, RevokeActionArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::RevokeAction`].
+/// Implements [`crate::instructions::RoshiInstruction::RevokeAction`].
 ///
 /// # Accounts
 ///

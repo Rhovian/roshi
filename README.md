@@ -50,6 +50,15 @@ cargo build-sbf --manifest-path crates/roshi/Cargo.toml
 `just build` produces `target/deploy/roshi.so`. The integration tests use that
 SBF artifact when present.
 
+Generate the Codama IDL:
+
+```bash
+cargo run -p roshi-interface --example generate_codama_idl
+```
+
+The generator writes `target/idl/roshi.codama.json` by default. Pass a path as
+the final argument to choose a different output file.
+
 ## Design Docs
 
 - [Design Principles](docs/design.md)

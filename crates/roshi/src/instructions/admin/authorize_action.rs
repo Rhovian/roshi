@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::AuthorizeActionContext, AuthorizeActionArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::AuthorizeAction`].
+/// Implements [`crate::instructions::RoshiInstruction::AuthorizeAction`].
 ///
 /// # Accounts
 ///

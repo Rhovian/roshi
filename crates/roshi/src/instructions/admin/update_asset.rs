@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_asset_as_admin, UpdateAssetArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::UpdateAsset`].
+/// Implements [`crate::instructions::RoshiInstruction::UpdateAsset`].
 ///
 /// # Accounts
 ///

@@ -3,7 +3,7 @@ use solana_program_error::ProgramResult;
 
 use crate::instructions::{accounts::update_writable_vault_as_admin, SetStrategistArgs};
 
-/// Implements [`crate::instructions::RoshiInstructionTag::SetStrategist`].
+/// Implements [`crate::instructions::RoshiInstruction::SetStrategist`].
 ///
 /// # Accounts
 ///

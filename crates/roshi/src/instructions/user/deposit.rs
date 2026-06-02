@@ -11,7 +11,7 @@ use roshi_interface::{
     math::{initial_shares_from_base_atoms, shares_for_deposit},
 };
 
-/// Implements [`crate::instructions::RoshiInstructionTag::Deposit`].
+/// Implements [`crate::instructions::RoshiInstruction::Deposit`].
 ///
 /// # Accounts
 ///
