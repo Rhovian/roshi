@@ -18,6 +18,7 @@ use crate::{
     },
 };
 use roshi_interface::error::RoshiError;
+use roshi_interface::math::assets_for_redeem;
 
 /// Implements [`crate::instructions::RoshiInstructionTag::ProcessWithdrawals`].
 ///
@@ -27,13 +28,15 @@ use roshi_interface::error::RoshiError;
 /// 1. `[writable]` Vault account containing withdrawal queue state.
 /// 2. `[]` Withdraw subaccount PDA (`vault.withdraw_sub_account`).
 /// 3. `[writable]` Withdraw subaccount base custody token account.
-/// 4. `[]` SPL Token program.
-/// 5. `..` Repeated `[writable]` withdrawal ticket, `[writable]` owner, and
+/// 4. `[]` Share mint (`vault.share_mint`).
+/// 5. `[]` SPL Token program.
+/// 6. `..` Repeated `[writable]` withdrawal ticket, `[writable]` owner, and
 ///    `[writable]` destination token account groups.
 ///
 /// Verifies the withdrawal authority, validates each supplied ticket, transfers
 /// owed base assets from withdraw-subaccount custody to the recorded recipient,
 /// closes settled tickets back to their owners, and reduces pending assets.
+/// Unpriced tickets are struck first if enough NAV report epochs have elapsed.
 pub fn try_process_withdrawals(
     accounts: &[AccountInfo],
     _args: ProcessWithdrawalsArgs,
@@ -53,6 +56,7 @@ struct ProcessWithdrawalsContext<'a, 'info> {
     vault_account: &'a AccountInfo<'info>,
     sub_account: &'a AccountInfo<'info>,
     custody: &'a AccountInfo<'info>,
+    share_mint: &'a AccountInfo<'info>,
     token_program: &'a AccountInfo<'info>,
     vault: Vault,
     sub_account_bump: u8,
@@ -82,6 +86,11 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
         let base_mint = Pubkey::from(vault.base_mint);
         token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
 
+        let share_mint = next_account(accounts_iter)?;
+        if share_mint.key != &Pubkey::from(vault.share_mint) {
+            return Err(RoshiError::InvalidMintAccount.into());
+        }
+
         let token_program = next_account(accounts_iter)?;
         if token_program.key != &TOKEN_PROGRAM_ID {
             return Err(ProgramError::IncorrectProgramId);
@@ -105,7 +114,7 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
             if ticket.vault != vault_account.key.to_bytes()
                 || ticket.owner != owner.key.to_bytes()
                 || ticket.recipient_token_account != destination.key.to_bytes()
-                || ticket.assets_owed == 0
+                || ticket.shares_burned == 0
             {
                 return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
             }
@@ -135,6 +144,7 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
             vault_account,
             sub_account,
             custody,
+            share_mint,
             token_program,
             vault,
             sub_account_bump,
@@ -143,10 +153,17 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
     }
 
     fn process(mut self) -> ProgramResult {
-        let settled_assets = self.tickets.iter().try_fold(0u64, |sum, settlement| {
-            sum.checked_add(settlement.ticket.assets_owed)
-                .ok_or(ProgramError::from(RoshiError::Overflow))
-        })?;
+        let share_supply = token::mint_supply(self.share_mint)?;
+        let mut settled_assets = 0u64;
+        for settlement in &mut self.tickets {
+            if settlement.ticket.assets_owed == 0 {
+                strike_ticket(&mut self.vault, share_supply, &mut settlement.ticket)?;
+            }
+            settled_assets = settled_assets
+                .checked_add(settlement.ticket.assets_owed)
+                .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        }
+
         if settled_assets > self.vault.pending_withdrawal_assets {
             return Err(RoshiError::InvalidVaultState.into());
         }
@@ -194,6 +211,45 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
 
         Ok(())
     }
+}
+
+fn strike_ticket(
+    vault: &mut Vault,
+    active_share_supply: u64,
+    ticket: &mut WithdrawalTicket,
+) -> ProgramResult {
+    let earliest_epoch = ticket
+        .request_epoch
+        .checked_add(crate::state::withdrawal_ticket::WITHDRAWAL_STRIKE_DELAY_EPOCHS)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    if vault.report_epoch < earliest_epoch || ticket.request_epoch > vault.report_epoch {
+        return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
+    }
+
+    let economic_share_supply = active_share_supply
+        .checked_add(vault.requested_withdrawal_shares)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    let assets_owed = assets_for_redeem(
+        ticket.shares_burned,
+        vault.total_assets,
+        economic_share_supply,
+    )?;
+
+    vault.requested_withdrawal_shares = vault
+        .requested_withdrawal_shares
+        .checked_sub(ticket.shares_burned)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    vault.total_assets = vault
+        .total_assets
+        .checked_sub(assets_owed)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    vault.pending_withdrawal_assets = vault
+        .pending_withdrawal_assets
+        .checked_add(assets_owed)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    ticket.assets_owed = assets_owed;
+
+    Ok(())
 }
 
 fn close_ticket(ticket_account: &AccountInfo, owner: &AccountInfo) -> ProgramResult {

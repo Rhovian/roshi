@@ -26,6 +26,8 @@ pub struct Vault {
     pub pending_withdrawal_assets: u64,
     pub fees_payable: u64,
     pub high_watermark: u64,
+    pub report_epoch: u64,
+    pub requested_withdrawal_shares: u64,
     pub last_update_ts: i64,
     pub tag: [u8; 32],
     pub admin: [u8; 32],
@@ -94,6 +96,8 @@ impl Vault {
             pending_withdrawal_assets: 0,
             fees_payable: 0,
             high_watermark: 0,
+            report_epoch: 0,
+            requested_withdrawal_shares: 0,
             last_update_ts: 0,
             tag,
             admin,
@@ -356,6 +360,8 @@ mod tests {
         assert_eq!(vault.pending_withdrawal_assets, 0);
         assert_eq!(vault.fees_payable, 0);
         assert_eq!(vault.high_watermark, 0);
+        assert_eq!(vault.report_epoch, 0);
+        assert_eq!(vault.requested_withdrawal_shares, 0);
         assert_eq!(vault.performance_fee_bps, 100);
         assert_eq!(vault.withdrawal_buffer_bps, 250);
         assert_eq!(vault.last_update_ts, 0);
@@ -388,8 +394,8 @@ mod tests {
         let vault = new_test_vault(false, [0; 32]);
 
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 544);
-        assert_eq!(Vault::SPACE, 545);
+        assert_eq!(core::mem::size_of::<Vault>(), 560);
+        assert_eq!(Vault::SPACE, 561);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()

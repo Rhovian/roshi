@@ -296,7 +296,6 @@ mod tests {
             ticket,
             7,
             123,
-            456,
         )
         .unwrap();
 
@@ -321,7 +320,6 @@ mod tests {
         assert_eq!(args.recipient_token_account, recipient.to_bytes());
         assert_eq!(args.ticket_index, 7);
         assert_eq!(args.shares, 123);
-        assert_eq!(args.min_assets_out, 456);
     }
 
     #[test]
@@ -356,6 +354,7 @@ mod tests {
         let vault = Pubkey::new_unique();
         let withdraw_sub_account = Pubkey::new_unique();
         let custody = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
         let ticket = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
         let destination = Pubkey::new_unique();
@@ -365,12 +364,13 @@ mod tests {
             vault,
             withdraw_sub_account,
             custody,
+            share_mint,
             vec![(ticket, owner, destination)],
         )
         .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(ix.accounts.len(), 9);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(withdrawal_authority, true)
@@ -381,13 +381,14 @@ mod tests {
             AccountMeta::new_readonly(withdraw_sub_account, false)
         );
         assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new_readonly(share_mint, false));
         assert_eq!(
-            ix.accounts[4],
+            ix.accounts[5],
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
         );
-        assert_eq!(ix.accounts[5], AccountMeta::new(ticket, false));
-        assert_eq!(ix.accounts[6], AccountMeta::new(owner, false));
-        assert_eq!(ix.accounts[7], AccountMeta::new(destination, false));
+        assert_eq!(ix.accounts[6], AccountMeta::new(ticket, false));
+        assert_eq!(ix.accounts[7], AccountMeta::new(owner, false));
+        assert_eq!(ix.accounts[8], AccountMeta::new(destination, false));
 
         let _args: ProcessWithdrawalsArgs = decode_args(&ix.data);
     }

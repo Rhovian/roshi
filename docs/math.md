@@ -66,8 +66,8 @@ conservative for the vault:
 - redeem asset payout floors,
 - withdrawal buffer minimum targets ceil.
 
-User protection belongs in instruction-level minimums such as
-`min_shares_out` and `min_assets_out`.
+User protection belongs in instruction-level minimums where they cannot wedge
+deferred settlement, such as deposit `min_shares_out`.
 
 ## Primitive Helpers
 

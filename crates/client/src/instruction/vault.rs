@@ -207,6 +207,7 @@ pub fn process_withdrawals(
     vault: Pubkey,
     withdraw_sub_account: Pubkey,
     custody: Pubkey,
+    share_mint: Pubkey,
     settlements: Vec<(Pubkey, Pubkey, Pubkey)>,
 ) -> Result<Instruction> {
     let mut accounts = vec![
@@ -214,6 +215,7 @@ pub fn process_withdrawals(
         AccountMeta::new(vault, false),
         AccountMeta::new_readonly(withdraw_sub_account, false),
         AccountMeta::new(custody, false),
+        AccountMeta::new_readonly(share_mint, false),
         AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
     ];
 

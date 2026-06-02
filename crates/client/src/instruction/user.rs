@@ -51,7 +51,6 @@ pub fn redeem(
     withdrawal_ticket: Pubkey,
     ticket_index: u8,
     shares: u64,
-    min_assets_out: u64,
 ) -> Result<Instruction> {
     new(
         vec![
@@ -68,7 +67,6 @@ pub fn redeem(
             recipient_token_account: recipient_token_account.to_bytes(),
             ticket_index,
             shares,
-            min_assets_out,
         },
     )
 }

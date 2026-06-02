@@ -13,6 +13,8 @@ pending_withdrawal_assets: u64,
 fees_payable: u64,
 last_report_hash: [u8; 32],
 high_watermark: u64,
+report_epoch: u64,
+requested_withdrawal_shares: u64,
 performance_fee_bps: u16,
 fee_collector: Pubkey,
 withdrawal_buffer_bps: u16,
@@ -23,13 +25,26 @@ last_update_ts: i64,
 liabilities and newly accrued fees.
 
 `pending_withdrawal_assets` is the vault-scoped base-asset amount owed across
-open withdrawal tickets. It is not tied to any withdrawal subaccount.
+struck withdrawal tickets. It is not tied to any withdrawal subaccount.
+
+`report_epoch` increments by one for each accepted NAV report. Withdrawal
+tickets record the epoch in which they were requested, and can only be struck
+after the configured epoch delay has elapsed.
+
+`requested_withdrawal_shares` tracks shares that have been burned by redeem
+requests but have not yet been struck into fixed base-asset claims. These shares
+remain part of the vault's economic share supply until strike.
 
 `fees_payable` is the base-asset fee liability accrued during NAV reporting but
 not yet transferred to the configured fee collector token account.
 
 The total supply of shares is the SPL share mint's `supply` field. Roshi does
-not mirror share supply in vault state.
+not mirror active share supply in vault state. For pricing while unstruck
+withdrawals exist, the economic share supply is:
+
+```text
+economic_share_supply = share_mint.supply + requested_withdrawal_shares
+```
 
 ## Supported Assets
 
@@ -82,12 +97,14 @@ The NAV update flow:
 
 - verify the caller is `vault.nav_authority`,
 - reject an all-zero `report_hash`,
-- read `share_mint.supply`,
+- read `share_mint.supply` and add `requested_withdrawal_shares` for fee
+  pricing,
 - subtract existing `fees_payable` and `pending_withdrawal_assets`,
 - accrue performance fees when share price exceeds `high_watermark`,
 - store fee-adjusted `total_assets`,
 - increase `fees_payable`,
 - update `high_watermark`,
+- increment `report_epoch`,
 - store `last_report_hash` and `last_update_ts`.
 
 The update fails if arithmetic overflows or if reported gross NAV is less than
@@ -134,7 +151,10 @@ amount into base atoms.
 shares_to_mint = floor(base_atoms * share_mint.supply / total_assets)
 ```
 
-If the vault has no shares, deposits use the initial share formula above.
+When unstruck withdrawal shares exist, deposits use
+`economic_share_supply = share_mint.supply + requested_withdrawal_shares` in the
+numerator. If the vault has no economic shares, deposits use the initial share
+formula above.
 
 The deposit flow:
 
@@ -154,20 +174,25 @@ that round to zero shares fail.
 
 ## Redeems And Withdrawals
 
-Redeems burn shares immediately and create queued withdrawal tickets.
+Redeems burn shares immediately and create queued withdrawal tickets. The ticket
+is not priced at request time.
 
 ```text
-assets_owed = floor(shares * total_assets / share_mint.supply)
+request_epoch = vault.report_epoch
+requested_withdrawal_shares += shares
 ```
 
 The redeem flow:
 
 - reject new redeems while withdrawals are paused,
 - not require private-vault allowlist membership,
-- enforce `min_assets_out`,
 - burn the user's shares,
-- reduce `total_assets` by `assets_owed`,
-- create a withdrawal ticket for later settlement.
+- create an unpriced withdrawal ticket for later settlement,
+- increase `requested_withdrawal_shares`.
+
+The burn removes the shares from the SPL mint supply, but the vault tracks them
+as `requested_withdrawal_shares` so the redeemer remains exposed to NAV changes
+until the ticket is struck.
 
 Withdrawal ticket PDAs are bounded by vault, recipient token account, and ticket
 index:
@@ -186,9 +211,25 @@ WithdrawalTicket {
     ticket_index: u8,
     shares_burned: u64,
     assets_owed: u64,
+    request_epoch: u64,
+    request_slot: u64,
     bump: u8,
 }
 ```
+
+`assets_owed == 0` means the ticket is unstruck. Once the withdrawal authority
+processes an eligible unstruck ticket, strike computes:
+
+```text
+assets_owed = floor(shares_burned * total_assets / economic_share_supply)
+```
+
+where `economic_share_supply = share_mint.supply + requested_withdrawal_shares`
+immediately before that ticket is struck. The strike then:
+
+- decrements `requested_withdrawal_shares`,
+- moves `assets_owed` from `total_assets` into `pending_withdrawal_assets`,
+- fixes `ticket.assets_owed`.
 
 A recipient token account may have up to 256 open queued tickets per vault.
 Reusing a slot requires the withdrawal authority to process and clear the
@@ -198,18 +239,27 @@ Tickets are vault-scoped user liabilities, not subaccount-scoped liabilities.
 `vault.withdraw_sub_account` only selects the default custody source used when
 the withdrawal authority pays open tickets.
 
-`ProcessWithdrawals` settles supplied tickets:
+`ProcessWithdrawals` strikes eligible unpriced tickets and settles supplied
+tickets:
 
 - verify the caller is `vault.withdrawal_authority`,
 - verify each ticket's vault, owner, recipient, PDA, bump, and nonzero
-  `assets_owed`,
+  `shares_burned`,
+- verify the share mint and read active share supply,
+- for unstruck tickets, require `vault.report_epoch >= request_epoch + 1` and
+  strike the ticket,
 - verify the configured withdraw custody can pay,
 - transfer owed base assets to each recorded recipient token account,
 - close settled ticket accounts back to their owners,
 - decrement `pending_withdrawal_assets`.
 
 Processing is atomic. If any transfer cannot be paid, the instruction fails and
-the tickets remain open.
+the tickets remain open and unmodified.
+
+`CancelRedeem` is a liveness escape for the no-report case. After
+`REDEEM_CANCEL_DELAY_SLOTS`, the ticket owner can cancel an unstruck ticket only
+while it is still ineligible for strike. Cancellation remints the originally
+burned shares, closes the ticket, and decrements `requested_withdrawal_shares`.
 
 ## Withdrawal Buffer
 
@@ -238,8 +288,9 @@ fee_base_assets = gross_total_assets - fees_payable - pending_withdrawal_assets
 The program then computes newly accrued fees:
 
 ```text
-gross_share_price = floor(fee_base_assets * 10^SHARE_DECIMALS / share_mint.supply)
-high_watermark_assets = ceil(high_watermark * share_mint.supply / 10^SHARE_DECIMALS)
+economic_share_supply = share_mint.supply + requested_withdrawal_shares
+gross_share_price = floor(fee_base_assets * 10^SHARE_DECIMALS / economic_share_supply)
+high_watermark_assets = ceil(high_watermark * economic_share_supply / 10^SHARE_DECIMALS)
 profit_assets = fee_base_assets - high_watermark_assets
 new_fee = floor(profit_assets * performance_fee_bps / 10_000)
 net_total_assets = fee_base_assets - new_fee
@@ -282,7 +333,10 @@ for the v1 trusted-authority model.
 - Share mint supply changes only when shares are minted or burned.
 - Deposits increase both assets and shares proportionally after normalization to
   base atoms.
-- Redeems decrease both assets and shares proportionally.
+- Redeems burn SPL shares at request time but leave assets in `total_assets`
+  and shares in `requested_withdrawal_shares` until strike.
+- Striking a withdrawal ticket decreases `total_assets` and
+  `requested_withdrawal_shares` proportionally, then fixes `assets_owed`.
 - Withdrawal tickets are settled only by `ProcessWithdrawals`.
 - Collecting fees does not change `total_assets`.
 - Custody token account balances are the payment source of truth for

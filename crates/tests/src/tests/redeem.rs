@@ -90,12 +90,7 @@ fn setup_redeem(svm: &mut LiteSVM) -> RedeemFixture {
 /// Build a redeem instruction against the ticket PDA for `(vault,
 /// recipient_token_account, ticket_index)`, returning the ticket address
 /// alongside it.
-fn redeem_ix(
-    fixture: &RedeemFixture,
-    ticket_index: u8,
-    shares: u64,
-    min_assets_out: u64,
-) -> (Pubkey, Instruction) {
+fn redeem_ix(fixture: &RedeemFixture, ticket_index: u8, shares: u64) -> (Pubkey, Instruction) {
     let ticket =
         WithdrawalTicket::find_address(&fixture.vault.address, &fixture.recipient, ticket_index).0;
     let ix = roshi_client::instruction::redeem(
@@ -107,7 +102,6 @@ fn redeem_ix(
         ticket,
         ticket_index,
         shares,
-        min_assets_out,
     )
     .unwrap();
     (ticket, ix)
@@ -137,6 +131,16 @@ fn write_vault_state(
         },
     )
     .unwrap();
+}
+
+fn advance_vault_epoch(svm: &mut LiteSVM, fixture: &RedeemFixture, report_epoch: u64) {
+    let mut state = fixture.vault.load(svm);
+    state.report_epoch = report_epoch;
+    write_vault_state(svm, fixture, state);
+}
+
+fn advance_cancel_delay(svm: &mut LiteSVM) {
+    svm.warp_to_slot(roshi::state::withdrawal_ticket::REDEEM_CANCEL_DELAY_SLOTS + 1);
 }
 
 fn cancel_redeem_ix(fixture: &RedeemFixture, ticket: Pubkey) -> Instruction {
@@ -169,6 +173,7 @@ fn process_withdrawals_ix(
         fixture.vault.address,
         fixture.withdraw_sub_account,
         custody,
+        fixture.share_mint,
         settlements,
     )
     .unwrap()
@@ -205,7 +210,7 @@ fn test_redeem_burns_shares_and_queues_ticket() {
     let fixture = setup_redeem(&mut svm);
 
     let shares = ONE_BASE_SHARES / 2;
-    let (ticket, ix) = redeem_ix(&fixture, 0, shares, 0);
+    let (ticket, ix) = redeem_ix(&fixture, 0, shares);
     send_ok(&mut svm, ix, &fixture.owner);
 
     // Half the shares are burned from the owner and removed from supply.
@@ -218,21 +223,21 @@ fn test_redeem_burns_shares_and_queues_ticket() {
         ONE_BASE_SHARES - shares
     );
 
-    // assets_owed = floor(shares * total_assets / share_mint.supply) at 1:1 price.
-    let assets_owed = ONE_BASE / 2;
     let queued = load_ticket(&svm, ticket);
     assert_eq!(queued.vault, fixture.vault.address.to_bytes());
     assert_eq!(queued.owner, fixture.owner.pubkey().to_bytes());
     assert_eq!(queued.recipient_token_account, fixture.recipient.to_bytes());
     assert_eq!(queued.ticket_index, 0);
     assert_eq!(queued.shares_burned, shares);
-    assert_eq!(queued.assets_owed, assets_owed);
+    assert_eq!(queued.assets_owed, 0);
+    assert_eq!(queued.request_epoch, 0);
 
-    // The owed assets are carved out of NAV into the pending bucket, leaving the
-    // price intact for remaining holders.
+    // The ticket is not priced until a later report epoch. Burned-but-unstruck
+    // shares remain in the vault's economic denominator.
     let state = fixture.vault.load(&svm);
-    assert_eq!(state.total_assets, ONE_BASE - assets_owed);
-    assert_eq!(state.pending_withdrawal_assets, assets_owed);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.requested_withdrawal_shares, shares);
 }
 
 #[test]
@@ -245,9 +250,10 @@ fn test_process_withdrawals_pays_recipient_and_closes_ticket() {
 
     let shares = ONE_BASE_SHARES / 2;
     let assets_owed = ONE_BASE / 2;
-    let (ticket, redeem) = redeem_ix(&fixture, 0, shares, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, shares);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, assets_owed);
     let ix = process_withdrawals_ix(
@@ -266,6 +272,37 @@ fn test_process_withdrawals_pays_recipient_and_closes_ticket() {
 }
 
 #[test]
+fn test_process_withdrawals_rejects_unstruck_ticket_before_epoch_delay() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let custody = setup_withdraw_custody(&mut svm, &fixture, ONE_BASE);
+    let ix = process_withdrawals_ix(
+        &fixture,
+        custody,
+        vec![(ticket, fixture.owner.pubkey(), fixture.recipient)],
+    );
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.vault.roles.withdrawal_authority),
+        RoshiError::InvalidWithdrawalTicketAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+    assert_eq!(fixture.vault.load(&svm).pending_withdrawal_assets, 0);
+    assert_eq!(
+        fixture.vault.load(&svm).requested_withdrawal_shares,
+        ONE_BASE_SHARES / 2
+    );
+}
+
+#[test]
 fn test_process_withdrawals_can_partially_settle_batch() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
@@ -275,7 +312,7 @@ fn test_process_withdrawals_can_partially_settle_batch() {
 
     let first_shares = ONE_BASE_SHARES / 4;
     let second_shares = ONE_BASE_SHARES / 4;
-    let (first_ticket, first_redeem) = redeem_ix(&fixture, 0, first_shares, 0);
+    let (first_ticket, first_redeem) = redeem_ix(&fixture, 0, first_shares);
     send_ok(&mut svm, first_redeem, &fixture.owner);
     svm.expire_blockhash();
     let second_recipient = Pubkey::new_unique();
@@ -297,11 +334,11 @@ fn test_process_withdrawals_can_partially_settle_batch() {
         second_ticket,
         1,
         second_shares,
-        0,
     )
     .unwrap();
     send_ok(&mut svm, second_redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let first_assets = ONE_BASE / 4;
     let custody = setup_withdraw_custody(&mut svm, &fixture, first_assets);
@@ -317,7 +354,9 @@ fn test_process_withdrawals_can_partially_settle_batch() {
     assert!(svm.get_account(&second_ticket).is_some());
 
     let state = fixture.vault.load(&svm);
-    assert_eq!(state.pending_withdrawal_assets, ONE_BASE / 2 - first_assets);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.total_assets, ONE_BASE - first_assets);
+    assert_eq!(state.requested_withdrawal_shares, second_shares);
 }
 
 #[test]
@@ -329,7 +368,7 @@ fn test_process_withdrawals_rejects_wrong_authority() {
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -339,6 +378,7 @@ fn test_process_withdrawals_rejects_wrong_authority() {
         fixture.vault.address,
         fixture.withdraw_sub_account,
         custody,
+        fixture.share_mint,
         vec![(ticket, fixture.owner.pubkey(), fixture.recipient)],
     )
     .unwrap();
@@ -357,13 +397,14 @@ fn test_process_withdrawals_rejects_mismatched_ticket_data() {
     let fixture = setup_redeem(&mut svm);
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
-    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
     let mut ticket = load_ticket(&svm, ticket_key);
     ticket.recipient_token_account = Pubkey::new_unique().to_bytes();
     write_ticket(&mut svm, ticket_key, ticket);
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, ONE_BASE / 2);
     let ix = process_withdrawals_ix(
@@ -386,9 +427,10 @@ fn test_process_withdrawals_rejects_duplicate_ticket_account() {
     let fixture = setup_redeem(&mut svm);
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, ONE_BASE);
     let ix = process_withdrawals_ix(
@@ -417,9 +459,10 @@ fn test_process_withdrawals_rejects_insufficient_custody_balance_atomically() {
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
     let assets_owed = ONE_BASE / 2;
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, assets_owed - 1);
     let ix = process_withdrawals_ix(
@@ -432,9 +475,10 @@ fn test_process_withdrawals_rejects_insufficient_custody_balance_atomically() {
     assert_eq!(token_balance(&svm, &fixture.recipient), 0);
     assert_eq!(token_balance(&svm, &custody), assets_owed - 1);
     assert!(svm.get_account(&ticket).is_some());
+    assert_eq!(fixture.vault.load(&svm).pending_withdrawal_assets, 0);
     assert_eq!(
-        fixture.vault.load(&svm).pending_withdrawal_assets,
-        assets_owed
+        fixture.vault.load(&svm).requested_withdrawal_shares,
+        ONE_BASE_SHARES / 2
     );
 }
 
@@ -446,9 +490,10 @@ fn test_process_withdrawals_rejects_wrong_withdraw_subaccount() {
     let fixture = setup_redeem(&mut svm);
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, ONE_BASE / 2);
     let wrong_withdraw_sub_account = VaultSubAccount::find_address(&fixture.vault.address, 2).0;
@@ -457,6 +502,7 @@ fn test_process_withdrawals_rejects_wrong_withdraw_subaccount() {
         fixture.vault.address,
         wrong_withdraw_sub_account,
         custody,
+        fixture.share_mint,
         vec![(ticket, fixture.owner.pubkey(), fixture.recipient)],
     )
     .unwrap();
@@ -475,9 +521,10 @@ fn test_process_withdrawals_rejects_custody_not_owned_by_withdraw_subaccount() {
     let fixture = setup_redeem(&mut svm);
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     let custody = set_ata(
         &mut svm,
@@ -505,9 +552,10 @@ fn test_process_withdrawals_rejects_destination_for_wrong_mint() {
     let fixture = setup_redeem(&mut svm);
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     set_token_account(
         &mut svm,
@@ -539,9 +587,10 @@ fn test_process_withdrawals_allowed_while_withdrawals_paused() {
     fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
 
     let assets_owed = ONE_BASE / 2;
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
 
     send_ok(
         &mut svm,
@@ -571,40 +620,27 @@ fn test_process_withdrawals_allowed_while_withdrawals_paused() {
 }
 
 #[test]
-fn test_cancel_redeem_reenters_at_current_nav_and_closes_ticket() {
+fn test_cancel_redeem_restores_unstruck_burned_shares_after_delay() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
     let fixture = setup_redeem(&mut svm);
 
     let shares = ONE_BASE_SHARES / 2;
-    let assets_owed = ONE_BASE / 2;
-    let (ticket, redeem) = redeem_ix(&fixture, 0, shares, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, shares);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
-
-    // Simulate gains in the active vault while the withdrawal is pending.
-    let mut state = fixture.vault.load(&svm);
-    state.total_assets = ONE_BASE;
-    write_vault_state(&mut svm, &fixture, state);
+    advance_cancel_delay(&mut svm);
 
     send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
 
-    // The pending claim re-enters at current active NAV:
-    // floor(500k assets * 500M active shares / 1M active assets) = 250M.
-    let reminted = shares / 2;
-    assert_eq!(
-        token_balance(&svm, &fixture.share_account),
-        ONE_BASE_SHARES - shares + reminted
-    );
-    assert_eq!(
-        mint_supply(&svm, &fixture.share_mint),
-        ONE_BASE_SHARES - shares + reminted
-    );
+    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
+    assert_eq!(mint_supply(&svm, &fixture.share_mint), ONE_BASE_SHARES);
 
     let state = fixture.vault.load(&svm);
     assert_eq!(state.pending_withdrawal_assets, 0);
-    assert_eq!(state.total_assets, ONE_BASE + assets_owed);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.requested_withdrawal_shares, 0);
     assert!(svm.get_account(&ticket).is_none());
 }
 
@@ -615,9 +651,10 @@ fn test_cancel_redeem_restores_burned_shares_when_no_active_holders_remain() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_cancel_delay(&mut svm);
 
     send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
 
@@ -637,9 +674,10 @@ fn test_cancel_redeem_rejects_non_owner() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_cancel_delay(&mut svm);
 
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
@@ -667,9 +705,10 @@ fn test_cancel_redeem_rejects_below_min_shares_out() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
+    advance_cancel_delay(&mut svm);
 
     assert_roshi_error(
         send(
@@ -689,7 +728,7 @@ fn test_cancel_redeem_rejects_share_destination_for_wrong_mint() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -720,7 +759,7 @@ fn test_cancel_redeem_rejects_share_destination_for_wrong_owner() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -750,7 +789,7 @@ fn test_cancel_redeem_rejects_wrong_ticket_pda() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -779,7 +818,7 @@ fn test_cancel_redeem_rejects_ticket_data_with_mismatched_owner() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -805,7 +844,7 @@ fn test_cancel_redeem_rejects_ticket_data_with_mismatched_bump() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -831,7 +870,7 @@ fn test_cancel_redeem_allowed_while_withdrawals_paused() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
     svm.expire_blockhash();
 
@@ -849,6 +888,7 @@ fn test_cancel_redeem_allowed_while_withdrawals_paused() {
         &fixture.vault.roles.admin,
     );
     svm.expire_blockhash();
+    advance_cancel_delay(&mut svm);
 
     send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
     assert!(svm.get_account(&ticket).is_none());
@@ -861,7 +901,7 @@ fn test_redeem_all_shares_drains_vault_accounting() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (ticket, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES, 0);
+    let (ticket, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES);
     send_ok(&mut svm, ix, &fixture.owner);
 
     assert_eq!(token_balance(&svm, &fixture.share_account), 0);
@@ -869,11 +909,12 @@ fn test_redeem_all_shares_drains_vault_accounting() {
 
     let queued = load_ticket(&svm, ticket);
     assert_eq!(queued.shares_burned, ONE_BASE_SHARES);
-    assert_eq!(queued.assets_owed, ONE_BASE);
+    assert_eq!(queued.assets_owed, 0);
 
     let state = fixture.vault.load(&svm);
-    assert_eq!(state.total_assets, 0);
-    assert_eq!(state.pending_withdrawal_assets, ONE_BASE);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.requested_withdrawal_shares, ONE_BASE_SHARES);
 }
 
 #[test]
@@ -898,24 +939,8 @@ fn test_redeem_rejects_when_withdrawals_paused() {
     );
     svm.expire_blockhash();
 
-    let (_, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES, 0);
+    let (_, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES);
     assert_roshi_error(send(&mut svm, ix, &fixture.owner), RoshiError::VaultPaused);
-    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
-}
-
-#[test]
-fn test_redeem_rejects_below_min_assets_out() {
-    let Some((mut svm, ..)) = setup_program() else {
-        return;
-    };
-    let fixture = setup_redeem(&mut svm);
-
-    // Half the shares are worth ONE_BASE / 2 assets; demand one more.
-    let (_, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, ONE_BASE / 2 + 1);
-    assert_roshi_error(
-        send(&mut svm, ix, &fixture.owner),
-        RoshiError::SlippageExceeded,
-    );
     assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
 }
 
@@ -926,7 +951,7 @@ fn test_redeem_rejects_zero_shares() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (_, ix) = redeem_ix(&fixture, 0, 0, 0);
+    let (_, ix) = redeem_ix(&fixture, 0, 0);
     assert_roshi_error(send(&mut svm, ix, &fixture.owner), RoshiError::ZeroOutput);
     assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
 }
@@ -938,7 +963,7 @@ fn test_redeem_rejects_more_than_share_supply() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let (_, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES + 1, 0);
+    let (_, ix) = redeem_ix(&fixture, 0, ONE_BASE_SHARES + 1);
     assert_roshi_error(
         send(&mut svm, ix, &fixture.owner),
         RoshiError::InvalidVaultState,
@@ -965,7 +990,6 @@ fn test_redeem_rejects_wrong_ticket_pda() {
         wrong_ticket,
         0,
         ONE_BASE_SHARES,
-        0,
     )
     .unwrap();
     assert_instruction_error(
@@ -994,7 +1018,6 @@ fn test_redeem_rejects_wrong_share_mint() {
         ticket,
         0,
         ONE_BASE_SHARES,
-        0,
     )
     .unwrap();
     assert_roshi_error(
@@ -1023,7 +1046,6 @@ fn test_redeem_rejects_recipient_for_wrong_mint() {
         ticket,
         0,
         ONE_BASE_SHARES,
-        0,
     )
     .unwrap();
 
@@ -1042,12 +1064,12 @@ fn test_redeem_rejects_duplicate_ticket_index() {
     let fixture = setup_redeem(&mut svm);
 
     let quarter = ONE_BASE_SHARES / 4;
-    let (_, first) = redeem_ix(&fixture, 0, quarter, 0);
+    let (_, first) = redeem_ix(&fixture, 0, quarter);
     send_ok(&mut svm, first, &fixture.owner);
     svm.expire_blockhash();
 
     // Reusing ticket index 0 collides with the still-open ticket PDA.
-    let (_, second) = redeem_ix(&fixture, 0, quarter, 0);
+    let (_, second) = redeem_ix(&fixture, 0, quarter);
     assert_instruction_error(
         send(&mut svm, second, &fixture.owner),
         InstructionError::AccountAlreadyInitialized,

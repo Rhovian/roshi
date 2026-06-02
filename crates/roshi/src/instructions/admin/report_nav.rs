@@ -46,6 +46,9 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         return Err(RoshiError::InvalidMintAccount.into());
     }
     let share_supply = token::mint_supply(share_mint)?;
+    let economic_share_supply = share_supply
+        .checked_add(vault.requested_withdrawal_shares)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
 
     if args.report_hash == EMPTY_REPORT_HASH {
         return Err(RoshiError::InvalidVaultState.into());
@@ -58,7 +61,7 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         .ok_or(ProgramError::from(RoshiError::InvalidVaultState))?;
     let (fee_assets, net_total_assets, high_watermark) = performance_fee_for_nav(
         fee_base_assets,
-        share_supply,
+        economic_share_supply,
         vault.high_watermark,
         vault.performance_fee_bps,
     )?;
@@ -69,6 +72,10 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
     vault.total_assets = net_total_assets;
     vault.high_watermark = high_watermark;
+    vault.report_epoch = vault
+        .report_epoch
+        .checked_add(1)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
     vault.last_report_hash = args.report_hash;
     vault.last_update_ts = Clock::get()?.unix_timestamp;
     vault.validate_state()?;

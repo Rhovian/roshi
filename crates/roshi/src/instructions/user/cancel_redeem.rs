@@ -1,11 +1,15 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
+use solana_sysvar::{clock::Clock, Sysvar};
 
 use crate::{
     instructions::{accounts::CancelRedeemContext, token, CancelRedeemArgs},
-    state::vault::Vault,
+    state::{
+        vault::Vault,
+        withdrawal_ticket::{REDEEM_CANCEL_DELAY_SLOTS, WITHDRAWAL_STRIKE_DELAY_EPOCHS},
+    },
 };
-use roshi_interface::{error::RoshiError, math::shares_for_deposit};
+use roshi_interface::error::RoshiError;
 
 /// Implements [`crate::instructions::RoshiInstructionTag::CancelRedeem`].
 ///
@@ -18,26 +22,32 @@ use roshi_interface::{error::RoshiError, math::shares_for_deposit};
 /// 4. `[writable]` Owner share token account receiving reentry shares.
 /// 5. `[]` SPL Token program.
 ///
-/// Cancelling an open withdrawal ticket favors active holders by treating the
-/// fixed pending claim as a fresh deposit into the active vault at current NAV.
-/// The owner receives newly computed shares, not necessarily the originally
-/// burned share count.
+/// Cancelling an unstruck withdrawal ticket is a liveness escape for a missing
+/// NAV report. It restores the originally burned shares after a slot delay, but
+/// only before the ticket becomes eligible to be struck.
 pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> ProgramResult {
     let context = CancelRedeemContext::load(accounts)?;
     let vault = &context.vault;
     let ticket = context.ticket;
 
-    if vault.pending_withdrawal_assets < ticket.assets_owed {
-        return Err(RoshiError::Overflow.into());
+    if ticket.assets_owed != 0 {
+        return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
     }
 
-    let share_supply = token::mint_supply(context.share_mint)?;
-    let shares_to_mint = if vault.total_assets == 0 && share_supply == 0 {
-        ticket.shares_burned
-    } else {
-        shares_for_deposit(ticket.assets_owed, vault.total_assets, share_supply)?
-    };
-    if shares_to_mint < args.min_shares_out {
+    let earliest_strike_epoch = ticket
+        .request_epoch
+        .checked_add(WITHDRAWAL_STRIKE_DELAY_EPOCHS)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    let clock = Clock::get()?;
+    let cancel_slot = ticket
+        .request_slot
+        .checked_add(REDEEM_CANCEL_DELAY_SLOTS)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    if vault.report_epoch >= earliest_strike_epoch || clock.slot < cancel_slot {
+        return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
+    }
+
+    if ticket.shares_burned < args.min_shares_out {
         return Err(RoshiError::SlippageExceeded.into());
     }
 
@@ -50,19 +60,15 @@ pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> Pr
         context.share_mint,
         context.share_dest,
         context.vault_account,
-        shares_to_mint,
+        ticket.shares_burned,
         signer_seeds,
     )?;
 
     context.close_ticket()?;
     context.store_vault(|vault| {
-        vault.pending_withdrawal_assets = vault
-            .pending_withdrawal_assets
-            .checked_sub(ticket.assets_owed)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
-        vault.total_assets = vault
-            .total_assets
-            .checked_add(ticket.assets_owed)
+        vault.requested_withdrawal_shares = vault
+            .requested_withdrawal_shares
+            .checked_sub(ticket.shares_burned)
             .ok_or(ProgramError::from(RoshiError::Overflow))?;
         Ok(())
     })

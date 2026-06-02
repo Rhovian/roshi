@@ -83,7 +83,6 @@ fn redeem_half_shares(
         ticket,
         ticket_index,
         ONE_BASE_SHARES / 2,
-        0,
     )
     .unwrap();
     send_ok(svm, ix, owner);
@@ -324,7 +323,7 @@ fn test_report_nav_rejects_gross_nav_below_existing_payable() {
 }
 
 #[test]
-fn test_report_nav_excludes_pending_withdrawals_from_fee_base() {
+fn test_report_nav_includes_unstruck_withdrawal_shares_in_fee_denominator() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -341,8 +340,9 @@ fn test_report_nav_excludes_pending_withdrawals_from_fee_base() {
     redeem_half_shares(&mut svm, &vault, &owner, share_account);
 
     let state = vault.load(&svm);
-    assert_eq!(state.total_assets, 500_000);
-    assert_eq!(state.pending_withdrawal_assets, 500_000);
+    assert_eq!(state.total_assets, 1_000_000);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.requested_withdrawal_shares, ONE_BASE_SHARES / 2);
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
@@ -354,14 +354,16 @@ fn test_report_nav_excludes_pending_withdrawals_from_fee_base() {
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
 
     let state = vault.load(&svm);
-    assert_eq!(state.total_assets, 500_000);
-    assert_eq!(state.pending_withdrawal_assets, 500_000);
+    assert_eq!(state.total_assets, 1_000_000);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.requested_withdrawal_shares, ONE_BASE_SHARES / 2);
     assert_eq!(state.fees_payable, 0);
     assert_eq!(state.high_watermark, 1_000_000);
+    assert_eq!(state.report_epoch, 1);
 }
 
 #[test]
-fn test_report_nav_rejects_gross_nav_below_pending_withdrawals_and_payables() {
+fn test_report_nav_rejects_gross_nav_below_payables_with_unstruck_withdrawals() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -404,13 +406,14 @@ fn test_report_nav_rejects_gross_nav_below_pending_withdrawals_and_payables() {
 
     let before = vault.load(&svm);
     assert_eq!(before.fees_payable, 10_000);
-    assert_eq!(before.pending_withdrawal_assets, 545_000);
+    assert_eq!(before.pending_withdrawal_assets, 0);
+    assert_eq!(before.requested_withdrawal_shares, ONE_BASE_SHARES / 2);
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
         vault.address,
         vault.share_mint,
-        554_999,
+        9_999,
         [3; 32],
     );
     assert_roshi_error(
