@@ -1,10 +1,12 @@
 mod action;
+mod asset;
 mod manage;
 mod program_config;
 mod shared;
 mod vault;
 
 pub(crate) use action::{AuthorizeActionContext, RevokeActionContext};
+pub(crate) use asset::{update_writable_asset_as_admin, InitializeAssetContext};
 pub(crate) use manage::{ManageBatchContext, ManageContext, ValidatedManageAccounts};
 pub(crate) use program_config::{InitializeProgramContext, WritableProgramConfigAuthorityContext};
 pub(crate) use shared::next_account;

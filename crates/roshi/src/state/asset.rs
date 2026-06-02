@@ -23,12 +23,10 @@ pub struct Asset {
     pub max_price_change_bps: u16,
     /// Asset mint decimals.
     pub asset_decimals: u8,
-    /// Vault base mint decimals.
-    pub base_decimals: u8,
     /// Whether deposits for this asset are enabled.
     enabled_flag: u8,
     pub bump: u8,
-    _padding: [u8; 2],
+    _padding: [u8; 3],
 }
 
 impl Asset {
@@ -41,7 +39,6 @@ impl Asset {
         custody_token_account: [u8; 32],
         oracle: OracleConfig,
         asset_decimals: u8,
-        base_decimals: u8,
         max_price_change_bps: u16,
         deposit_limit: u64,
         enabled: bool,
@@ -60,10 +57,9 @@ impl Asset {
             deposit_limit,
             max_price_change_bps,
             asset_decimals,
-            base_decimals,
             enabled_flag: flags::bool_to_flag(enabled),
             bump,
-            _padding: [0; 2],
+            _padding: [0; 3],
         })
     }
 
@@ -126,7 +122,6 @@ mod tests {
             [2; 32],
             [3; 32],
             OracleConfig::default(),
-            6,
             6,
             250,
             1_000_000,

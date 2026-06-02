@@ -90,7 +90,6 @@ pub struct InitializeAssetArgs {
     pub custody_token_account: [u8; 32],
     pub oracle: OracleConfig,
     pub asset_decimals: u8,
-    pub base_decimals: u8,
     pub max_price_change_bps: u16,
     pub deposit_limit: u64,
     pub enabled: bool,

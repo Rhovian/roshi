@@ -3,6 +3,7 @@
 //! [`crate::helpers`].
 
 mod action;
+mod asset;
 mod initialize_vault;
 mod manage;
 mod program;

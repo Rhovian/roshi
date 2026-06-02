@@ -19,10 +19,32 @@ use wincode::deserialize;
 
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, fund, send, send_ok, send_signed, setup_program,
-    VaultBuilder,
+    TestVault, VaultBuilder,
 };
 
 const ACTION_HASH: [u8; 32] = [9; 32];
+
+fn authorize_action_ix(
+    vault: &TestVault,
+) -> (solana_pubkey::Pubkey, solana_instruction::Instruction) {
+    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
+    let ix = roshi_client::instruction::authorize_action(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        action_pda,
+        ACTION_HASH,
+        Ops::empty(),
+    )
+    .unwrap();
+
+    (action_pda, ix)
+}
+
+fn authorize_test_action(svm: &mut litesvm::LiteSVM, vault: &TestVault) -> solana_pubkey::Pubkey {
+    let (action_pda, ix) = authorize_action_ix(vault);
+    send_ok(svm, ix, &vault.roles.admin);
+    action_pda
+}
 
 #[test]
 fn test_authorize_action() {
@@ -95,24 +117,16 @@ fn test_authorize_action_rejects_duplicate() {
     let vault = VaultBuilder::new().install(&mut svm);
     fund(&mut svm, &vault.roles.admin);
 
-    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
-    let authorize = || {
-        roshi_client::instruction::authorize_action(
-            vault.roles.admin.pubkey(),
-            vault.address,
-            action_pda,
-            ACTION_HASH,
-            Ops::empty(),
-        )
-        .unwrap()
-    };
+    let (action_pda, authorize_ix) = authorize_action_ix(&vault);
 
-    send_ok(&mut svm, authorize(), &vault.roles.admin);
+    send_ok(&mut svm, authorize_ix, &vault.roles.admin);
+    assert!(svm.get_account(&action_pda).is_some());
 
     // A distinct retry must now fail on the uninitialized-account guard.
     svm.expire_blockhash();
+    let (_, authorize_ix) = authorize_action_ix(&vault);
     assert_instruction_error(
-        send(&mut svm, authorize(), &vault.roles.admin),
+        send(&mut svm, authorize_ix, &vault.roles.admin),
         InstructionError::AccountAlreadyInitialized,
     );
 }
@@ -258,19 +272,7 @@ fn test_revoke_action() {
     let vault = VaultBuilder::new().install(&mut svm);
     fund(&mut svm, &vault.roles.admin);
 
-    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
-    send_ok(
-        &mut svm,
-        roshi_client::instruction::authorize_action(
-            vault.roles.admin.pubkey(),
-            vault.address,
-            action_pda,
-            ACTION_HASH,
-            Ops::empty(),
-        )
-        .unwrap(),
-        &vault.roles.admin,
-    );
+    let action_pda = authorize_test_action(&mut svm, &vault);
     assert!(svm.get_account(&action_pda).is_some());
 
     send_ok(
@@ -298,19 +300,7 @@ fn test_revoke_action_rejects_non_admin() {
     let vault = VaultBuilder::new().install(&mut svm);
     fund(&mut svm, &vault.roles.admin);
 
-    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
-    send_ok(
-        &mut svm,
-        roshi_client::instruction::authorize_action(
-            vault.roles.admin.pubkey(),
-            vault.address,
-            action_pda,
-            ACTION_HASH,
-            Ops::empty(),
-        )
-        .unwrap(),
-        &vault.roles.admin,
-    );
+    let action_pda = authorize_test_action(&mut svm, &vault);
 
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
@@ -339,19 +329,7 @@ fn test_revoke_action_rejects_mismatched_seeds() {
     let vault = VaultBuilder::new().install(&mut svm);
     fund(&mut svm, &vault.roles.admin);
 
-    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
-    send_ok(
-        &mut svm,
-        roshi_client::instruction::authorize_action(
-            vault.roles.admin.pubkey(),
-            vault.address,
-            action_pda,
-            ACTION_HASH,
-            Ops::empty(),
-        )
-        .unwrap(),
-        &vault.roles.admin,
-    );
+    let action_pda = authorize_test_action(&mut svm, &vault);
 
     // Correct admin and hash, but the supplied account is not the PDA.
     let wrong_action = solana_pubkey::Pubkey::new_unique();
@@ -366,6 +344,7 @@ fn test_revoke_action_rejects_mismatched_seeds() {
         send(&mut svm, ix, &vault.roles.admin),
         InstructionError::InvalidSeeds,
     );
+    assert!(svm.get_account(&action_pda).is_some());
 }
 
 #[test]
@@ -377,19 +356,7 @@ fn test_revoke_action_requires_admin_signature() {
     let vault = VaultBuilder::new().install(&mut svm);
     fund(&mut svm, &vault.roles.admin);
 
-    let (action_pda, _) = Action::find_address(&vault.address, &ACTION_HASH);
-    send_ok(
-        &mut svm,
-        roshi_client::instruction::authorize_action(
-            vault.roles.admin.pubkey(),
-            vault.address,
-            action_pda,
-            ACTION_HASH,
-            Ops::empty(),
-        )
-        .unwrap(),
-        &vault.roles.admin,
-    );
+    let action_pda = authorize_test_action(&mut svm, &vault);
 
     // Correct admin key, but its account is not marked as a signer.
     let accounts = vec![

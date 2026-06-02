@@ -1,11 +1,11 @@
 use roshi_interface::{
     action::Ops,
     instructions::{
-        serialize_instruction, AuthorizeActionArgs, DepositArgs, InitializeProgramArgs,
-        InitializeVaultArgs, InstructionArgs, ManageArgs, ManageBatchArgs, RevokeActionArgs,
-        SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-        SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-        UpdateVaultConfigArgs,
+        serialize_instruction, AuthorizeActionArgs, DepositArgs, InitializeAssetArgs,
+        InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs, ManageBatchArgs,
+        RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+        SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
+        TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
     ID,
 };
@@ -136,6 +136,39 @@ pub fn revoke_action(
             AccountMeta::new(action, false),
         ],
         &RevokeActionArgs { action_hash },
+    )
+}
+
+pub fn initialize_asset(
+    admin: Pubkey,
+    vault: Pubkey,
+    asset: Pubkey,
+    args: InitializeAssetArgs,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new(asset, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        &args,
+    )
+}
+
+pub fn update_asset(
+    admin: Pubkey,
+    vault: Pubkey,
+    asset: Pubkey,
+    args: UpdateAssetArgs,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new(asset, false),
+        ],
+        &args,
     )
 }
 
@@ -589,6 +622,71 @@ mod tests {
 
         let args: RevokeActionArgs = decode_args(&ix.data);
         assert_eq!(args.action_hash, [9; 32]);
+    }
+
+    #[test]
+    fn builds_initialize_asset_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let asset = Pubkey::new_unique();
+        let asset_mint = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let args = InitializeAssetArgs {
+            asset_mint: asset_mint.to_bytes(),
+            custody_token_account: custody.to_bytes(),
+            oracle: roshi_interface::oracle::OracleConfig::default(),
+            asset_decimals: 9,
+            max_price_change_bps: 250,
+            deposit_limit: 1_000_000,
+            enabled: true,
+        };
+
+        let ix = initialize_asset(admin, vault, asset, args).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 4);
+        assert_eq!(ix.accounts[0], AccountMeta::new(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(asset, false));
+        assert_eq!(
+            ix.accounts[3],
+            AccountMeta::new_readonly(system_program::ID, false)
+        );
+
+        let args: InitializeAssetArgs = decode_args(&ix.data);
+        assert_eq!(args.asset_mint, asset_mint.to_bytes());
+        assert_eq!(args.custody_token_account, custody.to_bytes());
+        assert_eq!(args.asset_decimals, 9);
+        assert!(args.enabled);
+    }
+
+    #[test]
+    fn builds_update_asset_instruction() {
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let asset = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let args = UpdateAssetArgs {
+            custody_token_account: custody.to_bytes(),
+            oracle: roshi_interface::oracle::OracleConfig::default(),
+            max_price_change_bps: 300,
+            deposit_limit: 0,
+            enabled: false,
+        };
+
+        let ix = update_asset(admin, vault, asset, args).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 3);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(asset, false));
+
+        let args: UpdateAssetArgs = decode_args(&ix.data);
+        assert_eq!(args.custody_token_account, custody.to_bytes());
+        assert_eq!(args.max_price_change_bps, 300);
+        assert_eq!(args.deposit_limit, 0);
+        assert!(!args.enabled);
     }
 
     #[test]
