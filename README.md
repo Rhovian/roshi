@@ -1,73 +1,33 @@
 # Roshi
 
-Roshi is a Solana-native vault protocol built in native Rust with Wincode
-serialization. It provides the on-chain program shape for a generalized vault
-system with strategist-managed CPI execution, trusted NAV reporting, share
-accounting, access control, and queued withdrawals.
+Roshi is a Solana-native vault protocol for strategist-managed portfolios. It
+combines share-based accounting, trusted NAV reporting, vault-scoped access
+control, authorized strategy execution, queued withdrawals, and performance-fee
+accounting.
+
+## Disclaimer
+
+Roshi is experimental software and has not been audited. It is provided as-is,
+without warranties or liability. Do not use it with production funds unless you
+have performed your own review, testing, and risk assessment.
+
+## What Is Here
+
+- On-chain program instructions for vault initialization, deposits, redemptions,
+  queued withdrawal settlement, NAV reporting, fee collection, supported asset
+  configuration, pause/access controls, role rotation, and authorized strategist
+  CPI execution.
+- Shared interface types and checked integer math used by the program, tests,
+  and client helpers.
+- Thin Rust client builders for Roshi instructions.
+- LiteSVM integration tests covering the main protocol flows.
 
 ## Workspace
 
-- `crates/interface`: reusable Roshi protocol/interface types.
-- `crates/roshi`: on-chain Roshi program crate.
-- `crates/client`: thin client helpers for building Roshi instructions.
+- `crates/interface`: reusable protocol types, instruction args, and math.
+- `crates/roshi`: on-chain Solana program.
+- `crates/client`: instruction-building helpers.
 - `crates/tests`: LiteSVM integration test harness.
-
-## Current Status
-
-The program includes the reusable Solana infrastructure:
-
-- Native Solana program entrypoint and Wincode instruction dispatch.
-- `initialize_program` with a `ProgramConfig` PDA and authority storage.
-- Generic indexed CPI execution in `manage` and `manage_batch`.
-- Vault-scoped RBAC, pause flags, and subaccount PDA signer authorities.
-- LiteSVM tests for program initialization, authorized CPI execution, deposits,
-  redemptions, and withdrawal settlement.
-
-The Roshi protocol surface currently includes:
-
-- State for `ProgramConfig`, `Vault`, `Asset`, `Action`, `Ops`, `Op`, and
-  `WithdrawalTicket`.
-- PDA helper seeds for program config, vaults, subaccounts, actions, and
-  withdrawal tickets.
-- Authorization hash helper for ops-based CPI patterns.
-- Implemented instruction handlers for program/vault initialization, action
-  authorization/revocation, supported asset config, deposits, redemptions,
-  redeem cancellation, queued withdrawal settlement, trusted NAV reporting,
-  performance-fee accrual/collection, pause/access flags, role rotation,
-  program/vault authority transfer, vault config updates, and strategist CPI
-  execution.
-- Instruction handlers are grouped by domain under `admin`, `execution`, and
-  `user` modules where that grouping carries its weight.
-
-The main remaining protocol work is operational tooling and hardening:
-
-- Expand operational tooling around NAV reports, strategist workflows, and
-  deployment/runbooks.
-- Add runbooks for admin-triggered fee collection and trusted NAV-report
-  workflows.
-
-## Design Docs
-
-- [Design Principles](docs/design.md)
-- [Accounting](docs/accounting.md)
-- [Accounting Math](docs/math.md)
-- [Vault Access](docs/access.md)
-- [NAV Reporting](docs/nav_reporting.md)
-- [Oracles](docs/oracles.md)
-- [Execution](docs/execution.md)
-- [Subaccounts](docs/subaccounts.md)
-- [RBAC](docs/rbac.md)
-- [Withdrawals](docs/withdrawals.md)
-
-## Dependencies
-
-The dependency stack stays on the compatible Solana 3.x test/program ecosystem:
-
-- Program-facing crates use current Solana 3.x minors where compatible.
-- `solana-pubkey` is on 4.x.
-- `wincode` is on 0.5.x.
-- `litesvm` is on 0.12.x.
-- `Cargo.lock` is checked in for reproducible program/test builds.
 
 ## Development
 
@@ -77,19 +37,28 @@ just check
 just test-sbf
 ```
 
-`just build` produces `target/deploy/roshi.so`. The LiteSVM tests use that SBF
-artifact when present.
-
 Useful direct checks:
 
 ```bash
 cargo fmt -- --check
 cargo check
 cargo check -p roshi --no-default-features
-cargo test -p roshi-tests
+cargo test
 cargo build-sbf --manifest-path crates/roshi/Cargo.toml
 ```
 
-`cargo build-sbf` currently succeeds, though the Solana build tool still emits
-warnings about the dual `cdylib`/`rlib` crate types and undefined syscall names
-during post-processing.
+`just build` produces `target/deploy/roshi.so`. The integration tests use that
+SBF artifact when present.
+
+## Design Docs
+
+- [Design Principles](docs/design.md)
+- [Accounting](docs/accounting.md)
+- [Accounting Math](docs/math.md)
+- [Controls](docs/controls.md)
+- [Oracles](docs/oracles.md)
+- [Execution](docs/execution.md)
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

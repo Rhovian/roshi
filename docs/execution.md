@@ -10,6 +10,35 @@ Admin authorizes execution patterns by creating `Action` accounts.
 
 Strategist executes those patterns through `manage` or `manage_batch`.
 
+## Subaccounts
+
+Roshi vaults use subaccount PDAs as signer authorities for custody and strategy
+execution:
+
+```text
+[b"sub_account", vault, sub_account_index]
+```
+
+where `sub_account_index` is a `u8`.
+
+Subaccounts are not Roshi-owned data accounts. They are bare PDA authorities
+that can own SPL token accounts and sign authorized CPIs.
+
+The vault stores default subaccounts for user-facing flows:
+
+```rust
+deposit_sub_account: u8,
+withdraw_sub_account: u8,
+```
+
+Deposits route custody into the deposit subaccount by default. Queued
+withdrawal settlement pays from the withdraw subaccount by default. Open
+withdrawal tickets remain vault-scoped user liabilities; rotating the default
+withdraw subaccount only changes the default payment source.
+
+Strategy execution is explicit: every `manage` or `manage_batch` action selects
+the subaccount that signs that CPI.
+
 ## Action Accounts
 
 An `Action` is vault-scoped authorization for a CPI pattern.
@@ -231,6 +260,9 @@ If any action fails, the whole transaction fails.
 - CPI instruction data slices must be in bounds.
 - Batch execution revalidates each action immediately before invoking it.
 - Batch execution is atomic at the transaction level.
+- A subaccount is always scoped to one vault.
+- A CPI can only receive a subaccount signer for the subaccount selected in the
+  instruction args.
 
 ## Design Notes
 
