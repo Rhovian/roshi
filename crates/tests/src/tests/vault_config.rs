@@ -127,7 +127,6 @@ fn test_update_vault_config() {
         performance_fee_bps: 150,
         withdrawal_buffer_bps: 300,
         max_change_bps: 600,
-        min_update_interval: 120,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -144,7 +143,6 @@ fn test_update_vault_config() {
     expected.performance_fee_bps = 150;
     expected.withdrawal_buffer_bps = 300;
     expected.max_change_bps = 600;
-    expected.min_update_interval = 120;
     assert_eq!(vault.load(&svm), expected);
 }
 
@@ -167,7 +165,6 @@ fn test_update_vault_config_rejects_invalid_bps() {
         performance_fee_bps: 10_001,
         withdrawal_buffer_bps: 0,
         max_change_bps: 0,
-        min_update_interval: 0,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -202,7 +199,6 @@ fn test_update_vault_config_rejects_non_admin() {
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
         max_change_bps: 500,
-        min_update_interval: 60,
     };
     let ix = roshi_client::instruction::update_vault_config(outsider.pubkey(), vault.address, args)
         .unwrap();

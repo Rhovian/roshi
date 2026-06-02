@@ -26,10 +26,10 @@ mod tests {
         instructions::{
             AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
             InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs,
-            ProcessWithdrawalsArgs, RedeemArgs, RevokeActionArgs, SetNavAuthorityArgs,
-            SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-            TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
-            UpdateVaultConfigArgs,
+            ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs,
+            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+            SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+            UpdateAssetArgs, UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -92,7 +92,6 @@ mod tests {
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
             max_change_bps: 500,
-            min_update_interval: 60,
             private: true,
             access_merkle_root: [2; 32],
         };
@@ -408,6 +407,27 @@ mod tests {
     }
 
     #[test]
+    fn builds_report_nav_instruction() {
+        let nav_authority = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let report_hash = [7; 32];
+
+        let ix = report_nav(nav_authority, vault, 123, report_hash).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 2);
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(nav_authority, true)
+        );
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+
+        let args: ReportNavArgs = decode_args(&ix.data);
+        assert_eq!(args.total_assets, 123);
+        assert_eq!(args.report_hash, report_hash);
+    }
+
+    #[test]
     fn builds_authorize_action_instruction() {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
@@ -532,7 +552,6 @@ mod tests {
             performance_fee_bps: 150,
             withdrawal_buffer_bps: 300,
             max_change_bps: 600,
-            min_update_interval: 120,
         };
 
         let ix = update_vault_config(admin, vault, args).unwrap();
@@ -547,6 +566,5 @@ mod tests {
         assert_eq!(args.deposit_sub_account, 2);
         assert_eq!(args.withdraw_sub_account, 3);
         assert_eq!(args.performance_fee_bps, 150);
-        assert_eq!(args.min_update_interval, 120);
     }
 }

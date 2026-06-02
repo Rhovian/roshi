@@ -32,8 +32,7 @@ use roshi_interface::{
 /// base-mint deposits into custody owned by `vault.deposit_sub_account` and
 /// non-base deposits into their Asset custody (priced through the asset oracle
 /// into base atoms), mints shares to the depositor (vault PDA is the share-mint
-/// authority), increases `total_assets`/`total_shares`, and enforces
-/// `min_shares_out`.
+/// authority), increases `total_assets`, and enforces `min_shares_out`.
 pub fn try_deposit<'info>(
     accounts: &'info [AccountInfo<'info>],
     args: DepositArgs,
@@ -53,11 +52,12 @@ pub fn try_deposit<'info>(
     }
 
     let base_atoms = context.resolve_base_atoms(&args)?;
+    let share_supply = token::mint_supply(context.share_mint)?;
 
-    let shares = if vault.total_shares == 0 {
+    let shares = if share_supply == 0 {
         initial_shares_from_base_atoms(base_atoms, vault.base_decimals)?
     } else {
-        shares_for_deposit(base_atoms, vault.total_assets, vault.total_shares)?
+        shares_for_deposit(base_atoms, vault.total_assets, share_supply)?
     };
     if shares < args.min_shares_out {
         return Err(RoshiError::SlippageExceeded.into());
@@ -90,10 +90,6 @@ pub fn try_deposit<'info>(
         vault.total_assets = vault
             .total_assets
             .checked_add(base_atoms)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
-        vault.total_shares = vault
-            .total_shares
-            .checked_add(shares)
             .ok_or(ProgramError::from(RoshiError::Overflow))?;
         Ok(())
     })

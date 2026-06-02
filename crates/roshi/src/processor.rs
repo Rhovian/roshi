@@ -2,7 +2,7 @@ use crate::{
     instructions::{
         admin::{
             try_authorize_action, try_initialize_asset, try_initialize_program,
-            try_initialize_vault, try_process_withdrawals, try_revoke_action,
+            try_initialize_vault, try_process_withdrawals, try_report_nav, try_revoke_action,
             try_set_nav_authority, try_set_pause_flags, try_set_strategist, try_set_vault_access,
             try_set_withdrawal_authority, try_transfer_program_authority,
             try_transfer_vault_authority, try_update_asset, try_update_vault_config,
@@ -11,7 +11,7 @@ use crate::{
         user::{try_cancel_redeem, try_deposit, try_redeem},
         AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
         InitializeProgramArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
-        ProcessWithdrawalsArgs, RedeemArgs, RevokeActionArgs, RoshiInstructionTag,
+        ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs, RoshiInstructionTag,
         SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
         SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
         UpdateAssetArgs, UpdateVaultConfigArgs,
@@ -88,6 +88,9 @@ fn try_process_instruction<'info>(
         }
         RoshiInstructionTag::ManageBatch => {
             decode_and_process!(try_manage_batch, accounts, payload, ManageBatchArgs)
+        }
+        RoshiInstructionTag::ReportNav => {
+            decode_and_process!(try_report_nav, accounts, payload, ReportNavArgs)
         }
         RoshiInstructionTag::Deposit => {
             decode_and_process!(try_deposit, accounts, payload, DepositArgs)
@@ -215,7 +218,7 @@ mod tests {
             Err(ProgramError::InvalidInstructionData)
         );
         assert_eq!(
-            try_process_instruction(&ID, &[], &[6]),
+            try_process_instruction(&ID, &[], &[255]),
             Err(ProgramError::InvalidInstructionData)
         );
     }

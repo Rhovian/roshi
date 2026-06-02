@@ -79,7 +79,7 @@ The program computes `assets_owed` from the current share price using checked
 integer math:
 
 ```text
-assets_owed = floor(shares * total_assets / total_shares)
+assets_owed = floor(shares * total_assets / share_mint.supply)
 ```
 
 See [Accounting Math](./math.md) for the shared helper contract.

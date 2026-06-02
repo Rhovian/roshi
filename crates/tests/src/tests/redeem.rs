@@ -28,8 +28,7 @@ const ONE_BASE: u64 = 1_000_000;
 const ONE_BASE_SHARES: u64 = 1_000_000_000;
 
 /// A vault seeded with a single `ONE_BASE` base deposit, so the owner holds
-/// `ONE_BASE_SHARES` and the vault accounting is `total_assets = ONE_BASE`,
-/// `total_shares = ONE_BASE_SHARES` at a 1:1 redemption price.
+/// `ONE_BASE_SHARES` and the vault accounting is `total_assets = ONE_BASE`.
 struct RedeemFixture {
     vault: TestVault,
     share_mint: Pubkey,
@@ -219,7 +218,7 @@ fn test_redeem_burns_shares_and_queues_ticket() {
         ONE_BASE_SHARES - shares
     );
 
-    // assets_owed = floor(shares * total_assets / total_shares) at 1:1 price.
+    // assets_owed = floor(shares * total_assets / share_mint.supply) at 1:1 price.
     let assets_owed = ONE_BASE / 2;
     let queued = load_ticket(&svm, ticket);
     assert_eq!(queued.vault, fixture.vault.address.to_bytes());
@@ -232,7 +231,6 @@ fn test_redeem_burns_shares_and_queues_ticket() {
     // The owed assets are carved out of NAV into the pending bucket, leaving the
     // price intact for remaining holders.
     let state = fixture.vault.load(&svm);
-    assert_eq!(state.total_shares, ONE_BASE_SHARES - shares);
     assert_eq!(state.total_assets, ONE_BASE - assets_owed);
     assert_eq!(state.pending_withdrawal_assets, assets_owed);
 }
@@ -607,7 +605,6 @@ fn test_cancel_redeem_reenters_at_current_nav_and_closes_ticket() {
     let state = fixture.vault.load(&svm);
     assert_eq!(state.pending_withdrawal_assets, 0);
     assert_eq!(state.total_assets, ONE_BASE + assets_owed);
-    assert_eq!(state.total_shares, ONE_BASE_SHARES - shares + reminted);
     assert!(svm.get_account(&ticket).is_none());
 }
 
@@ -630,7 +627,6 @@ fn test_cancel_redeem_restores_burned_shares_when_no_active_holders_remain() {
     let state = fixture.vault.load(&svm);
     assert_eq!(state.pending_withdrawal_assets, 0);
     assert_eq!(state.total_assets, ONE_BASE);
-    assert_eq!(state.total_shares, ONE_BASE_SHARES);
     assert!(svm.get_account(&ticket).is_none());
 }
 
@@ -876,7 +872,6 @@ fn test_redeem_all_shares_drains_vault_accounting() {
     assert_eq!(queued.assets_owed, ONE_BASE);
 
     let state = fixture.vault.load(&svm);
-    assert_eq!(state.total_shares, 0);
     assert_eq!(state.total_assets, 0);
     assert_eq!(state.pending_withdrawal_assets, ONE_BASE);
 }
@@ -937,7 +932,7 @@ fn test_redeem_rejects_zero_shares() {
 }
 
 #[test]
-fn test_redeem_rejects_more_than_total_shares() {
+fn test_redeem_rejects_more_than_share_supply() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };

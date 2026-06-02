@@ -47,7 +47,6 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.performance_fee_bps,
         args.withdrawal_buffer_bps,
         args.max_change_bps,
-        args.min_update_interval,
         args.private,
         args.access_merkle_root,
         accounts.vault_bump(),

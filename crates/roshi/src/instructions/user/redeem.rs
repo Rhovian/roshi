@@ -29,8 +29,7 @@ use roshi_interface::{error::RoshiError, math::assets_for_redeem};
 /// Rejects redemptions while withdrawals are paused, computes the owed base
 /// assets at the current price, enforces `min_assets_out`, burns the shares,
 /// carves the owed assets out of `total_assets` into `pending_withdrawal_assets`
-/// (keeping the share price intact for remaining holders), and reduces
-/// `total_shares`.
+/// (keeping the share price intact for remaining holders).
 pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
     let context = RedeemContext::load(accounts, &args)?;
     let vault = &context.vault;
@@ -39,7 +38,8 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
         return Err(RoshiError::VaultPaused.into());
     }
 
-    let assets_owed = assets_for_redeem(args.shares, vault.total_assets, vault.total_shares)?;
+    let share_supply = token::mint_supply(context.share_mint)?;
+    let assets_owed = assets_for_redeem(args.shares, vault.total_assets, share_supply)?;
     if assets_owed < args.min_assets_out {
         return Err(RoshiError::SlippageExceeded.into());
     }
@@ -66,10 +66,6 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
     context.create_ticket(ticket)?;
 
     context.store(|vault| {
-        vault.total_shares = vault
-            .total_shares
-            .checked_sub(args.shares)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
         vault.total_assets = vault
             .total_assets
             .checked_sub(assets_owed)

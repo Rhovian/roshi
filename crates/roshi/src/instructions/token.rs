@@ -15,6 +15,7 @@ pub(crate) const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
 /// `is_initialized`).
 const MINT_AUTHORITY_TAG: usize = 0;
 const MINT_AUTHORITY_KEY: usize = 4;
+const MINT_SUPPLY: usize = 36;
 const MINT_DECIMALS: usize = 44;
 const MINT_IS_INITIALIZED: usize = 45;
 const MINT_LEN: usize = 82;
@@ -64,6 +65,24 @@ pub(crate) fn verify_mint(
     }
 
     Ok(())
+}
+
+/// Read the supply of an initialized SPL mint.
+pub(crate) fn mint_supply(account: &AccountInfo) -> Result<u64, ProgramError> {
+    if account.owner != &TOKEN_PROGRAM_ID {
+        return Err(RoshiError::InvalidMintAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < MINT_LEN || data[MINT_IS_INITIALIZED] != 1 {
+        return Err(RoshiError::InvalidMintAccount.into());
+    }
+
+    Ok(u64::from_le_bytes(
+        data[MINT_SUPPLY..MINT_SUPPLY + 8]
+            .try_into()
+            .map_err(|_| ProgramError::from(RoshiError::InvalidMintAccount))?,
+    ))
 }
 
 /// Verify `account` is an initialized SPL token account for `expected_mint`.

@@ -13,8 +13,8 @@ use solana_instruction::AccountMeta;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_roshi_error, associated_token_address, fund, send, send_ok, set_ata, set_mint,
-    set_pyth_price, setup_program, token_balance, VaultBuilder,
+    assert_roshi_error, associated_token_address, fund, mint_supply, send, send_ok, set_ata,
+    set_mint, set_pyth_price, setup_program, token_balance, VaultBuilder,
 };
 
 /// One whole base unit at 6 decimals.
@@ -105,7 +105,7 @@ fn test_deposit_base_first_deposit_mints_initial_shares() {
 
     let state = fixture.vault.load(&svm);
     assert_eq!(state.total_assets, ONE_BASE);
-    assert_eq!(state.total_shares, ONE_BASE_SHARES);
+    assert_eq!(mint_supply(&svm, &fixture.share_mint), ONE_BASE_SHARES);
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn test_deposit_base_second_deposit_is_proportional() {
 
     let state = fixture.vault.load(&svm);
     assert_eq!(state.total_assets, 2 * ONE_BASE);
-    assert_eq!(state.total_shares, 2 * ONE_BASE_SHARES);
+    assert_eq!(mint_supply(&svm, &fixture.share_mint), 2 * ONE_BASE_SHARES);
 }
 
 #[test]
@@ -385,5 +385,5 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
 
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, base_atoms);
-    assert_eq!(state.total_shares, shares);
+    assert_eq!(mint_supply(&svm, &share_mint), shares);
 }

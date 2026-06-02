@@ -23,10 +23,8 @@ pub enum Role {
 pub struct Vault {
     pub base_oracle: OracleConfig,
     pub total_assets: u64,
-    pub total_shares: u64,
     pub pending_withdrawal_assets: u64,
     pub high_watermark: u64,
-    pub min_update_interval: i64,
     pub last_update_ts: i64,
     pub tag: [u8; 32],
     pub admin: [u8; 32],
@@ -75,7 +73,6 @@ impl Vault {
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
         max_change_bps: u16,
-        min_update_interval: i64,
         private: bool,
         access_merkle_root: [u8; 32],
         bump: u8,
@@ -86,7 +83,6 @@ impl Vault {
             performance_fee_bps,
             withdrawal_buffer_bps,
             max_change_bps,
-            min_update_interval,
         )?;
         base_oracle
             .validate()
@@ -97,10 +93,8 @@ impl Vault {
         Ok(Self {
             base_oracle,
             total_assets: 0,
-            total_shares: 0,
             pending_withdrawal_assets: 0,
             high_watermark: 0,
-            min_update_interval,
             last_update_ts: 0,
             tag,
             admin,
@@ -134,13 +128,12 @@ impl Vault {
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
         max_change_bps: u16,
-        min_update_interval: i64,
     ) -> ProgramResult {
         validate_percentage_bps(performance_fee_bps)?;
         validate_percentage_bps(withdrawal_buffer_bps)?;
         validate_percentage_bps(max_change_bps)?;
 
-        if min_update_interval < 0 || base_mint == share_mint {
+        if base_mint == share_mint {
             return Err(ProgramError::InvalidArgument);
         }
 
@@ -279,7 +272,6 @@ impl Vault {
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
             self.max_change_bps,
-            self.min_update_interval,
         )?;
         self.base_oracle
             .validate()
@@ -343,7 +335,6 @@ mod tests {
             100,
             250,
             500,
-            60,
             private,
             access_merkle_root,
             bump,
@@ -368,13 +359,11 @@ mod tests {
         assert_eq!(vault.withdraw_sub_account, 8);
         assert_eq!(vault.fee_collector, [9; 32]);
         assert_eq!(vault.total_assets, 0);
-        assert_eq!(vault.total_shares, 0);
         assert_eq!(vault.pending_withdrawal_assets, 0);
         assert_eq!(vault.high_watermark, 0);
         assert_eq!(vault.performance_fee_bps, 100);
         assert_eq!(vault.withdrawal_buffer_bps, 250);
         assert_eq!(vault.max_change_bps, 500);
-        assert_eq!(vault.min_update_interval, 60);
         assert_eq!(vault.last_update_ts, 0);
         assert_eq!(vault.deposits_paused(), Ok(false));
         assert_eq!(vault.withdrawals_paused(), Ok(false));
@@ -405,8 +394,8 @@ mod tests {
         let vault = new_test_vault(false, [0; 32]);
 
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 552);
-        assert_eq!(Vault::SPACE, 553);
+        assert_eq!(core::mem::size_of::<Vault>(), 536);
+        assert_eq!(Vault::SPACE, 537);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()
@@ -497,23 +486,15 @@ mod tests {
     #[test]
     fn validate_config_rejects_invalid_bps() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [2; 32], 10_001, 0, 0, 0),
+            Vault::validate_config([1; 32], [2; 32], 10_001, 0, 0),
             Err(error) if error == ProgramError::from(RoshiError::InvalidBps)
-        ));
-    }
-
-    #[test]
-    fn validate_config_rejects_negative_min_update_interval() {
-        assert!(matches!(
-            Vault::validate_config([1; 32], [2; 32], 0, 0, 0, -1),
-            Err(ProgramError::InvalidArgument)
         ));
     }
 
     #[test]
     fn validate_config_rejects_matching_base_and_share_mints() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [1; 32], 0, 0, 0, 0),
+            Vault::validate_config([1; 32], [1; 32], 0, 0, 0),
             Err(ProgramError::InvalidArgument)
         ));
     }

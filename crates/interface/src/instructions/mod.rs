@@ -59,6 +59,7 @@ roshi_instructions! {
     RevokeAction = 3 => RevokeActionArgs,
     Manage = 4 => ManageArgs,
     ManageBatch = 5 => ManageBatchArgs,
+    ReportNav = 6 => ReportNavArgs,
     Deposit = 7 => DepositArgs,
     Redeem = 8 => RedeemArgs,
     CancelRedeem = 9 => CancelRedeemArgs,
@@ -101,7 +102,6 @@ mod tests {
 
     #[test]
     fn instruction_tag_rejects_unknown_values() {
-        assert_eq!(RoshiInstructionTag::try_from(6), Err(()));
         assert_eq!(RoshiInstructionTag::try_from(255), Err(()));
     }
 

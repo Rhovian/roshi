@@ -24,7 +24,6 @@ pub struct InitializeVaultArgs {
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
-    pub min_update_interval: i64,
     pub private: bool,
     pub access_merkle_root: [u8; 32],
 }
@@ -79,6 +78,12 @@ pub struct CancelRedeemArgs {
 pub struct ProcessWithdrawalsArgs;
 
 #[derive(SchemaWrite, SchemaRead)]
+pub struct ReportNavArgs {
+    pub total_assets: u64,
+    pub report_hash: [u8; 32],
+}
+
+#[derive(SchemaWrite, SchemaRead)]
 pub struct UpdateVaultConfigArgs {
     pub fee_collector: [u8; 32],
     pub deposit_sub_account: u8,
@@ -87,7 +92,6 @@ pub struct UpdateVaultConfigArgs {
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub max_change_bps: u16,
-    pub min_update_interval: i64,
 }
 
 #[derive(SchemaWrite, SchemaRead)]

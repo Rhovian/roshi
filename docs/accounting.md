@@ -11,12 +11,10 @@ The vault stores:
 ```rust
 total_assets: u64,
 last_report_hash: [u8; 32],
-total_shares: u64,
 high_watermark: u64,
 performance_fee_bps: u16,
 withdrawal_buffer_bps: u16,
 max_change_bps: u16,
-min_update_interval: i64,
 last_update_ts: i64,
 ```
 
@@ -25,7 +23,8 @@ last_update_ts: i64,
 `last_report_hash` is the commitment to the private NAV report bundle behind
 the last accepted NAV update.
 
-`total_shares` is the total supply of vault shares tracked by the vault.
+The total supply of vault shares is the SPL share mint's `supply` field. Roshi
+does not mirror that value in vault state.
 
 `high_watermark` is the highest fee-adjusted share price previously observed.
 It is used for performance fee accounting.
@@ -33,7 +32,7 @@ It is used for performance fee accounting.
 `withdrawal_buffer_bps` is the target percentage of total assets to keep idle in
 withdrawal custody for queued settlement.
 
-`max_change_bps` and `min_update_interval` bound NAV updates.
+`max_change_bps` bounds NAV updates.
 
 ## Supported Assets
 
@@ -88,7 +87,7 @@ commitment model.
 NAV authority calls:
 
 ```rust
-UpdateTotalAssets {
+ReportNav {
     total_assets,
     report_hash,
 }
@@ -97,12 +96,12 @@ UpdateTotalAssets {
 The program should:
 
 - verify the caller is the vault `nav_authority`,
-- enforce `min_update_interval`,
-- enforce `max_change_bps`,
+- reject an all-zero `report_hash`,
+- enforce `max_change_bps` after the first accepted report,
 - store `total_assets`, `last_report_hash`, and `last_update_ts`.
 
 The update should fail if arithmetic overflows or if the NAV change exceeds the
-configured guardrail.
+configured guardrail after a baseline report has been accepted.
 
 ## Share Price
 
@@ -119,14 +118,15 @@ base decimals and 9 share decimals.
 Share price is the ratio between base atoms and share atoms:
 
 ```text
-share_price = total_assets / total_shares
+share_price = total_assets / share_mint.supply
 ```
 
-Handlers should not compute this as floating point. They should use checked
-integer multiplication and division through the common math helpers.
+Share price is not stored directly. Handlers should not compute it as floating
+point; they should derive it from `total_assets` and the SPL share mint supply
+through the checked integer math helpers.
 
-When `total_shares == 0`, the first depositor initializes the share base from
-the deposit's base atoms and the vault base mint decimals:
+When `share_mint.supply == 0`, the first depositor initializes the share base
+from the deposit's base atoms and the vault base mint decimals:
 
 ```text
 initial_shares = floor(base_atoms * 10^SHARE_DECIMALS / 10^base_decimals)
@@ -149,7 +149,7 @@ amount into base atoms.
 If the vault already has shares:
 
 ```text
-shares_to_mint = floor(base_atoms * total_shares / total_assets)
+shares_to_mint = floor(base_atoms * share_mint.supply / total_assets)
 ```
 
 If the vault has no shares:
@@ -171,7 +171,6 @@ The deposit flow should:
   oracle to compute `base_atoms`,
 - mint or otherwise account shares to the user,
 - increase `total_assets` by `base_atoms`,
-- increase `total_shares` by `shares_to_mint`,
 - enforce `min_shares_out`.
 
 Deposits should not change share price except for integer rounding. Deposits
@@ -182,7 +181,7 @@ that round to zero shares should fail.
 Redeems burn shares at the current share price.
 
 ```text
-assets_out = floor(shares * total_assets / total_shares)
+assets_out = floor(shares * total_assets / share_mint.supply)
 ```
 
 The redeem flow should:
@@ -191,7 +190,6 @@ The redeem flow should:
 - not require private-vault allowlist membership,
 - enforce `min_assets_out`,
 - burn or otherwise account the user's shares,
-- reduce `total_shares` by `shares`,
 - reduce `total_assets` by `assets_out`,
 - create a withdrawal ticket for later settlement from liquidity owned by
   `vault.withdraw_sub_account`.
@@ -216,8 +214,6 @@ capacity.
 
 ## Guardrails
 
-`min_update_interval` prevents rapid repeated NAV updates.
-
 `max_change_bps` caps the magnitude of a single NAV update. A typical check is:
 
 ```text
@@ -226,8 +222,8 @@ max_delta = floor(old_total_assets * max_change_bps / 10_000)
 delta <= max_delta
 ```
 
-The first NAV update, zero-asset edge cases, and admin recovery paths should be
-handled explicitly in implementation.
+The first NAV update establishes the baseline. The all-zero report hash is
+reserved for "no accepted report yet".
 
 ## Fees
 
@@ -259,12 +255,12 @@ crystallization can be inserted without changing user-facing share semantics.
   update.
 - `last_report_hash` commits to the private report bundle for the last accepted
   NAV update.
-- `total_shares` changes only when shares are minted or burned.
+- Share mint supply changes only when shares are minted or burned.
 - Share accounting uses fixed 9-decimal share atoms.
 - Deposits increase both assets and shares proportionally after normalization to
   base atoms.
 - Redeems decrease both assets and shares proportionally.
-- NAV updates must respect `min_update_interval` and `max_change_bps`.
+- NAV updates must respect `max_change_bps`.
 - Withdrawal tickets represent assets already removed from share accounting.
 - Custody token account balances are the payment source of truth for queued
   withdrawal settlement.

@@ -66,7 +66,6 @@ pub struct VaultBuilder {
     performance_fee_bps: u16,
     withdrawal_buffer_bps: u16,
     max_change_bps: u16,
-    min_update_interval: i64,
     private: bool,
     access_merkle_root: [u8; 32],
     roles: VaultRoles,
@@ -86,7 +85,6 @@ impl Default for VaultBuilder {
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
             max_change_bps: 500,
-            min_update_interval: 60,
             private: false,
             access_merkle_root: [0; 32],
             roles: VaultRoles::generate(),
@@ -147,11 +145,6 @@ impl VaultBuilder {
         self
     }
 
-    pub fn min_update_interval(mut self, min_update_interval: i64) -> Self {
-        self.min_update_interval = min_update_interval;
-        self
-    }
-
     /// Mark the vault private and set its access Merkle root.
     pub fn private(mut self, private: bool, access_merkle_root: [u8; 32]) -> Self {
         self.private = private;
@@ -191,7 +184,6 @@ impl VaultBuilder {
             performance_fee_bps: self.performance_fee_bps,
             withdrawal_buffer_bps: self.withdrawal_buffer_bps,
             max_change_bps: self.max_change_bps,
-            min_update_interval: self.min_update_interval,
             private: self.private,
             access_merkle_root: self.access_merkle_root,
         }
@@ -264,7 +256,6 @@ impl VaultBuilder {
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
             self.max_change_bps,
-            self.min_update_interval,
             self.private,
             self.access_merkle_root,
             bump,

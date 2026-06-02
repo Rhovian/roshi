@@ -43,9 +43,7 @@ fn test_initialize_vault() {
     assert_eq!(state.performance_fee_bps, 100);
     assert_eq!(state.withdrawal_buffer_bps, 250);
     assert_eq!(state.max_change_bps, 500);
-    assert_eq!(state.min_update_interval, 60);
     assert_eq!(state.total_assets, 0);
-    assert_eq!(state.total_shares, 0);
     assert_eq!(state.private(), Ok(true));
     assert_eq!(state.access_merkle_root, [7; 32]);
 }

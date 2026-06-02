@@ -7,6 +7,7 @@ mod asset;
 mod deposit;
 mod initialize_vault;
 mod manage;
+mod nav_reporting;
 mod program;
 mod redeem;
 mod role_authorities;

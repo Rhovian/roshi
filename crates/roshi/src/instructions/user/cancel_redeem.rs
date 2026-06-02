@@ -31,10 +31,11 @@ pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> Pr
         return Err(RoshiError::Overflow.into());
     }
 
-    let shares_to_mint = if vault.total_assets == 0 && vault.total_shares == 0 {
+    let share_supply = token::mint_supply(context.share_mint)?;
+    let shares_to_mint = if vault.total_assets == 0 && share_supply == 0 {
         ticket.shares_burned
     } else {
-        shares_for_deposit(ticket.assets_owed, vault.total_assets, vault.total_shares)?
+        shares_for_deposit(ticket.assets_owed, vault.total_assets, share_supply)?
     };
     if shares_to_mint < args.min_shares_out {
         return Err(RoshiError::SlippageExceeded.into());
@@ -62,10 +63,6 @@ pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> Pr
         vault.total_assets = vault
             .total_assets
             .checked_add(ticket.assets_owed)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
-        vault.total_shares = vault
-            .total_shares
-            .checked_add(shares_to_mint)
             .ok_or(ProgramError::from(RoshiError::Overflow))?;
         Ok(())
     })

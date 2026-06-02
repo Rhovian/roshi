@@ -1,6 +1,6 @@
 use roshi_interface::instructions::{
-    InitializeVaultArgs, ProcessWithdrawalsArgs, SetNavAuthorityArgs, SetPauseFlagsArgs,
-    SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    InitializeVaultArgs, ProcessWithdrawalsArgs, ReportNavArgs, SetNavAuthorityArgs,
+    SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
 };
 use solana_instruction::{AccountMeta, Instruction};
@@ -144,6 +144,24 @@ pub fn update_vault_config(
     args: UpdateVaultConfigArgs,
 ) -> Result<Instruction> {
     new(vault_admin_accounts(admin, vault), &args)
+}
+
+pub fn report_nav(
+    nav_authority: Pubkey,
+    vault: Pubkey,
+    total_assets: u64,
+    report_hash: [u8; 32],
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(nav_authority, true),
+            AccountMeta::new(vault, false),
+        ],
+        &ReportNavArgs {
+            total_assets,
+            report_hash,
+        },
+    )
 }
 
 pub fn process_withdrawals(

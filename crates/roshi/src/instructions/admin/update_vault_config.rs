@@ -11,7 +11,7 @@ use crate::instructions::{accounts::update_writable_vault_as_admin, UpdateVaultC
 /// 1. `[writable]` Vault account being reconfigured.
 ///
 /// Verifies the vault admin and atomically replaces mutable non-RBAC config:
-/// fee collector, base oracle, default subaccounts, fee settings, and NAV
+/// fee collector, base oracle, default subaccounts, fee settings, and NAV change
 /// guardrails. RBAC authorities are intentionally handled by explicit
 /// `Set*Authority` and transfer instructions. Pause flags are intentionally
 /// handled by `SetPauseFlags`; access mode and Merkle root by `SetVaultAccess`.
@@ -29,7 +29,6 @@ pub fn try_update_vault_config(
         vault.performance_fee_bps = args.performance_fee_bps;
         vault.withdrawal_buffer_bps = args.withdrawal_buffer_bps;
         vault.max_change_bps = args.max_change_bps;
-        vault.min_update_interval = args.min_update_interval;
         Ok(())
     })
 }
