@@ -14,8 +14,8 @@ use roshi::{
 };
 use solana_instruction::{error::InstructionError, Instruction};
 use solana_pubkey::Pubkey;
-use solana_sdk::{signature::Keypair, signer::Signer};
-use wincode::deserialize;
+use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
+use wincode::{deserialize, serialize};
 
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, fund, mint_supply, send, send_ok, set_ata,
@@ -119,6 +119,58 @@ fn load_ticket(svm: &LiteSVM, ticket: Pubkey) -> WithdrawalTicket {
     ticket
 }
 
+fn write_vault_state(
+    svm: &mut LiteSVM,
+    fixture: &RedeemFixture,
+    state: roshi::state::vault::Vault,
+) {
+    svm.set_account(
+        fixture.vault.address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
+            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
+            owner: roshi::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
+fn cancel_redeem_ix(fixture: &RedeemFixture, ticket: Pubkey) -> Instruction {
+    cancel_redeem_ix_with_min_shares(fixture, ticket, 0)
+}
+
+fn cancel_redeem_ix_with_min_shares(
+    fixture: &RedeemFixture,
+    ticket: Pubkey,
+    min_shares_out: u64,
+) -> Instruction {
+    roshi_client::instruction::cancel_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        ticket,
+        fixture.share_mint,
+        fixture.share_account,
+        min_shares_out,
+    )
+    .unwrap()
+}
+
+fn write_ticket(svm: &mut LiteSVM, ticket_key: Pubkey, ticket: WithdrawalTicket) {
+    svm.set_account(
+        ticket_key,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(WithdrawalTicket::SPACE),
+            data: serialize(&RoshiAccount::WithdrawalTicket(ticket)).unwrap(),
+            owner: roshi::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
 #[test]
 fn test_redeem_burns_shares_and_queues_ticket() {
     let Some((mut svm, ..)) = setup_program() else {
@@ -144,6 +196,7 @@ fn test_redeem_burns_shares_and_queues_ticket() {
     let assets_owed = ONE_BASE / 2;
     let queued = load_ticket(&svm, ticket);
     assert_eq!(queued.vault, fixture.vault.address.to_bytes());
+    assert_eq!(queued.owner, fixture.owner.pubkey().to_bytes());
     assert_eq!(queued.recipient_token_account, fixture.recipient.to_bytes());
     assert_eq!(queued.ticket_index, 0);
     assert_eq!(queued.request_epoch, 1);
@@ -156,6 +209,292 @@ fn test_redeem_burns_shares_and_queues_ticket() {
     assert_eq!(state.total_shares, ONE_BASE_SHARES - shares);
     assert_eq!(state.total_assets, ONE_BASE - assets_owed);
     assert_eq!(state.pending_withdrawal_assets, assets_owed);
+}
+
+#[test]
+fn test_cancel_redeem_reenters_at_current_nav_and_closes_ticket() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let shares = ONE_BASE_SHARES / 2;
+    let assets_owed = ONE_BASE / 2;
+    let (ticket, redeem) = redeem_ix(&fixture, 0, shares, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    // Simulate gains in the active vault while the withdrawal is pending.
+    let mut state = fixture.vault.load(&svm);
+    state.total_assets = ONE_BASE;
+    write_vault_state(&mut svm, &fixture, state);
+
+    send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
+
+    // The pending claim re-enters at current active NAV:
+    // floor(500k assets * 500M active shares / 1M active assets) = 250M.
+    let reminted = shares / 2;
+    assert_eq!(
+        token_balance(&svm, &fixture.share_account),
+        ONE_BASE_SHARES - shares + reminted
+    );
+    assert_eq!(
+        mint_supply(&svm, &fixture.share_mint),
+        ONE_BASE_SHARES - shares + reminted
+    );
+
+    let state = fixture.vault.load(&svm);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.total_assets, ONE_BASE + assets_owed);
+    assert_eq!(state.total_shares, ONE_BASE_SHARES - shares + reminted);
+    assert!(svm.get_account(&ticket).is_none());
+}
+
+#[test]
+fn test_cancel_redeem_restores_burned_shares_when_no_active_holders_remain() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
+
+    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
+    assert_eq!(mint_supply(&svm, &fixture.share_mint), ONE_BASE_SHARES);
+
+    let state = fixture.vault.load(&svm);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.total_shares, ONE_BASE_SHARES);
+    assert!(svm.get_account(&ticket).is_none());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_non_owner() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let outsider = Keypair::new();
+    fund(&mut svm, &outsider);
+    let ix = roshi_client::instruction::cancel_redeem(
+        outsider.pubkey(),
+        fixture.vault.address,
+        ticket,
+        fixture.share_mint,
+        fixture.share_account,
+        0,
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &outsider),
+        RoshiError::InvalidWithdrawalTicketAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_below_min_shares_out() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            cancel_redeem_ix_with_min_shares(&fixture, ticket, ONE_BASE_SHARES),
+            &fixture.owner,
+        ),
+        RoshiError::SlippageExceeded,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_share_destination_for_wrong_mint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let wrong_mint = Pubkey::new_unique();
+    set_mint(&mut svm, wrong_mint, &fixture.vault.address, 9);
+    let wrong_share_dest = set_ata(&mut svm, &fixture.owner.pubkey(), &wrong_mint, 0);
+    let ix = roshi_client::instruction::cancel_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        ticket,
+        fixture.share_mint,
+        wrong_share_dest,
+        0,
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.owner),
+        RoshiError::InvalidTokenAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_share_destination_for_wrong_owner() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let other_owner = Pubkey::new_unique();
+    let wrong_share_dest = set_ata(&mut svm, &other_owner, &fixture.share_mint, 0);
+    let ix = roshi_client::instruction::cancel_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        ticket,
+        fixture.share_mint,
+        wrong_share_dest,
+        0,
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.owner),
+        RoshiError::InvalidTokenAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_wrong_ticket_pda() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let wrong_ticket = Pubkey::new_unique();
+    let ix = roshi_client::instruction::cancel_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        wrong_ticket,
+        fixture.share_mint,
+        fixture.share_account,
+        0,
+    )
+    .unwrap();
+
+    assert_instruction_error(
+        send(&mut svm, ix, &fixture.owner),
+        InstructionError::IllegalOwner,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_ticket_data_with_mismatched_owner() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let mut ticket = load_ticket(&svm, ticket_key);
+    ticket.owner = Pubkey::new_unique().to_bytes();
+    write_ticket(&mut svm, ticket_key, ticket);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            cancel_redeem_ix(&fixture, ticket_key),
+            &fixture.owner,
+        ),
+        RoshiError::InvalidWithdrawalTicketAccount,
+    );
+    assert!(svm.get_account(&ticket_key).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_ticket_data_with_mismatched_bump() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket_key, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let mut ticket = load_ticket(&svm, ticket_key);
+    ticket.bump = ticket.bump.wrapping_add(1);
+    write_ticket(&mut svm, ticket_key, ticket);
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            cancel_redeem_ix(&fixture, ticket_key),
+            &fixture.owner,
+        ),
+        InstructionError::InvalidSeeds,
+    );
+    assert!(svm.get_account(&ticket_key).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_allowed_while_withdrawals_paused() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2, 0);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    fund(&mut svm, &fixture.vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::set_pause_flags(
+            fixture.vault.roles.admin.pubkey(),
+            fixture.vault.address,
+            false,
+            true,
+            false,
+        )
+        .unwrap(),
+        &fixture.vault.roles.admin,
+    );
+    svm.expire_blockhash();
+
+    send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
+    assert!(svm.get_account(&ticket).is_none());
 }
 
 #[test]

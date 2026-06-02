@@ -32,7 +32,7 @@ pub struct InvalidOracleKind;
 ///
 /// `price_decimals` is the scale of the raw oracle price. A price of `123`
 /// with `price_decimals = 2` represents `1.23`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct SwitchboardOracleConfig {
@@ -63,19 +63,6 @@ impl SwitchboardOracleConfig {
     }
 }
 
-impl Default for SwitchboardOracleConfig {
-    fn default() -> Self {
-        Self {
-            quote_account: [0; 32],
-            queue_account: [0; 32],
-            feed_id: [0; 32],
-            max_age_slots: 0,
-            price_decimals: 0,
-            _padding: [0; 7],
-        }
-    }
-}
-
 /// Pyth pull-oracle configuration stored with the asset it prices.
 ///
 /// `feed_id` is the 32-byte Pyth price feed id expected inside the submitted
@@ -84,7 +71,7 @@ impl Default for SwitchboardOracleConfig {
 /// `price_decimals = 8` is returned as `123456789`.
 ///
 /// `max_confidence_bps = 0` disables the confidence-width guardrail.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct PythOracleConfig {
@@ -107,18 +94,6 @@ impl PythOracleConfig {
             max_age_seconds,
             max_confidence_bps,
             price_decimals,
-            _padding: [0; 5],
-        }
-    }
-}
-
-impl Default for PythOracleConfig {
-    fn default() -> Self {
-        Self {
-            feed_id: [0; 32],
-            max_age_seconds: 0,
-            max_confidence_bps: 0,
-            price_decimals: 0,
             _padding: [0; 5],
         }
     }
@@ -278,8 +253,10 @@ mod tests {
 
     #[test]
     fn oracle_config_rejects_invalid_kind() {
-        let mut config = OracleConfig::default();
-        config.kind = 255;
+        let config = OracleConfig {
+            kind: 255,
+            ..OracleConfig::default()
+        };
 
         assert_eq!(config.kind(), Err(InvalidOracleKind));
         assert_eq!(config.validate(), Err(InvalidOracleKind));

@@ -25,6 +25,7 @@ use roshi_interface::error::RoshiError;
 /// a different discriminator layout or explicit alignment handling first.
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
+#[allow(clippy::large_enum_variant)]
 pub enum Account {
     #[wincode(tag = 0)]
     ProgramConfig(ProgramConfig),

@@ -8,13 +8,13 @@ use crate::{
             try_transfer_vault_authority, try_update_asset, try_update_vault_config,
         },
         execution::{try_manage, try_manage_batch},
-        user::{try_deposit, try_redeem},
-        AuthorizeActionArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
-        InitializeVaultArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs,
-        RevokeActionArgs, RoshiInstructionTag, SetNavAuthorityArgs, SetPauseFlagsArgs,
-        SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-        TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
-        UpdateVaultConfigArgs,
+        user::{try_cancel_redeem, try_deposit, try_redeem},
+        AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
+        InitializeProgramArgs, InitializeVaultArgs, ManageArgs, ManageBatchArgs,
+        ProcessWithdrawalsArgs, RedeemArgs, RevokeActionArgs, RoshiInstructionTag,
+        SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+        SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+        UpdateAssetArgs, UpdateVaultConfigArgs,
     },
     ID,
 };
@@ -94,6 +94,9 @@ fn try_process_instruction<'info>(
         }
         RoshiInstructionTag::Redeem => {
             decode_and_process!(try_redeem, accounts, payload, RedeemArgs)
+        }
+        RoshiInstructionTag::CancelRedeem => {
+            decode_and_process!(try_cancel_redeem, accounts, payload, CancelRedeemArgs)
         }
         RoshiInstructionTag::ProcessWithdrawals => {
             decode_and_process!(

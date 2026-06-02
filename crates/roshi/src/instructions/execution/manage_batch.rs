@@ -11,7 +11,7 @@ use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 /// 0. `[signer]` Vault strategist.
 /// 1. `[]` Vault account.
 /// 2. `..` Repeated `(subaccount PDA, Action PDA)` pairs, one per action.
-/// N. `..` Shared CPI account section after all pairs.
+///    N. `..` Shared CPI account section after all pairs.
 ///
 /// # Implementation
 ///

@@ -60,6 +60,7 @@ impl Vault {
     pub const MAX_TAG_LEN: usize = 32;
     pub const SPACE: usize = std::mem::size_of::<Self>() + 1;
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tag: &[u8],
         admin: [u8; 32],

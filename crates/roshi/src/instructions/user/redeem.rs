@@ -56,6 +56,7 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
 
     let ticket = WithdrawalTicket::new(
         context.vault_account.key.to_bytes(),
+        context.owner.key.to_bytes(),
         context.recipient_token_account.key.to_bytes(),
         args.ticket_index,
         vault.current_withdrawal_epoch,

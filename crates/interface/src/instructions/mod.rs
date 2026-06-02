@@ -61,6 +61,7 @@ roshi_instructions! {
     ManageBatch = 5 => ManageBatchArgs,
     Deposit = 7 => DepositArgs,
     Redeem = 8 => RedeemArgs,
+    CancelRedeem = 9 => CancelRedeemArgs,
     ProcessWithdrawals = 10 => ProcessWithdrawalsArgs,
     UpdateVaultConfig = 11 => UpdateVaultConfigArgs,
     InitializeAsset = 12 => InitializeAssetArgs,
@@ -101,7 +102,6 @@ mod tests {
     #[test]
     fn instruction_tag_rejects_unknown_values() {
         assert_eq!(RoshiInstructionTag::try_from(6), Err(()));
-        assert_eq!(RoshiInstructionTag::try_from(9), Err(()));
         assert_eq!(RoshiInstructionTag::try_from(255), Err(()));
     }
 

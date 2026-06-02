@@ -71,6 +71,11 @@ pub struct RedeemArgs {
 }
 
 #[derive(SchemaWrite, SchemaRead)]
+pub struct CancelRedeemArgs {
+    pub min_shares_out: u64,
+}
+
+#[derive(SchemaWrite, SchemaRead)]
 pub struct ProcessWithdrawalsArgs;
 
 #[derive(SchemaWrite, SchemaRead)]

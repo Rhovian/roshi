@@ -8,6 +8,7 @@ pub const WITHDRAWAL_TICKET_COUNT: u16 = 256;
 #[repr(C)]
 pub struct WithdrawalTicket {
     pub vault: [u8; 32],
+    pub owner: [u8; 32],
     pub recipient_token_account: [u8; 32],
     pub request_epoch: u64,
     pub shares_burned: u64,
@@ -21,8 +22,10 @@ impl WithdrawalTicket {
     pub const SEED: &'static [u8] = b"ticket";
     pub const SPACE: usize = std::mem::size_of::<Self>() + 1;
 
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         vault: [u8; 32],
+        owner: [u8; 32],
         recipient_token_account: [u8; 32],
         ticket_index: u8,
         request_epoch: u64,
@@ -32,6 +35,7 @@ impl WithdrawalTicket {
     ) -> Self {
         Self {
             vault,
+            owner,
             recipient_token_account,
             request_epoch,
             shares_burned,
@@ -87,11 +91,11 @@ mod tests {
 
     #[test]
     fn withdrawal_ticket_is_zero_copy_with_explicit_padding() {
-        let ticket = WithdrawalTicket::new([1; 32], [2; 32], 3, 4, 5, 6, 7);
+        let ticket = WithdrawalTicket::new([1; 32], [2; 32], [3; 32], 4, 5, 6, 7, 8);
 
         assert_zero_copy::<WithdrawalTicket>();
-        assert_eq!(core::mem::size_of::<WithdrawalTicket>(), 96);
-        assert_eq!(WithdrawalTicket::SPACE, 97);
+        assert_eq!(core::mem::size_of::<WithdrawalTicket>(), 128);
+        assert_eq!(WithdrawalTicket::SPACE, 129);
         assert_eq!(
             serialize(&ticket).unwrap().len(),
             core::mem::size_of::<WithdrawalTicket>()

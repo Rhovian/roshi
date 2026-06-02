@@ -19,6 +19,7 @@ const MINT_DECIMALS: usize = 44;
 const MINT_IS_INITIALIZED: usize = 45;
 const MINT_LEN: usize = 82;
 const TOKEN_ACCOUNT_MINT: usize = 0;
+const TOKEN_ACCOUNT_OWNER: usize = 32;
 const TOKEN_ACCOUNT_STATE: usize = 108;
 const TOKEN_ACCOUNT_LEN: usize = 165;
 
@@ -82,6 +83,25 @@ pub(crate) fn verify_token_account_mint(
     let mint = Pubkey::try_from(&data[TOKEN_ACCOUNT_MINT..TOKEN_ACCOUNT_MINT + 32])
         .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
     if &mint != expected_mint {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
+/// Verify `account` is an initialized SPL token account for `expected_mint`
+/// owned by `expected_owner`.
+pub(crate) fn verify_token_account_mint_and_owner(
+    account: &AccountInfo,
+    expected_mint: &Pubkey,
+    expected_owner: &Pubkey,
+) -> ProgramResult {
+    verify_token_account_mint(account, expected_mint)?;
+
+    let data = account.try_borrow_data()?;
+    let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &owner != expected_owner {
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 

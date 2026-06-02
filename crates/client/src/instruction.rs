@@ -24,11 +24,11 @@ mod tests {
     use roshi_interface::{
         action::Ops,
         instructions::{
-            AuthorizeActionArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
-            InitializeVaultArgs, InstructionArgs, ManageArgs, RedeemArgs, RevokeActionArgs,
-            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-            SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-            UpdateAssetArgs, UpdateVaultConfigArgs,
+            AuthorizeActionArgs, CancelRedeemArgs, DepositArgs, InitializeAssetArgs,
+            InitializeProgramArgs, InitializeVaultArgs, InstructionArgs, ManageArgs, RedeemArgs,
+            RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+            SetVaultAccessArgs, SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs,
+            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -318,6 +318,32 @@ mod tests {
         assert_eq!(args.ticket_index, 7);
         assert_eq!(args.shares, 123);
         assert_eq!(args.min_assets_out, 456);
+    }
+
+    #[test]
+    fn builds_cancel_redeem_instruction() {
+        let owner = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let ticket = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
+        let share_dest = Pubkey::new_unique();
+
+        let ix = cancel_redeem(owner, vault, ticket, share_mint, share_dest, 123).unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts[0], AccountMeta::new(owner, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(ticket, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new(share_mint, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(share_dest, false));
+        assert_eq!(
+            ix.accounts[5],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+
+        let args: CancelRedeemArgs = decode_args(&ix.data);
+        assert_eq!(args.min_shares_out, 123);
     }
 
     #[test]

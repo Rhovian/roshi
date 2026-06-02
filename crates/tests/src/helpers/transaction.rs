@@ -5,7 +5,7 @@ use litesvm::{
 use roshi::error::RoshiError;
 use solana_instruction::{error::InstructionError, Instruction};
 use solana_sdk::{signature::Keypair, signer::Signer, transaction::TransactionError};
-use solana_transaction::{Address, Transaction};
+use solana_transaction::Transaction;
 
 /// Lamports airdropped to a funded test account (10 SOL).
 pub const AIRDROP_LAMPORTS: u64 = 10_000_000_000;
@@ -17,6 +17,7 @@ pub fn fund(svm: &mut LiteSVM, account: &Keypair) {
 }
 
 /// Sign `ix` with `payer` as the fee payer and sole signer, then submit it.
+#[allow(clippy::result_large_err)]
 pub fn send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> TransactionResult {
     send_signed(svm, ix, payer, &[])
 }
@@ -24,6 +25,7 @@ pub fn send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> TransactionR
 /// Like [`send`] but adds `extra_signers` alongside the fee payer. Use when a
 /// required signer is not the fee payer (e.g. a role authority that does not
 /// also pay fees).
+#[allow(clippy::result_large_err)]
 pub fn send_signed(
     svm: &mut LiteSVM,
     ix: Instruction,
@@ -35,12 +37,7 @@ pub fn send_signed(
     signers.extend_from_slice(extra_signers);
 
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&Address::from(payer.pubkey())),
-        &signers,
-        blockhash,
-    );
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &signers, blockhash);
     svm.send_transaction(tx)
 }
 

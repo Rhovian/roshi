@@ -1,4 +1,4 @@
-use roshi_interface::instructions::{DepositArgs, RedeemArgs};
+use roshi_interface::instructions::{CancelRedeemArgs, DepositArgs, RedeemArgs};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 use solana_system_interface::program as system_program;
@@ -70,5 +70,26 @@ pub fn redeem(
             shares,
             min_assets_out,
         },
+    )
+}
+
+pub fn cancel_redeem(
+    owner: Pubkey,
+    vault: Pubkey,
+    withdrawal_ticket: Pubkey,
+    share_mint: Pubkey,
+    owner_share_account: Pubkey,
+    min_shares_out: u64,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(owner, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new(withdrawal_ticket, false),
+            AccountMeta::new(share_mint, false),
+            AccountMeta::new(owner_share_account, false),
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        ],
+        &CancelRedeemArgs { min_shares_out },
     )
 }
