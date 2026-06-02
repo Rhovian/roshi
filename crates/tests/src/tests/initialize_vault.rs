@@ -3,7 +3,8 @@ use solana_instruction::error::InstructionError;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok, setup_program, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_mint, setup_program,
+    VaultBuilder,
 };
 
 #[test]
@@ -99,6 +100,7 @@ fn test_initialize_vault_rejects_reinitialization() {
     let builder = VaultBuilder::new();
     let vault_pda = builder.address().0;
 
+    builder.install_mints(&mut svm);
     send_ok(
         &mut svm,
         builder.instruction(authority.pubkey(), config_pda),
@@ -152,4 +154,84 @@ fn test_initialize_vault_rejects_invalid_fee_bps() {
 
     assert_roshi_error(send(&mut svm, ix, &authority), RoshiError::InvalidBps);
     assert!(svm.get_account(&builder.address().0).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_wrong_share_mint_decimals() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let share_mint = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new()
+        .base_mint(base_mint)
+        .share_mint(share_mint);
+    let vault_pda = builder.address().0;
+
+    // Base mint is fine; the share mint must use 9 decimals.
+    set_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_mint(&mut svm, share_mint, &vault_pda, 8);
+
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+    assert_roshi_error(
+        send(&mut svm, ix, &authority),
+        RoshiError::InvalidMintAccount,
+    );
+    assert!(svm.get_account(&vault_pda).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_wrong_share_mint_authority() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let share_mint = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new()
+        .base_mint(base_mint)
+        .share_mint(share_mint);
+    let vault_pda = builder.address().0;
+
+    // Share mint has the right decimals but is not owned by the vault PDA.
+    set_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_mint(
+        &mut svm,
+        share_mint,
+        &solana_pubkey::Pubkey::new_unique(),
+        9,
+    );
+
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+    assert_roshi_error(
+        send(&mut svm, ix, &authority),
+        RoshiError::InvalidMintAccount,
+    );
+    assert!(svm.get_account(&vault_pda).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_wrong_base_mint_decimals() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let share_mint = solana_pubkey::Pubkey::new_unique();
+    // Vault declares base_decimals = 6 (the builder default).
+    let builder = VaultBuilder::new()
+        .base_mint(base_mint)
+        .share_mint(share_mint);
+    let vault_pda = builder.address().0;
+
+    set_mint(&mut svm, base_mint, &vault_pda, 9); // mismatch vs declared 6
+    set_mint(&mut svm, share_mint, &vault_pda, 9);
+
+    let ix = builder.instruction(authority.pubkey(), config_pda);
+    assert_roshi_error(
+        send(&mut svm, ix, &authority),
+        RoshiError::InvalidMintAccount,
+    );
+    assert!(svm.get_account(&vault_pda).is_none());
 }

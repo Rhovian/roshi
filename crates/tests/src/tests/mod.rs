@@ -4,6 +4,7 @@
 
 mod action;
 mod asset;
+mod deposit;
 mod initialize_vault;
 mod manage;
 mod program;

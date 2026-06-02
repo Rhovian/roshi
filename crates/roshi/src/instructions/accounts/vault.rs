@@ -14,12 +14,13 @@ use super::{
     },
 };
 use crate::{
-    instructions::InitializeVaultArgs,
+    instructions::{token, InitializeVaultArgs},
     state::{
         vault::{Role, Vault},
         Account,
     },
 };
+use roshi_interface::math::SHARE_DECIMALS;
 
 pub(crate) struct VaultRoleContext<'a, 'info> {
     vault_account: &'a AccountInfo<'info>,
@@ -108,6 +109,8 @@ pub(crate) fn update_writable_vault_as_admin(
 pub(crate) struct InitializeVaultContext<'a, 'info> {
     payer: &'a AccountInfo<'info>,
     vault: &'a AccountInfo<'info>,
+    base_mint_account: &'a AccountInfo<'info>,
+    share_mint_account: &'a AccountInfo<'info>,
     system_program_acc: &'a AccountInfo<'info>,
     tag: [u8; Vault::MAX_TAG_LEN],
     tag_len: u8,
@@ -130,6 +133,9 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         let vault = next_account(accounts_iter)?;
         require_uninitialized_account(vault)?;
 
+        let base_mint_account = next_account(accounts_iter)?;
+        let share_mint_account = next_account(accounts_iter)?;
+
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
 
@@ -146,6 +152,8 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         Ok(Self {
             payer,
             vault,
+            base_mint_account,
+            share_mint_account,
             system_program_acc,
             tag,
             tag_len,
@@ -156,6 +164,25 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
 
     pub(crate) fn vault_bump(&self) -> u8 {
         self.vault_bump
+    }
+
+    /// Validate that the base and share mints are real SPL mints: the base mint
+    /// has the declared decimals, and the share mint uses fixed share decimals
+    /// with the vault PDA as its mint authority. These are immutable for the
+    /// vault's lifetime, so they are checked once here.
+    pub(crate) fn verify_mints(&self, args: &InitializeVaultArgs) -> ProgramResult {
+        token::verify_mint(
+            self.base_mint_account,
+            &self.base_mint,
+            args.base_decimals,
+            None,
+        )?;
+        token::verify_mint(
+            self.share_mint_account,
+            &Pubkey::from(args.share_mint),
+            SHARE_DECIMALS,
+            Some(self.vault.key),
+        )
     }
 
     pub(crate) fn create_vault_account(&self) -> ProgramResult {

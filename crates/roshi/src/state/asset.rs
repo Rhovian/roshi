@@ -1,4 +1,4 @@
-use roshi_interface::{error::RoshiError, math::validate_percentage_bps, oracle::OracleConfig};
+use roshi_interface::{error::RoshiError, oracle::OracleConfig};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
@@ -13,20 +13,14 @@ pub struct Asset {
     pub vault: [u8; 32],
     /// Mint of the supported non-base deposit asset.
     pub asset_mint: [u8; 32],
-    /// Token account controlled by the vault for this asset mint.
-    pub custody_token_account: [u8; 32],
     /// Oracle config that reports this asset in vault base atoms.
     pub oracle: OracleConfig,
-    /// Maximum deposit amount in asset atomic units. Zero means unlimited.
-    pub deposit_limit: u64,
-    /// Optional per-asset circuit-breaker for price moves.
-    pub max_price_change_bps: u16,
     /// Asset mint decimals.
     pub asset_decimals: u8,
     /// Whether deposits for this asset are enabled.
     enabled_flag: u8,
     pub bump: u8,
-    _padding: [u8; 3],
+    _padding: [u8; 5],
 }
 
 impl Asset {
@@ -36,15 +30,11 @@ impl Asset {
     pub fn new(
         vault: [u8; 32],
         asset_mint: [u8; 32],
-        custody_token_account: [u8; 32],
         oracle: OracleConfig,
         asset_decimals: u8,
-        max_price_change_bps: u16,
-        deposit_limit: u64,
         enabled: bool,
         bump: u8,
     ) -> Result<Self, ProgramError> {
-        validate_percentage_bps(max_price_change_bps)?;
         oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidAssetAccount))?;
@@ -52,14 +42,11 @@ impl Asset {
         Ok(Self {
             vault,
             asset_mint,
-            custody_token_account,
             oracle,
-            deposit_limit,
-            max_price_change_bps,
             asset_decimals,
             enabled_flag: flags::bool_to_flag(enabled),
             bump,
-            _padding: [0; 3],
+            _padding: [0; 5],
         })
     }
 
@@ -82,7 +69,6 @@ impl Asset {
         self.oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidAssetAccount))?;
-        validate_percentage_bps(self.max_price_change_bps)?;
         flags::validate_flag(self.enabled_flag, RoshiError::InvalidAssetAccount)
     }
 }
@@ -117,18 +103,7 @@ mod tests {
     }
 
     fn test_asset(enabled: bool) -> Asset {
-        Asset::new(
-            [1; 32],
-            [2; 32],
-            [3; 32],
-            OracleConfig::default(),
-            6,
-            250,
-            1_000_000,
-            enabled,
-            7,
-        )
-        .unwrap()
+        Asset::new([1; 32], [2; 32], OracleConfig::default(), 6, enabled, 7).unwrap()
     }
 
     #[test]
@@ -136,8 +111,8 @@ mod tests {
         let asset = test_asset(true);
 
         assert_zero_copy::<Asset>();
-        assert_eq!(core::mem::size_of::<Asset>(), 280);
-        assert_eq!(Asset::SPACE, 281);
+        assert_eq!(core::mem::size_of::<Asset>(), 240);
+        assert_eq!(Asset::SPACE, 241);
         assert_eq!(
             serialize(&asset).unwrap().len(),
             core::mem::size_of::<Asset>()
@@ -174,7 +149,6 @@ mod tests {
         let asset = test_asset(true);
         let mut data = serialize(&Account::Asset(asset)).unwrap();
         let oracle_kind_offset = 1
-            + core::mem::size_of::<[u8; 32]>()
             + core::mem::size_of::<[u8; 32]>()
             + core::mem::size_of::<[u8; 32]>()
             + core::mem::size_of::<roshi_interface::oracle::SwitchboardOracleConfig>()

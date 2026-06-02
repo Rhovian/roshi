@@ -2179,6 +2179,7 @@ dependencies = [
  "litesvm",
  "roshi",
  "roshi-client",
+ "roshi-interface",
  "solana-instruction",
  "solana-pubkey 4.2.0",
  "solana-sdk",

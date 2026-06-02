@@ -87,20 +87,14 @@ pub struct UpdateVaultConfigArgs {
 #[derive(SchemaWrite, SchemaRead)]
 pub struct InitializeAssetArgs {
     pub asset_mint: [u8; 32],
-    pub custody_token_account: [u8; 32],
     pub oracle: OracleConfig,
     pub asset_decimals: u8,
-    pub max_price_change_bps: u16,
-    pub deposit_limit: u64,
     pub enabled: bool,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 pub struct UpdateAssetArgs {
-    pub custody_token_account: [u8; 32],
     pub oracle: OracleConfig,
-    pub max_price_change_bps: u16,
-    pub deposit_limit: u64,
     pub enabled: bool,
 }
 

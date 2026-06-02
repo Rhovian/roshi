@@ -5,6 +5,7 @@ edition = "2021"
 
 [dev-dependencies]
 roshi = { path = "../roshi", default-features = false }
+roshi-interface = { path = "../interface" }
 roshi-client = { path = "../client" }
 litesvm = "0.12"
 solana-instruction = "3.4.0"

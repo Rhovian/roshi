@@ -61,12 +61,16 @@ pub fn initialize_vault(
     vault: Pubkey,
     args: InitializeVaultArgs,
 ) -> Result<Instruction> {
+    let base_mint = Pubkey::from(args.base_mint);
+    let share_mint = Pubkey::from(args.share_mint);
     new(
         vec![
             AccountMeta::new_readonly(program_authority, true),
             AccountMeta::new_readonly(program_config, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(base_mint, false),
+            AccountMeta::new_readonly(share_mint, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         &args,
@@ -260,12 +264,18 @@ pub fn manage_batch(
     new(accounts, &ManageBatchArgs { actions })
 }
 
+/// SPL Token program id (classic).
+pub const TOKEN_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+
+#[allow(clippy::too_many_arguments)]
 pub fn deposit(
     depositor: Pubkey,
     vault: Pubkey,
     user_source_token_account: Pubkey,
     vault_custody_token_account: Pubkey,
     user_share_account: Pubkey,
+    share_mint: Pubkey,
     asset_mint: Pubkey,
     amount: u64,
     min_shares_out: u64,
@@ -278,6 +288,8 @@ pub fn deposit(
         AccountMeta::new(user_source_token_account, false),
         AccountMeta::new(vault_custody_token_account, false),
         AccountMeta::new(user_share_account, false),
+        AccountMeta::new(share_mint, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
     ];
     accounts.extend(additional_accounts);
 
@@ -399,7 +411,7 @@ mod tests {
         let ix = initialize_vault(program_authority, program_config, payer, vault, args).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 5);
+        assert_eq!(ix.accounts.len(), 7);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(program_authority, true)
@@ -410,8 +422,10 @@ mod tests {
         );
         assert_eq!(ix.accounts[2], AccountMeta::new(payer, true));
         assert_eq!(ix.accounts[3], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new_readonly(base_mint, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new_readonly(share_mint, false));
         assert_eq!(
-            ix.accounts[4],
+            ix.accounts[6],
             AccountMeta::new_readonly(system_program::ID, false)
         );
 
@@ -531,6 +545,7 @@ mod tests {
         let source = Pubkey::new_unique();
         let custody = Pubkey::new_unique();
         let shares = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
         let asset_mint = Pubkey::new_unique();
         let asset_pda = Pubkey::new_unique();
         let proof = vec![[1; 32], [2; 32]];
@@ -541,6 +556,7 @@ mod tests {
             source,
             custody,
             shares,
+            share_mint,
             asset_mint,
             123,
             456,
@@ -550,13 +566,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts.len(), 8);
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(depositor, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[2], AccountMeta::new(source, false));
         assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
         assert_eq!(ix.accounts[4], AccountMeta::new(shares, false));
-        assert_eq!(ix.accounts[5], AccountMeta::new_readonly(asset_pda, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new(share_mint, false));
+        assert_eq!(
+            ix.accounts[6],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+        assert_eq!(ix.accounts[7], AccountMeta::new_readonly(asset_pda, false));
 
         let args: DepositArgs = decode_args(&ix.data);
         assert_eq!(args.asset_mint, asset_mint.to_bytes());
@@ -630,14 +651,10 @@ mod tests {
         let vault = Pubkey::new_unique();
         let asset = Pubkey::new_unique();
         let asset_mint = Pubkey::new_unique();
-        let custody = Pubkey::new_unique();
         let args = InitializeAssetArgs {
             asset_mint: asset_mint.to_bytes(),
-            custody_token_account: custody.to_bytes(),
             oracle: roshi_interface::oracle::OracleConfig::default(),
             asset_decimals: 9,
-            max_price_change_bps: 250,
-            deposit_limit: 1_000_000,
             enabled: true,
         };
 
@@ -655,7 +672,6 @@ mod tests {
 
         let args: InitializeAssetArgs = decode_args(&ix.data);
         assert_eq!(args.asset_mint, asset_mint.to_bytes());
-        assert_eq!(args.custody_token_account, custody.to_bytes());
         assert_eq!(args.asset_decimals, 9);
         assert!(args.enabled);
     }
@@ -665,12 +681,8 @@ mod tests {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let asset = Pubkey::new_unique();
-        let custody = Pubkey::new_unique();
         let args = UpdateAssetArgs {
-            custody_token_account: custody.to_bytes(),
             oracle: roshi_interface::oracle::OracleConfig::default(),
-            max_price_change_bps: 300,
-            deposit_limit: 0,
             enabled: false,
         };
 
@@ -683,9 +695,6 @@ mod tests {
         assert_eq!(ix.accounts[2], AccountMeta::new(asset, false));
 
         let args: UpdateAssetArgs = decode_args(&ix.data);
-        assert_eq!(args.custody_token_account, custody.to_bytes());
-        assert_eq!(args.max_price_change_bps, 300);
-        assert_eq!(args.deposit_limit, 0);
         assert!(!args.enabled);
     }
 

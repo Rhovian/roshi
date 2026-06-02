@@ -22,6 +22,9 @@ pub enum RoshiError {
     Overflow = 16,
     ResultDoesNotFit = 17,
     ZeroOutput = 18,
+    SlippageExceeded = 19,
+    InvalidTokenAccount = 20,
+    InvalidMintAccount = 21,
 }
 
 impl From<RoshiError> for ProgramError {

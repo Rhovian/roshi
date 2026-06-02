@@ -49,9 +49,14 @@ macro_rules! decode_and_process {
     }};
 }
 
-fn try_process_instruction(
+// Accounts are pinned to a single `'info` lifetime (reference lifetime tied to
+// the account-data lifetime). `deposit` reads a Switchboard quote, and
+// Switchboard's `QuoteVerifier` requires `&'info AccountInfo<'info>`; the
+// entrypoint hands accounts that satisfy this, but it must be threaded through
+// the dispatcher for the borrow checker to see it.
+fn try_process_instruction<'info>(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &'info [AccountInfo<'info>],
     data: &[u8],
 ) -> ProgramResult {
     if program_id != &ID {

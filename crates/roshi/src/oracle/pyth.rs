@@ -40,9 +40,9 @@ impl PythOracle {
     /// This checks Pyth receiver ownership, parses the `PriceUpdateV2`
     /// account, validates the configured feed id and max age, and returns a
     /// positive fixed-point price at `price_decimals`.
-    pub fn read_verified_price<'info>(
+    pub fn read_verified_price(
         &self,
-        price_update_account: &'info AccountInfo<'info>,
+        price_update_account: &AccountInfo,
         unix_timestamp: i64,
     ) -> Result<OraclePrice, ProgramError> {
         if price_update_account.owner != &SOLANA_RECEIVER_PROGRAM_ID {

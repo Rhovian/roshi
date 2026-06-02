@@ -348,9 +348,20 @@ impl VaultBuilder {
         .unwrap()
     }
 
+    /// Install valid SPL base and share mints for this vault so
+    /// `InitializeVault`'s mint validation passes: the base mint with the
+    /// configured decimals and the share mint with 9 decimals owned by the
+    /// vault PDA.
+    pub fn install_mints(&self, svm: &mut LiteSVM) {
+        let vault_pda = self.address().0;
+        set_mint(svm, self.base_mint, &vault_pda, self.base_decimals);
+        set_mint(svm, self.share_mint, &vault_pda, 9);
+    }
+
     /// Create the vault through the real `InitializeVault` instruction, signed
     /// by the program authority. Panics if the transaction fails.
     pub fn create(self, svm: &mut LiteSVM, authority: &Keypair, config_pda: Pubkey) -> TestVault {
+        self.install_mints(svm);
         let ix = self.instruction(authority.pubkey(), config_pda);
         send_ok(svm, ix, authority);
 
@@ -436,4 +447,129 @@ impl TestVault {
         };
         vault
     }
+}
+
+// ---- SPL token fixtures ----
+//
+// litesvm bundles the SPL Token program, so deposit's CPIs run for real. Token
+// accounts and mints are installed directly via `set_account` with hand-packed
+// state (initialized, no delegate/close/native options), which avoids pulling
+// in the SPL Pack/COption layers just for fixtures.
+
+/// SPL Token program id (classic).
+pub const TOKEN_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Associated Token Account program id.
+pub const ATA_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/// Derive the associated token account address for `(wallet, mint)`.
+pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[wallet.as_ref(), TOKEN_PROGRAM_ID.as_ref(), mint.as_ref()],
+        &ATA_PROGRAM_ID,
+    )
+    .0
+}
+
+/// Install an initialized SPL mint with `authority` as the mint authority.
+pub fn set_mint(svm: &mut LiteSVM, mint: Pubkey, authority: &Pubkey, decimals: u8) {
+    let mut data = vec![0u8; 82];
+    data[0..4].copy_from_slice(&1u32.to_le_bytes()); // mint_authority COption::Some
+    data[4..36].copy_from_slice(authority.as_ref());
+    data[44] = decimals;
+    data[45] = 1; // is_initialized
+    let lamports = svm.minimum_balance_for_rent_exemption(82);
+    svm.set_account(
+        mint,
+        Account {
+            lamports,
+            data,
+            owner: TOKEN_PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
+/// Install an initialized SPL token account holding `amount` of `mint`.
+pub fn set_token_account(
+    svm: &mut LiteSVM,
+    address: Pubkey,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) {
+    let mut data = vec![0u8; 165];
+    data[0..32].copy_from_slice(mint.as_ref());
+    data[32..64].copy_from_slice(owner.as_ref());
+    data[64..72].copy_from_slice(&amount.to_le_bytes());
+    data[108] = 1; // AccountState::Initialized
+    let lamports = svm.minimum_balance_for_rent_exemption(165);
+    svm.set_account(
+        address,
+        Account {
+            lamports,
+            data,
+            owner: TOKEN_PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
+/// Install + fund the ATA for `(owner, mint)`; returns its address.
+pub fn set_ata(svm: &mut LiteSVM, owner: &Pubkey, mint: &Pubkey, amount: u64) -> Pubkey {
+    let address = associated_token_address(owner, mint);
+    set_token_account(svm, address, mint, owner, amount);
+    address
+}
+
+/// Read the `amount` field of an SPL token account.
+pub fn token_balance(svm: &LiteSVM, address: &Pubkey) -> u64 {
+    let account = svm.get_account(address).unwrap();
+    u64::from_le_bytes(account.data[64..72].try_into().unwrap())
+}
+
+/// Pyth Solana Receiver program id (owner of `PriceUpdateV2` accounts).
+pub const PYTH_RECEIVER_ID: Pubkey =
+    solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+
+/// Install a mock fully-verified Pyth `PriceUpdateV2` account (zero confidence)
+/// owned by the Pyth receiver program, matching the layout the program parses.
+pub fn set_pyth_price(
+    svm: &mut LiteSVM,
+    address: Pubkey,
+    feed_id: [u8; 32],
+    price: i64,
+    exponent: i32,
+    publish_time: i64,
+) {
+    let mut data = Vec::with_capacity(133);
+    data.extend_from_slice(&[0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd]); // discriminator
+    data.extend_from_slice(&[0u8; 32]); // write_authority
+    data.push(1); // VerificationLevel::Full
+    data.extend_from_slice(&feed_id);
+    data.extend_from_slice(&price.to_le_bytes());
+    data.extend_from_slice(&0u64.to_le_bytes()); // conf
+    data.extend_from_slice(&exponent.to_le_bytes());
+    data.extend_from_slice(&publish_time.to_le_bytes());
+    data.extend_from_slice(&publish_time.to_le_bytes()); // prev_publish_time
+    data.extend_from_slice(&0i64.to_le_bytes()); // ema_price
+    data.extend_from_slice(&0u64.to_le_bytes()); // ema_conf
+    data.extend_from_slice(&0u64.to_le_bytes()); // posted_slot
+    let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+    svm.set_account(
+        address,
+        Account {
+            lamports,
+            data,
+            owner: PYTH_RECEIVER_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
 }
