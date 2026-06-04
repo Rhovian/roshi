@@ -3,9 +3,11 @@ name = "roshi-client"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+description = "Thin client helpers for building Roshi Solana program instructions."
+repository = "https://github.com/Rhovian/roshi"
 
 [dependencies]
-roshi-interface = { path = "../interface" }
+roshi-interface = { path = "../interface", version = "0.1.0" }
 solana-instruction = "3.4.0"
 solana-pubkey = "4.2.0"
 solana-system-interface = "3.2.0"

@@ -3,6 +3,8 @@ name = "roshi-interface"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+description = "On-chain instruction interface and types for the Roshi Solana program."
+repository = "https://github.com/Rhovian/roshi"
 
 [package.metadata.solana]
 program-id = "Roshi11111111111111111111111111111111111111"
