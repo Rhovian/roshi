@@ -74,7 +74,7 @@ mod tests {
         let payer = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
-        let share_mint = Pubkey::new_unique();
+        let share_mint = roshi_interface::find_share_mint_address(&vault).0;
         let fee_collector = Pubkey::new_unique();
         let args = InitializeVaultArgs {
             tag: [1; 32],
@@ -95,15 +95,7 @@ mod tests {
             access_merkle_root: [2; 32],
         };
 
-        let ix = initialize_vault(
-            program_authority,
-            program_config,
-            payer,
-            vault,
-            share_mint,
-            args,
-        )
-        .unwrap();
+        let ix = initialize_vault(program_authority, program_config, payer, vault, args).unwrap();
 
         assert_eq!(ix.program_id, ID);
         assert_eq!(ix.accounts.len(), 9);
@@ -118,7 +110,7 @@ mod tests {
         assert_eq!(ix.accounts[2], AccountMeta::new(payer, true));
         assert_eq!(ix.accounts[3], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[4], AccountMeta::new_readonly(base_mint, false));
-        assert_eq!(ix.accounts[5], AccountMeta::new(share_mint, true));
+        assert_eq!(ix.accounts[5], AccountMeta::new(share_mint, false));
         assert_eq!(
             ix.accounts[6],
             AccountMeta::new_readonly(fee_collector, false)

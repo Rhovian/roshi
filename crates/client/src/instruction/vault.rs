@@ -15,10 +15,10 @@ pub fn initialize_vault(
     program_config: Pubkey,
     payer: Pubkey,
     vault: Pubkey,
-    share_mint: Pubkey,
     args: InitializeVaultArgs,
 ) -> Result<Instruction> {
     let base_mint = Pubkey::from(args.base_mint);
+    let share_mint = roshi_interface::find_share_mint_address(&vault).0;
     let fee_collector = Pubkey::from(args.fee_collector);
     new(
         vec![
@@ -27,7 +27,7 @@ pub fn initialize_vault(
             AccountMeta::new(payer, true),
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(base_mint, false),
-            AccountMeta::new(share_mint, true),
+            AccountMeta::new(share_mint, false),
             AccountMeta::new_readonly(fee_collector, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),

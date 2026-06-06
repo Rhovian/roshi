@@ -1,5 +1,5 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::{invoke, invoke_signed};
+use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use solana_system_interface::instruction::create_account;
@@ -20,7 +20,7 @@ use crate::{
         Account,
     },
 };
-use roshi_interface::math::SHARE_DECIMALS;
+use roshi_interface::{find_share_mint_address, math::SHARE_DECIMALS, SHARE_MINT_SEED};
 
 pub(crate) struct VaultRoleContext<'a, 'info> {
     vault_account: &'a AccountInfo<'info>,
@@ -121,6 +121,7 @@ pub(crate) struct InitializeVaultContext<'a, 'info> {
     tag: [u8; Vault::MAX_TAG_LEN],
     tag_len: u8,
     base_mint: Pubkey,
+    share_mint_bump: u8,
     vault_bump: u8,
 }
 
@@ -141,7 +142,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
 
         let base_mint_account = next_account(accounts_iter)?;
         let share_mint_account = next_account(accounts_iter)?;
-        require_writable_signer(share_mint_account)?;
+        require_writable(share_mint_account)?;
         require_uninitialized_account(share_mint_account)?;
         let fee_collector = next_account(accounts_iter)?;
 
@@ -161,6 +162,10 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         if vault.key != &expected_vault_key {
             return Err(ProgramError::InvalidSeeds);
         }
+        let (expected_share_mint_key, share_mint_bump) = find_share_mint_address(vault.key);
+        if share_mint_account.key != &expected_share_mint_key {
+            return Err(ProgramError::InvalidSeeds);
+        }
 
         Ok(Self {
             payer,
@@ -173,6 +178,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             tag,
             tag_len,
             base_mint,
+            share_mint_bump,
             vault_bump,
         })
     }
@@ -218,7 +224,12 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             self.share_mint_account.clone(),
             self.system_program_acc.clone(),
         ];
-        invoke(&create_account_ix, &account_infos)?;
+        let bump = [self.share_mint_bump];
+        invoke_signed(
+            &create_account_ix,
+            &account_infos,
+            &[&[SHARE_MINT_SEED, self.vault.key.as_ref(), &bump]],
+        )?;
 
         token::initialize_mint(
             self.token_program_acc,

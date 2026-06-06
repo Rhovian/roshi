@@ -10,7 +10,7 @@ use solana_pubkey::Pubkey;
 use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
 use wincode::{deserialize, serialize};
 
-use super::{token::set_mint, transaction::send_ok_signed};
+use super::{token::set_mint, transaction::send_ok};
 
 /// The four vault role authorities, held as keypairs so tests can sign as any
 /// of them when exercising role-gated instructions.
@@ -57,8 +57,6 @@ impl Default for VaultRoles {
 pub struct VaultBuilder {
     tag: Vec<u8>,
     base_mint: Pubkey,
-    share_mint: Pubkey,
-    share_mint_signer: Option<Keypair>,
     base_decimals: u8,
     base_oracle: OracleConfig,
     deposit_sub_account: u8,
@@ -73,13 +71,9 @@ pub struct VaultBuilder {
 
 impl Default for VaultBuilder {
     fn default() -> Self {
-        let share_mint_signer = Keypair::new();
-        let share_mint = share_mint_signer.pubkey();
         Self {
             tag: b"main".to_vec(),
             base_mint: Pubkey::new_unique(),
-            share_mint,
-            share_mint_signer: Some(share_mint_signer),
             base_decimals: 6,
             base_oracle: OracleConfig::default(),
             deposit_sub_account: 0,
@@ -109,28 +103,12 @@ impl VaultBuilder {
         self
     }
 
-    pub fn share_mint(mut self, share_mint: Pubkey) -> Self {
-        self.share_mint = share_mint;
-        self.share_mint_signer = None;
-        self
-    }
-
-    pub fn share_mint_keypair(mut self, share_mint: Keypair) -> Self {
-        self.share_mint = share_mint.pubkey();
-        self.share_mint_signer = Some(share_mint);
-        self
-    }
-
     pub fn base_mint_key(&self) -> Pubkey {
         self.base_mint
     }
 
     pub fn share_mint_key(&self) -> Pubkey {
-        self.share_mint
-    }
-
-    pub fn share_mint_signer(&self) -> Option<&Keypair> {
-        self.share_mint_signer.as_ref()
+        roshi_interface::find_share_mint_address(&self.address().0).0
     }
 
     pub fn base_decimals(mut self, base_decimals: u8) -> Self {
@@ -222,7 +200,6 @@ impl VaultBuilder {
             config_pda,
             authority,
             vault,
-            self.share_mint,
             self.args(),
         )
         .unwrap()
@@ -235,7 +212,7 @@ impl VaultBuilder {
     pub fn install_mints(&self, svm: &mut LiteSVM) {
         let vault_pda = self.address().0;
         set_mint(svm, self.base_mint, &vault_pda, self.base_decimals);
-        set_mint(svm, self.share_mint, &vault_pda, 9);
+        set_mint(svm, self.share_mint_key(), &vault_pda, 9);
         self.install_fee_collector(svm);
     }
 
@@ -263,14 +240,11 @@ impl VaultBuilder {
     pub fn create(self, svm: &mut LiteSVM, authority: &Keypair, config_pda: Pubkey) -> TestVault {
         self.install_initialize_vault_accounts(svm);
         let ix = self.instruction(authority.pubkey(), config_pda);
-        let share_mint = self
-            .share_mint_signer
-            .as_ref()
-            .expect("share mint keypair required for InitializeVault");
-        send_ok_signed(svm, ix, authority, &[share_mint]);
+        send_ok(svm, ix, authority);
 
         let (address, bump) = self.address();
-        self.into_fixture(address, bump)
+        let share_mint = self.share_mint_key();
+        self.into_fixture(address, bump, share_mint)
     }
 
     /// Write the vault account state directly, bypassing the instruction. Use
@@ -278,6 +252,7 @@ impl VaultBuilder {
     /// `InitializeVault` succeeding.
     pub fn install(self, svm: &mut LiteSVM) -> TestVault {
         let (address, bump) = self.address();
+        let share_mint = self.share_mint_key();
         let vault = Vault::new(
             &self.tag,
             self.roles.admin.pubkey().to_bytes(),
@@ -285,7 +260,7 @@ impl VaultBuilder {
             self.roles.nav_authority.pubkey().to_bytes(),
             self.roles.withdrawal_authority.pubkey().to_bytes(),
             self.base_mint.to_bytes(),
-            self.share_mint.to_bytes(),
+            share_mint.to_bytes(),
             self.base_decimals,
             self.base_oracle,
             self.deposit_sub_account,
@@ -311,16 +286,16 @@ impl VaultBuilder {
         )
         .unwrap();
 
-        self.into_fixture(address, bump)
+        self.into_fixture(address, bump, share_mint)
     }
 
-    fn into_fixture(self, address: Pubkey, bump: u8) -> TestVault {
+    fn into_fixture(self, address: Pubkey, bump: u8, share_mint: Pubkey) -> TestVault {
         TestVault {
             address,
             bump,
             tag: self.tag,
             base_mint: self.base_mint,
-            share_mint: self.share_mint,
+            share_mint,
             fee_collector: self.fee_collector,
             roles: self.roles,
         }

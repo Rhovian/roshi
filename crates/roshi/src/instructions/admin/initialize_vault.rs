@@ -17,7 +17,7 @@ use crate::{
 /// 2. `[signer, writable]` Payer funding vault creation.
 /// 3. `[writable]` Vault PDA derived from `[b"vault", tag, base_mint]`.
 /// 4. `[]` Base mint (decimals must equal `base_decimals`).
-/// 5. `[signer, writable]` Uninitialized share mint to create.
+/// 5. `[writable]` Share mint PDA derived from `[b"share_mint", vault]`.
 /// 6. `[]` Base fee collector token account.
 /// 7. `[]` System program.
 /// 8. `[]` SPL Token program.
@@ -26,11 +26,11 @@ use crate::{
 ///
 /// Verifies the program authority gate, validates the vault tag and PDA seeds,
 /// validates the base mint and fee collector, creates the vault account and
-/// share mint with rent-exempt lamports, initializes the share mint with fixed
-/// 9 decimals and the vault PDA as mint authority, records configured role
-/// authorities, base-asset oracle config, and default subaccounts, initializes
-/// fee and access config, clears pause flags, and starts accounting from an
-/// empty-share, empty-asset state.
+/// share mint PDA with rent-exempt lamports, initializes the share mint with
+/// fixed 9 decimals and the vault PDA as mint authority, records configured
+/// role authorities, base-asset oracle config, and default subaccounts,
+/// initializes fee and access config, clears pause flags, and starts accounting
+/// from an empty-share, empty-asset state.
 pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs) -> ProgramResult {
     let accounts = InitializeVaultContext::load(accounts, &args)?;
     let tag = Vault::unpack_tag(&args.tag, args.tag_len)?;

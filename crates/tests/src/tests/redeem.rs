@@ -40,11 +40,8 @@ struct RedeemFixture {
 
 fn setup_redeem(svm: &mut LiteSVM) -> RedeemFixture {
     let base_mint = Pubkey::new_unique();
-    let share_mint = Pubkey::new_unique();
-    let vault = VaultBuilder::new()
-        .base_mint(base_mint)
-        .share_mint(share_mint)
-        .install(svm);
+    let vault = VaultBuilder::new().base_mint(base_mint).install(svm);
+    let share_mint = vault.share_mint;
     set_mint(svm, share_mint, &vault.address, 9);
     let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
     let custody = set_ata(svm, &sub_account, &base_mint, 0);
