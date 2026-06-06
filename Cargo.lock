@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "roshi-client"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "roshi-interface",
  "solana-instruction",
@@ -2348,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "roshi-interface"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "codama",
  "codama-macros",

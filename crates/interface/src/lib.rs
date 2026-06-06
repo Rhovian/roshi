@@ -7,4 +7,4 @@ pub mod instructions;
 pub mod math;
 pub mod oracle;
 
-solana_pubkey::declare_id!("Roshi11111111111111111111111111111111111111");
+solana_pubkey::declare_id!("RoshianbALLAs1RzbvHSHpLRaA8ayaKERQCbfmLb9UP");

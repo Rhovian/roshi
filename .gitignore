@@ -1,2 +1,6 @@
 /target
 **/target
+
+# Program keypair — its pubkey is roshi's declare_id!. Kept local, never committed
+# (ground via `solana-keygen grind --starts-with Roshi:1`).
+/program-keypair.json
