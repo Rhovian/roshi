@@ -6,6 +6,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     instructions::accounts::ValidatedManageAccounts,
+    instructions::AccountFlags,
     state::{action::compute_action_hash_from_metas, sub_account::VaultSubAccount},
 };
 use roshi_interface::error::RoshiError;
@@ -31,15 +32,17 @@ pub(super) struct AuthorizedCpi<'a> {
 ///
 /// # Implementation
 ///
-/// Recomputes the action hash from the effective CPI program id, stored `Ops`,
-/// selected CPI account metas, and instruction data, then promotes the selected
-/// subaccount to signer when present in the CPI metas.
+/// Rebuilds the intended CPI metas from selected CPI accounts plus explicit
+/// flags, then recomputes the action hash from the effective CPI program id,
+/// stored `Ops`, rebuilt metas, and instruction data. The selected subaccount
+/// is promoted to signer when present in the CPI metas.
 pub(super) fn validate_authorized_cpi<'a>(
     cpi_accounts: &[AccountInfo<'a>],
     validated_accounts: &ValidatedManageAccounts,
     program_id: [u8; 32],
     accounts_start: u8,
     accounts_len: u8,
+    account_flags: Vec<AccountFlags>,
     ix_data: Vec<u8>,
 ) -> Result<AuthorizedCpi<'a>, ProgramError> {
     let accounts_start = usize::from(accounts_start);
@@ -51,17 +54,31 @@ pub(super) fn validate_authorized_cpi<'a>(
         .get(accounts_start..accounts_end)
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
     let cpi_program_id = Pubkey::from(program_id);
+    if account_flags.len() != accounts_len {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
     let cpi_account_metas = cpi_meta_accounts
         .iter()
-        .map(|acc| {
-            let is_signer = acc.is_signer || acc.key == &validated_accounts.sub_account_key;
-            if acc.is_writable {
-                AccountMeta::new(*acc.key, is_signer)
+        .zip(account_flags)
+        .map(|(acc, flags)| {
+            if flags.is_writable && !acc.is_writable {
+                return Err(ProgramError::InvalidAccountData);
+            }
+
+            let is_sub_account = acc.key == &validated_accounts.sub_account_key;
+            if flags.is_signer && !acc.is_signer && !is_sub_account {
+                return Err(ProgramError::MissingRequiredSignature);
+            }
+
+            let is_signer = flags.is_signer || is_sub_account;
+            if flags.is_writable {
+                Ok(AccountMeta::new(*acc.key, is_signer))
             } else {
-                AccountMeta::new_readonly(*acc.key, is_signer)
+                Ok(AccountMeta::new_readonly(*acc.key, is_signer))
             }
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ProgramError>>()?;
 
     let action_hash = compute_action_hash_from_metas(
         &cpi_program_id,

@@ -24,7 +24,7 @@ mod tests {
     use roshi_interface::{
         action::Ops,
         instructions::{
-            AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
+            AccountFlags, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
             InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs, InstructionArgs,
             ManageArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs,
             SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
@@ -155,6 +155,10 @@ mod tests {
                 program_id: cpi_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 1,
+                account_flags: vec![AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                }],
                 ix_data: ix_data.clone(),
             },
         )
@@ -172,6 +176,13 @@ mod tests {
         assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);
         assert_eq!(args.accounts_len, 1);
+        assert_eq!(
+            args.account_flags,
+            vec![AccountFlags {
+                is_signer: false,
+                is_writable: true,
+            }]
+        );
         assert_eq!(args.ix_data, ix_data);
     }
 

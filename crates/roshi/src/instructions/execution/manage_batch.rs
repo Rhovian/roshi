@@ -35,6 +35,7 @@ pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> Prog
             action.program_id,
             action.accounts_start,
             action.accounts_len,
+            action.account_flags,
             action.ix_data,
         )?;
         invoke_authorized_cpi(&authorized_cpi)?;

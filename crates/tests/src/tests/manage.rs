@@ -1,7 +1,7 @@
 use roshi::{
-    instructions::ManageArgs,
+    instructions::{AccountFlags, ManageArgs},
     state::{
-        action::{compute_action_hash, Action, Ops},
+        action::{compute_action_hash, Action, Op, Ops},
         sub_account::VaultSubAccount,
         Account as RoshiAccount,
     },
@@ -97,6 +97,16 @@ impl SystemTransferManageFixture {
                 program_id: system_program::ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 2,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                ],
                 ix_data: self.transfer_data.clone(),
             },
         )
@@ -204,5 +214,102 @@ fn test_authorized_action_lifecycle_gates_manage() {
     assert_instruction_error(
         send(&mut svm, fixture.manage_ix(authority.pubkey()), &authority),
         InstructionError::IllegalOwner,
+    );
+}
+
+#[test]
+fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+
+    let readonly_ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
+    let readonly_hash = roshi_interface::action::compute_action_hash_from_metas(
+        &system_program::ID,
+        &readonly_ops,
+        &[AccountMeta::new_readonly(fixture.scratch, false)],
+        &[],
+    )
+    .unwrap();
+    let (readonly_action_pda, readonly_action_bump) =
+        Action::find_address(&fixture.vault.address, &readonly_hash);
+
+    fixture.install_authorized_action(&mut svm);
+    svm.set_account(
+        readonly_action_pda,
+        Account {
+            lamports: TRANSFER_LAMPORTS,
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: readonly_hash,
+                ops: readonly_ops,
+                bump: readonly_action_bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    let ix = roshi_client::instruction::manage_batch(
+        authority.pubkey(),
+        fixture.vault.address,
+        vec![
+            roshi_client::instruction::ManageBatchActionAccounts {
+                sub_account_pda: fixture.sub_account_pda,
+                action: fixture.action_pda,
+            },
+            roshi_client::instruction::ManageBatchActionAccounts {
+                sub_account_pda: fixture.sub_account_pda,
+                action: readonly_action_pda,
+            },
+        ],
+        vec![
+            AccountMeta::new(fixture.sub_account_pda, false),
+            AccountMeta::new(fixture.scratch, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(fixture.scratch, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        vec![
+            ManageArgs {
+                sub_account: 0,
+                program_id: system_program::ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 2,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                ],
+                ix_data: fixture.transfer_data.clone(),
+            },
+            ManageArgs {
+                sub_account: 0,
+                program_id: system_program::ID.to_bytes(),
+                accounts_start: 3,
+                accounts_len: 1,
+                account_flags: vec![AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                }],
+                ix_data: vec![],
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_instruction_error(
+        send(&mut svm, ix, &authority),
+        InstructionError::InvalidInstructionData,
     );
 }

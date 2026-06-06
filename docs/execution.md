@@ -124,6 +124,7 @@ Manage {
     program_id,
     accounts_start,
     accounts_len,
+    account_flags,
     ix_data,
 }
 ```
@@ -170,15 +171,19 @@ Execution checks:
 10. The Action PDA address and stored bump must match
    `[b"action", vault, action_hash]`.
 11. Roshi recomputes the hash from the supplied CPI program id, stored `Ops`,
-   selected CPI account slice, and `ix_data`.
+   selected CPI account slice, explicit `account_flags`, and `ix_data`.
 12. `action.action_hash` must equal the recomputed hash.
 13. The supplied target CPI program account must match `program_id`.
 14. The supplied target CPI program account must be executable.
 15. Roshi invokes the CPI with subaccount signer seeds.
 
-The CPI instruction metas are created from the selected CPI account infos. Their
-`is_signer` and `is_writable` flags come from the Roshi instruction's account
-metas.
+The CPI instruction metas are created from the selected CPI account infos plus
+the explicit `account_flags`. The flags represent the intended per-CPI signer
+and writable privileges and are used for both action hashing and `invoke`.
+Roshi rejects requested writable access when the loaded account is not writable,
+and rejects requested signer access unless the account signed the transaction or
+is the selected subaccount PDA being promoted with signer seeds. Readonly and
+non-signer requests may safely downgrade message-level privileges.
 
 The target CPI program account must be supplied immediately after the selected
 CPI meta account slice. Roshi verifies it matches the requested program id and
@@ -205,6 +210,7 @@ IndexedActionArgs {
     program_id,
     accounts_start,
     accounts_len,
+    account_flags,
     ix_data,
 }
 ```

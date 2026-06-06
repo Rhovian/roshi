@@ -30,6 +30,7 @@ pub fn try_manage(accounts: &[AccountInfo], args: ManageArgs) -> ProgramResult {
         args.program_id,
         args.accounts_start,
         args.accounts_len,
+        args.account_flags,
         args.ix_data,
     )?;
 
