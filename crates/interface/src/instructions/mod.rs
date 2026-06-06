@@ -52,9 +52,10 @@ pub enum RoshiInstruction {
     #[codama(account(name = "payer", signer, writable))]
     #[codama(account(name = "vault", writable))]
     #[codama(account(name = "base_mint"))]
-    #[codama(account(name = "share_mint"))]
+    #[codama(account(name = "share_mint", signer, writable))]
     #[codama(account(name = "fee_collector"))]
     #[codama(account(name = "system_program", default_value = program("system")))]
+    #[codama(account(name = "token_program", default_value = program("token")))]
     InitializeVault(#[codama(name = "args")] InitializeVaultArgs) = 1,
 
     #[codama(account(name = "admin", signer, writable))]

@@ -8,17 +8,17 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 use solana_system_interface::program as system_program;
 
-use super::{new, Result};
+use super::{new, Result, TOKEN_PROGRAM_ID};
 
 pub fn initialize_vault(
     program_authority: Pubkey,
     program_config: Pubkey,
     payer: Pubkey,
     vault: Pubkey,
+    share_mint: Pubkey,
     args: InitializeVaultArgs,
 ) -> Result<Instruction> {
     let base_mint = Pubkey::from(args.base_mint);
-    let share_mint = Pubkey::from(args.share_mint);
     let fee_collector = Pubkey::from(args.fee_collector);
     new(
         vec![
@@ -27,9 +27,10 @@ pub fn initialize_vault(
             AccountMeta::new(payer, true),
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(base_mint, false),
-            AccountMeta::new_readonly(share_mint, false),
+            AccountMeta::new(share_mint, true),
             AccountMeta::new_readonly(fee_collector, false),
             AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
         ],
         &args,
     )

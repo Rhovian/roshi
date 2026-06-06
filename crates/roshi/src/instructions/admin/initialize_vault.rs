@@ -17,17 +17,20 @@ use crate::{
 /// 2. `[signer, writable]` Payer funding vault creation.
 /// 3. `[writable]` Vault PDA derived from `[b"vault", tag, base_mint]`.
 /// 4. `[]` Base mint (decimals must equal `base_decimals`).
-/// 5. `[]` Share mint (must have 9 decimals and the vault PDA as mint authority).
+/// 5. `[signer, writable]` Uninitialized share mint to create.
 /// 6. `[]` Base fee collector token account.
 /// 7. `[]` System program.
+/// 8. `[]` SPL Token program.
 ///
 /// # Implementation
 ///
 /// Verifies the program authority gate, validates the vault tag and PDA seeds,
-/// validates the base and share mint accounts, creates the vault account with
-/// rent-exempt lamports, records configured role authorities, base-asset oracle
-/// config, and default subaccounts, initializes fee and access config, clears
-/// pause flags, and starts accounting from an empty-share, empty-asset state.
+/// validates the base mint and fee collector, creates the vault account and
+/// share mint with rent-exempt lamports, initializes the share mint with fixed
+/// 9 decimals and the vault PDA as mint authority, records configured role
+/// authorities, base-asset oracle config, and default subaccounts, initializes
+/// fee and access config, clears pause flags, and starts accounting from an
+/// empty-share, empty-asset state.
 pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs) -> ProgramResult {
     let accounts = InitializeVaultContext::load(accounts, &args)?;
     let tag = Vault::unpack_tag(&args.tag, args.tag_len)?;
@@ -38,7 +41,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.nav_authority,
         args.withdrawal_authority,
         args.base_mint,
-        args.share_mint,
+        accounts.share_mint(),
         args.base_decimals,
         args.base_oracle,
         args.deposit_sub_account,
@@ -50,7 +53,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.access_merkle_root,
         accounts.vault_bump(),
     )?;
-    accounts.verify_mints(&args)?;
+    accounts.verify_external_token_accounts(&args)?;
 
     let serialized =
         serialize(&Account::Vault(vault)).map_err(|_| ProgramError::InvalidAccountData)?;
@@ -60,5 +63,6 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
     }
 
     accounts.create_vault_account()?;
+    accounts.create_share_mint()?;
     accounts.store_vault(&serialized)
 }

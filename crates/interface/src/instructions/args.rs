@@ -15,7 +15,6 @@ pub struct InitializeVaultArgs {
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
-    pub share_mint: [u8; 32],
     pub base_decimals: u8,
     pub base_oracle: OracleConfig,
     pub deposit_sub_account: u8,

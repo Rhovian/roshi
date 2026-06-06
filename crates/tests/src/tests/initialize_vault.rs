@@ -3,8 +3,8 @@ use solana_instruction::error::InstructionError;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_mint, set_token_account,
-    setup_program, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok_signed, send_signed,
+    set_mint, set_token_account, setup_program, VaultBuilder,
 };
 
 #[test]
@@ -59,8 +59,9 @@ fn test_initialize_vault_rejects_non_program_authority() {
     let builder = VaultBuilder::new();
     let ix = builder.instruction(imposter.pubkey(), config_pda);
 
+    let share_mint = builder.share_mint_signer().unwrap();
     assert_instruction_error(
-        send(&mut svm, ix, &imposter),
+        send_signed(&mut svm, ix, &imposter, &[share_mint]),
         InstructionError::IllegalOwner,
     );
     assert!(svm.get_account(&builder.address().0).is_none());
@@ -78,8 +79,9 @@ fn test_initialize_vault_rejects_mismatched_seeds() {
     let wrong_vault = solana_pubkey::Pubkey::new_unique();
     let ix = builder.instruction_with_vault(authority.pubkey(), config_pda, wrong_vault);
 
+    let share_mint = builder.share_mint_signer().unwrap();
     assert_instruction_error(
-        send(&mut svm, ix, &authority),
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
         InstructionError::InvalidSeeds,
     );
     assert!(svm.get_account(&builder.address().0).is_none());
@@ -95,21 +97,24 @@ fn test_initialize_vault_rejects_reinitialization() {
     let builder = VaultBuilder::new();
     let vault_pda = builder.address().0;
 
-    builder.install_mints(&mut svm);
-    send_ok(
+    builder.install_initialize_vault_accounts(&mut svm);
+    let share_mint = builder.share_mint_signer().unwrap();
+    send_ok_signed(
         &mut svm,
         builder.instruction(authority.pubkey(), config_pda),
         &authority,
+        &[share_mint],
     );
 
     // Advance the blockhash so the retry is a distinct transaction rather
     // than a duplicate; it must now fail on the uninitialized-account guard.
     svm.expire_blockhash();
     assert_instruction_error(
-        send(
+        send_signed(
             &mut svm,
             builder.instruction(authority.pubkey(), config_pda),
             &authority,
+            &[share_mint],
         ),
         InstructionError::AccountAlreadyInitialized,
     );
@@ -126,12 +131,15 @@ fn test_initialize_vault_rejects_matching_base_and_share_mints() {
         return;
     };
 
-    let mint = solana_pubkey::Pubkey::new_unique();
-    let builder = VaultBuilder::new().base_mint(mint).share_mint(mint);
+    let mint = Keypair::new();
+    let builder = VaultBuilder::new()
+        .base_mint(mint.pubkey())
+        .share_mint_keypair(mint.insecure_clone());
     let ix = builder.instruction(authority.pubkey(), config_pda);
 
+    let share_mint = builder.share_mint_signer().unwrap();
     assert_instruction_error(
-        send(&mut svm, ix, &authority),
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
         InstructionError::InvalidArgument,
     );
     assert!(svm.get_account(&builder.address().0).is_none());
@@ -147,63 +155,70 @@ fn test_initialize_vault_rejects_invalid_fee_bps() {
     let builder = VaultBuilder::new().fees(10_001, 0);
     let ix = builder.instruction(authority.pubkey(), config_pda);
 
-    assert_roshi_error(send(&mut svm, ix, &authority), RoshiError::InvalidBps);
+    let share_mint = builder.share_mint_signer().unwrap();
+    assert_roshi_error(
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
+        RoshiError::InvalidBps,
+    );
     assert!(svm.get_account(&builder.address().0).is_none());
 }
 
 #[test]
-fn test_initialize_vault_rejects_wrong_share_mint_decimals() {
+fn test_initialize_vault_rejects_preinitialized_share_mint() {
     let Some((mut svm, authority, config_pda)) = setup_program() else {
         return;
     };
 
     let base_mint = solana_pubkey::Pubkey::new_unique();
-    let share_mint = solana_pubkey::Pubkey::new_unique();
-    let builder = VaultBuilder::new()
-        .base_mint(base_mint)
-        .share_mint(share_mint);
+    let builder = VaultBuilder::new().base_mint(base_mint);
     let vault_pda = builder.address().0;
 
-    // Base mint is fine; the share mint must use 9 decimals.
+    // The program now owns share mint creation, so a pre-existing share mint is
+    // rejected before any state is written.
     set_mint(&mut svm, base_mint, &vault_pda, 6);
-    set_mint(&mut svm, share_mint, &vault_pda, 8);
+    set_mint(&mut svm, builder.share_mint_key(), &vault_pda, 9);
 
     let ix = builder.instruction(authority.pubkey(), config_pda);
-    assert_roshi_error(
-        send(&mut svm, ix, &authority),
-        RoshiError::InvalidMintAccount,
+    let share_mint = builder.share_mint_signer().unwrap();
+    assert_instruction_error(
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
+        InstructionError::AccountAlreadyInitialized,
     );
     assert!(svm.get_account(&vault_pda).is_none());
 }
 
 #[test]
-fn test_initialize_vault_rejects_wrong_share_mint_authority() {
+fn test_initialize_vault_rejects_missing_share_mint_signature() {
     let Some((mut svm, authority, config_pda)) = setup_program() else {
         return;
     };
 
-    let base_mint = solana_pubkey::Pubkey::new_unique();
-    let share_mint = solana_pubkey::Pubkey::new_unique();
-    let builder = VaultBuilder::new()
-        .base_mint(base_mint)
-        .share_mint(share_mint);
-    let vault_pda = builder.address().0;
-
-    // Share mint has the right decimals but is not owned by the vault PDA.
-    set_mint(&mut svm, base_mint, &vault_pda, 6);
-    set_mint(
-        &mut svm,
-        share_mint,
-        &solana_pubkey::Pubkey::new_unique(),
-        9,
-    );
-
-    let ix = builder.instruction(authority.pubkey(), config_pda);
-    assert_roshi_error(
+    let builder = VaultBuilder::new();
+    let mut ix = builder.instruction(authority.pubkey(), config_pda);
+    ix.accounts[5].is_signer = false;
+    assert_instruction_error(
         send(&mut svm, ix, &authority),
-        RoshiError::InvalidMintAccount,
+        InstructionError::MissingRequiredSignature,
     );
-    assert!(svm.get_account(&vault_pda).is_none());
+    assert!(svm.get_account(&builder.address().0).is_none());
+}
+
+#[test]
+fn test_initialize_vault_rejects_readonly_share_mint() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    let mut ix = builder.instruction(authority.pubkey(), config_pda);
+    ix.accounts[5].is_writable = false;
+    let share_mint = builder.share_mint_signer().unwrap();
+
+    assert_instruction_error(
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
+        InstructionError::InvalidAccountData,
+    );
+    assert!(svm.get_account(&builder.address().0).is_none());
 }
 
 #[test]
@@ -216,7 +231,6 @@ fn test_initialize_vault_rejects_fee_collector_for_wrong_mint() {
     let builder = VaultBuilder::new().fee_collector(fee_collector);
     let vault_pda = builder.address().0;
     set_mint(&mut svm, builder.base_mint_key(), &vault_pda, 6);
-    set_mint(&mut svm, builder.share_mint_key(), &vault_pda, 9);
     set_token_account(
         &mut svm,
         fee_collector,
@@ -226,8 +240,9 @@ fn test_initialize_vault_rejects_fee_collector_for_wrong_mint() {
     );
     let ix = builder.instruction(authority.pubkey(), config_pda);
 
+    let share_mint = builder.share_mint_signer().unwrap();
     assert_roshi_error(
-        send(&mut svm, ix, &authority),
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
         RoshiError::InvalidTokenAccount,
     );
     assert!(svm.get_account(&builder.address().0).is_none());
@@ -240,19 +255,16 @@ fn test_initialize_vault_rejects_wrong_base_mint_decimals() {
     };
 
     let base_mint = solana_pubkey::Pubkey::new_unique();
-    let share_mint = solana_pubkey::Pubkey::new_unique();
     // Vault declares base_decimals = 6 (the builder default).
-    let builder = VaultBuilder::new()
-        .base_mint(base_mint)
-        .share_mint(share_mint);
+    let builder = VaultBuilder::new().base_mint(base_mint);
     let vault_pda = builder.address().0;
 
     set_mint(&mut svm, base_mint, &vault_pda, 9); // mismatch vs declared 6
-    set_mint(&mut svm, share_mint, &vault_pda, 9);
 
     let ix = builder.instruction(authority.pubkey(), config_pda);
+    let share_mint = builder.share_mint_signer().unwrap();
     assert_roshi_error(
-        send(&mut svm, ix, &authority),
+        send_signed(&mut svm, ix, &authority, &[share_mint]),
         RoshiError::InvalidMintAccount,
     );
     assert!(svm.get_account(&vault_pda).is_none());

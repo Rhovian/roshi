@@ -84,7 +84,6 @@ mod tests {
             nav_authority: Pubkey::new_unique().to_bytes(),
             withdrawal_authority: Pubkey::new_unique().to_bytes(),
             base_mint: base_mint.to_bytes(),
-            share_mint: share_mint.to_bytes(),
             base_decimals: 6,
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             deposit_sub_account: 0,
@@ -96,10 +95,18 @@ mod tests {
             access_merkle_root: [2; 32],
         };
 
-        let ix = initialize_vault(program_authority, program_config, payer, vault, args).unwrap();
+        let ix = initialize_vault(
+            program_authority,
+            program_config,
+            payer,
+            vault,
+            share_mint,
+            args,
+        )
+        .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(ix.accounts.len(), 9);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(program_authority, true)
@@ -111,7 +118,7 @@ mod tests {
         assert_eq!(ix.accounts[2], AccountMeta::new(payer, true));
         assert_eq!(ix.accounts[3], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[4], AccountMeta::new_readonly(base_mint, false));
-        assert_eq!(ix.accounts[5], AccountMeta::new_readonly(share_mint, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new(share_mint, true));
         assert_eq!(
             ix.accounts[6],
             AccountMeta::new_readonly(fee_collector, false)
@@ -120,12 +127,15 @@ mod tests {
             ix.accounts[7],
             AccountMeta::new_readonly(system_program::ID, false)
         );
+        assert_eq!(
+            ix.accounts[8],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
 
         let args: InitializeVaultArgs = decode_args(&ix.data);
         assert_eq!(args.tag, [1; 32]);
         assert_eq!(args.tag_len, 4);
         assert_eq!(args.base_mint, base_mint.to_bytes());
-        assert_eq!(args.share_mint, share_mint.to_bytes());
         assert!(args.private);
     }
 

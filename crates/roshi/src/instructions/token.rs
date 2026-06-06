@@ -18,7 +18,7 @@ const MINT_AUTHORITY_KEY: usize = 4;
 const MINT_SUPPLY: usize = 36;
 const MINT_DECIMALS: usize = 44;
 const MINT_IS_INITIALIZED: usize = 45;
-const MINT_LEN: usize = 82;
+pub(crate) const MINT_LEN: usize = 82;
 const TOKEN_ACCOUNT_MINT: usize = 0;
 const TOKEN_ACCOUNT_OWNER: usize = 32;
 const TOKEN_ACCOUNT_STATE: usize = 108;
@@ -83,6 +83,28 @@ pub(crate) fn mint_supply(account: &AccountInfo) -> Result<u64, ProgramError> {
             .try_into()
             .map_err(|_| ProgramError::from(RoshiError::InvalidMintAccount))?,
     ))
+}
+
+/// CPI an SPL `initialize_mint2` for a freshly created mint account.
+pub(crate) fn initialize_mint<'info>(
+    token_program: &AccountInfo<'info>,
+    mint: &AccountInfo<'info>,
+    mint_authority: &Pubkey,
+    decimals: u8,
+) -> ProgramResult {
+    if token_program.key != &TOKEN_PROGRAM_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let instruction = spl_token_interface::instruction::initialize_mint2(
+        token_program.key,
+        mint.key,
+        mint_authority,
+        None,
+        decimals,
+    )?;
+
+    invoke(&instruction, &[mint.clone(), token_program.clone()])
 }
 
 /// Verify `account` is an initialized SPL token account for `expected_mint`.

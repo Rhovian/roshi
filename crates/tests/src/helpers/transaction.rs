@@ -53,6 +53,22 @@ pub fn send_ok(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> Transacti
     }
 }
 
+/// [`send_signed`] a transaction expected to succeed.
+pub fn send_ok_signed(
+    svm: &mut LiteSVM,
+    ix: Instruction,
+    payer: &Keypair,
+    extra_signers: &[&Keypair],
+) -> TransactionMetadata {
+    match send_signed(svm, ix, payer, extra_signers) {
+        Ok(meta) => meta,
+        Err(failure) => panic!(
+            "transaction failed unexpectedly\nlogs:\n{}",
+            failure.meta.pretty_logs(),
+        ),
+    }
+}
+
 /// Assert that a transaction failed at the instruction level with exactly
 /// `expected`. On mismatch the program logs are surfaced so the real cause is
 /// visible. Use this for negative tests instead of a bare `is_err()` so a test

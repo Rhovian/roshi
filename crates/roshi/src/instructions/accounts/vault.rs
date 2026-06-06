@@ -1,5 +1,5 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
+use solana_cpi::{invoke, invoke_signed};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use solana_system_interface::instruction::create_account;
@@ -117,6 +117,7 @@ pub(crate) struct InitializeVaultContext<'a, 'info> {
     share_mint_account: &'a AccountInfo<'info>,
     fee_collector: &'a AccountInfo<'info>,
     system_program_acc: &'a AccountInfo<'info>,
+    token_program_acc: &'a AccountInfo<'info>,
     tag: [u8; Vault::MAX_TAG_LEN],
     tag_len: u8,
     base_mint: Pubkey,
@@ -140,10 +141,16 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
 
         let base_mint_account = next_account(accounts_iter)?;
         let share_mint_account = next_account(accounts_iter)?;
+        require_writable_signer(share_mint_account)?;
+        require_uninitialized_account(share_mint_account)?;
         let fee_collector = next_account(accounts_iter)?;
 
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
+        let token_program_acc = next_account(accounts_iter)?;
+        if token_program_acc.key != &token::TOKEN_PROGRAM_ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
 
         ProgramConfigAuthorityContext::load(program_authority, program_config)?;
 
@@ -162,6 +169,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             share_mint_account,
             fee_collector,
             system_program_acc,
+            token_program_acc,
             tag,
             tag_len,
             base_mint,
@@ -173,22 +181,20 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         self.vault_bump
     }
 
-    /// Validate that the base and share mints are real SPL mints: the base mint
-    /// has the declared decimals, and the share mint uses fixed share decimals
-    /// with the vault PDA as its mint authority. These are immutable for the
-    /// vault's lifetime, so they are checked once here.
-    pub(crate) fn verify_mints(&self, args: &InitializeVaultArgs) -> ProgramResult {
+    pub(crate) fn share_mint(&self) -> [u8; 32] {
+        self.share_mint_account.key.to_bytes()
+    }
+
+    /// Validate immutable external token accounts before the vault is stored.
+    pub(crate) fn verify_external_token_accounts(
+        &self,
+        args: &InitializeVaultArgs,
+    ) -> ProgramResult {
         token::verify_mint(
             self.base_mint_account,
             &self.base_mint,
             args.base_decimals,
             None,
-        )?;
-        token::verify_mint(
-            self.share_mint_account,
-            &Pubkey::from(args.share_mint),
-            SHARE_DECIMALS,
-            Some(self.vault.key),
         )?;
         token::verify_token_account_mint(self.fee_collector, &self.base_mint)?;
         if self.fee_collector.key != &Pubkey::from(args.fee_collector) {
@@ -196,6 +202,30 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn create_share_mint(&self) -> ProgramResult {
+        let rent_exemption_lamports = Rent::get()?.minimum_balance(token::MINT_LEN);
+        let create_account_ix = create_account(
+            self.payer.key,
+            self.share_mint_account.key,
+            rent_exemption_lamports,
+            token::MINT_LEN as u64,
+            &token::TOKEN_PROGRAM_ID,
+        );
+        let account_infos = [
+            self.payer.clone(),
+            self.share_mint_account.clone(),
+            self.system_program_acc.clone(),
+        ];
+        invoke(&create_account_ix, &account_infos)?;
+
+        token::initialize_mint(
+            self.token_program_acc,
+            self.share_mint_account,
+            self.vault.key,
+            SHARE_DECIMALS,
+        )
     }
 
     pub(crate) fn create_vault_account(&self) -> ProgramResult {
