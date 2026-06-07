@@ -7,7 +7,7 @@ use roshi::{
     error::RoshiError,
     instructions::{AuthorizeActionArgs, RevokeActionArgs},
     state::{
-        action::{Action, Ops, StoredOp},
+        action::{Action, ActionScope, Ops, StoredOp},
         Account as RoshiAccount,
     },
     ID,
@@ -33,6 +33,7 @@ fn authorize_action_ix(
         vault.address,
         action_pda,
         ACTION_HASH,
+        ActionScope::Manager,
         Ops::empty(),
     )
     .unwrap();
@@ -63,6 +64,7 @@ fn test_authorize_action() {
         vault.address,
         action_pda,
         ACTION_HASH,
+        ActionScope::Manager,
         Ops::empty(),
     )
     .unwrap();
@@ -77,6 +79,7 @@ fn test_authorize_action() {
     };
     assert_eq!(action.vault, vault.address.to_bytes());
     assert_eq!(action.action_hash, ACTION_HASH);
+    assert_eq!(action.scope, ActionScope::Manager);
     assert_eq!(action.ops, Ops::empty());
     assert_eq!(action.bump, bump);
 }
@@ -97,6 +100,7 @@ fn test_authorize_action_rejects_non_admin() {
         vault.address,
         action_pda,
         ACTION_HASH,
+        ActionScope::Manager,
         Ops::empty(),
     )
     .unwrap();
@@ -157,6 +161,7 @@ fn test_authorize_action_rejects_invalid_ops() {
         vault.address,
         action_pda,
         ACTION_HASH,
+        ActionScope::Manager,
         ops,
     )
     .unwrap();
@@ -188,6 +193,7 @@ fn test_authorize_action_requires_admin_signature() {
         accounts,
         &AuthorizeActionArgs {
             action_hash: ACTION_HASH,
+            scope: ActionScope::Manager,
             ops: Ops::empty(),
         },
     )
@@ -223,6 +229,7 @@ fn test_authorize_action_rejects_non_writable_admin() {
         accounts,
         &AuthorizeActionArgs {
             action_hash: ACTION_HASH,
+            scope: ActionScope::Manager,
             ops: Ops::empty(),
         },
     )
@@ -254,6 +261,7 @@ fn test_authorize_action_rejects_mismatched_seeds() {
         vault.address,
         wrong_action,
         ACTION_HASH,
+        ActionScope::Manager,
         Ops::empty(),
     )
     .unwrap();

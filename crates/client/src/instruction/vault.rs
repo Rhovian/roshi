@@ -1,8 +1,8 @@
 use roshi_interface::instructions::{
-    CollectFeesArgs, InitializeVaultArgs, ProcessWithdrawalsArgs, ReportNavArgs,
-    SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-    SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-    UpdateVaultConfigArgs,
+    CollectFeesArgs, InitializeVaultArgs, InvestExternalArgs, ProcessWithdrawalsArgs,
+    ReportNavArgs, ReturnExternalArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+    SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -19,7 +19,7 @@ pub fn initialize_vault(
 ) -> Result<Instruction> {
     let base_mint = Pubkey::from(args.base_mint);
     let share_mint = roshi_interface::find_share_mint_address(&vault).0;
-    let fee_collector = Pubkey::from(args.fee_collector);
+    let treasury = Pubkey::from(args.treasury);
     new(
         vec![
             AccountMeta::new_readonly(program_authority, true),
@@ -28,7 +28,7 @@ pub fn initialize_vault(
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(base_mint, false),
             AccountMeta::new(share_mint, false),
-            AccountMeta::new_readonly(fee_collector, false),
+            AccountMeta::new_readonly(treasury, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
         ],
@@ -80,6 +80,19 @@ pub fn set_strategist(admin: Pubkey, vault: Pubkey, strategist: Pubkey) -> Resul
         vault_admin_accounts(admin, vault),
         &SetStrategistArgs {
             strategist: strategist.to_bytes(),
+        },
+    )
+}
+
+pub fn set_swap_authority(
+    admin: Pubkey,
+    vault: Pubkey,
+    swap_authority: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        &SetSwapAuthorityArgs {
+            swap_authority: swap_authority.to_bytes(),
         },
     )
 }
@@ -147,12 +160,12 @@ pub fn update_vault_config(
     vault: Pubkey,
     args: UpdateVaultConfigArgs,
 ) -> Result<Instruction> {
-    let fee_collector = Pubkey::from(args.fee_collector);
+    let treasury = Pubkey::from(args.treasury);
     new(
         vec![
             AccountMeta::new_readonly(admin, true),
             AccountMeta::new(vault, false),
-            AccountMeta::new_readonly(fee_collector, false),
+            AccountMeta::new_readonly(treasury, false),
         ],
         &args,
     )
@@ -184,7 +197,7 @@ pub fn collect_fees(
     fee_sub_account_index: u8,
     fee_sub_account: Pubkey,
     custody: Pubkey,
-    fee_collector: Pubkey,
+    treasury: Pubkey,
     amount: u64,
 ) -> Result<Instruction> {
     new(
@@ -193,11 +206,63 @@ pub fn collect_fees(
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(fee_sub_account, false),
             AccountMeta::new(custody, false),
-            AccountMeta::new(fee_collector, false),
+            AccountMeta::new(treasury, false),
             AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
         ],
         &CollectFeesArgs {
             sub_account: fee_sub_account_index,
+            amount,
+        },
+    )
+}
+
+pub fn invest_external(
+    strategist: Pubkey,
+    vault: Pubkey,
+    sub_account_index: u8,
+    sub_account: Pubkey,
+    custody: Pubkey,
+    external_account: Pubkey,
+    amount: u64,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(strategist, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(sub_account, false),
+            AccountMeta::new(custody, false),
+            AccountMeta::new(external_account, false),
+            AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
+        ],
+        &InvestExternalArgs {
+            sub_account: sub_account_index,
+            amount,
+        },
+    )
+}
+
+pub fn return_external(
+    strategist: Pubkey,
+    external_authority: Pubkey,
+    vault: Pubkey,
+    sub_account_index: u8,
+    sub_account: Pubkey,
+    external_account: Pubkey,
+    custody: Pubkey,
+    amount: u64,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(strategist, true),
+            AccountMeta::new_readonly(external_authority, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(sub_account, false),
+            AccountMeta::new(external_account, false),
+            AccountMeta::new(custody, false),
+            AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
+        ],
+        &ReturnExternalArgs {
+            sub_account: sub_account_index,
             amount,
         },
     )

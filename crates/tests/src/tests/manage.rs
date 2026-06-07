@@ -1,7 +1,7 @@
 use roshi::{
     instructions::{AccountFlags, ManageArgs},
     state::{
-        action::{compute_action_hash, Action, Op, Ops},
+        action::{compute_action_hash, Action, ActionScope, Op, Ops},
         sub_account::VaultSubAccount,
         Account as RoshiAccount,
     },
@@ -31,10 +31,11 @@ struct SystemTransferManageFixture {
 
 impl SystemTransferManageFixture {
     fn install(svm: &mut litesvm::LiteSVM, authority: &Keypair) -> Self {
-        let vault = VaultBuilder::new()
-            .tag(b"test")
-            .roles(VaultRoles::shared(authority))
-            .install(svm);
+        Self::install_with_roles(svm, VaultRoles::shared(authority))
+    }
+
+    fn install_with_roles(svm: &mut litesvm::LiteSVM, roles: VaultRoles) -> Self {
+        let vault = VaultBuilder::new().tag(b"test").roles(roles).install(svm);
         let vault_pda = vault.address;
 
         let (sub_account_pda, _) = VaultSubAccount::find_address(&vault_pda, 0);
@@ -70,6 +71,7 @@ impl SystemTransferManageFixture {
                     vault: self.vault.address.to_bytes(),
                     action_hash: self.action_hash,
                     ops: self.ops,
+                    scope: ActionScope::Manager,
                     bump: action_bump,
                 }))
                 .unwrap(),
@@ -163,6 +165,91 @@ fn test_manage_authority_check() {
     );
 }
 
+#[test]
+fn test_manage_public_action_does_not_require_strategist() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    let (_, action_bump) = Action::find_address(&fixture.vault.address, &fixture.action_hash);
+    svm.set_account(
+        fixture.action_pda,
+        Account {
+            lamports: TRANSFER_LAMPORTS,
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: fixture.action_hash,
+                ops: fixture.ops,
+                scope: ActionScope::Public,
+                bump: action_bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    let public_executor = Keypair::new();
+    fund(&mut svm, &public_executor);
+
+    send_ok(
+        &mut svm,
+        fixture.manage_ix(public_executor.pubkey()),
+        &public_executor,
+    );
+    assert_eq!(fixture.scratch_lamports(&svm), TRANSFER_LAMPORTS);
+}
+
+#[test]
+fn test_manage_swap_action_requires_swap_authority() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let roles = VaultRoles::generate();
+    let fixture = SystemTransferManageFixture::install_with_roles(&mut svm, roles);
+    let (_, action_bump) = Action::find_address(&fixture.vault.address, &fixture.action_hash);
+    svm.set_account(
+        fixture.action_pda,
+        Account {
+            lamports: TRANSFER_LAMPORTS,
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: fixture.action_hash,
+                ops: fixture.ops,
+                scope: ActionScope::Swap,
+                bump: action_bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    fund(&mut svm, &fixture.vault.roles.strategist);
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix(fixture.vault.roles.strategist.pubkey()),
+            &fixture.vault.roles.strategist,
+        ),
+        InstructionError::IllegalOwner,
+    );
+
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    send_ok(
+        &mut svm,
+        fixture.manage_ix(fixture.vault.roles.swap_authority.pubkey()),
+        &fixture.vault.roles.swap_authority,
+    );
+    assert_eq!(fixture.scratch_lamports(&svm), TRANSFER_LAMPORTS);
+}
+
 /// End-to-end proof that the `Action` allowlist gates `manage`: an unauthorized
 /// CPI is rejected, `authorize_action` enables it, and `revoke_action` disables
 /// it again. `admin == strategist == authority` so one signer drives the whole
@@ -189,6 +276,7 @@ fn test_authorized_action_lifecycle_gates_manage() {
             fixture.vault.address,
             fixture.action_pda,
             fixture.action_hash,
+            ActionScope::Manager,
             fixture.ops,
         )
         .unwrap(),
@@ -245,6 +333,7 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
                 vault: fixture.vault.address.to_bytes(),
                 action_hash: readonly_hash,
                 ops: readonly_ops,
+                scope: ActionScope::Manager,
                 bump: readonly_action_bump,
             }))
             .unwrap(),

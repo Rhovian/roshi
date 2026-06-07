@@ -2,8 +2,9 @@ use crate::{
     instructions::{
         admin::{
             try_authorize_action, try_collect_fees, try_initialize_asset, try_initialize_program,
-            try_initialize_vault, try_process_withdrawals, try_report_nav, try_revoke_action,
-            try_set_nav_authority, try_set_pause_flags, try_set_strategist, try_set_vault_access,
+            try_initialize_vault, try_invest_external, try_process_withdrawals, try_report_nav,
+            try_return_external, try_revoke_action, try_set_nav_authority, try_set_pause_flags,
+            try_set_strategist, try_set_swap_authority, try_set_vault_access,
             try_set_withdrawal_authority, try_transfer_program_authority,
             try_transfer_vault_authority, try_update_asset, try_update_vault_config,
         },
@@ -53,6 +54,8 @@ fn try_process_instruction<'info>(
         RoshiInstruction::UpdateVaultConfig(args) => try_update_vault_config(accounts, args),
         RoshiInstruction::InitializeAsset(args) => try_initialize_asset(accounts, args),
         RoshiInstruction::UpdateAsset(args) => try_update_asset(accounts, args),
+        RoshiInstruction::InvestExternal(args) => try_invest_external(accounts, args),
+        RoshiInstruction::ReturnExternal(args) => try_return_external(accounts, args),
         RoshiInstruction::SetPauseFlags(args) => try_set_pause_flags(accounts, args),
         RoshiInstruction::SetVaultAccess(args) => try_set_vault_access(accounts, args),
         RoshiInstruction::TransferProgramAuthority(args) => {
@@ -62,6 +65,7 @@ fn try_process_instruction<'info>(
             try_transfer_vault_authority(accounts, args)
         }
         RoshiInstruction::SetStrategist(args) => try_set_strategist(accounts, args),
+        RoshiInstruction::SetSwapAuthority(args) => try_set_swap_authority(accounts, args),
         RoshiInstruction::SetNavAuthority(args) => try_set_nav_authority(accounts, args),
         RoshiInstruction::SetWithdrawalAuthority(args) => {
             try_set_withdrawal_authority(accounts, args)

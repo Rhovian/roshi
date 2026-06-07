@@ -23,14 +23,17 @@ pub mod tags {
     pub const UPDATE_VAULT_CONFIG: u8 = 11;
     pub const INITIALIZE_ASSET: u8 = 12;
     pub const UPDATE_ASSET: u8 = 13;
-    pub const SET_PAUSE_FLAGS: u8 = 15;
-    pub const SET_VAULT_ACCESS: u8 = 16;
-    pub const TRANSFER_PROGRAM_AUTHORITY: u8 = 17;
-    pub const TRANSFER_VAULT_AUTHORITY: u8 = 18;
-    pub const SET_STRATEGIST: u8 = 19;
-    pub const SET_NAV_AUTHORITY: u8 = 20;
-    pub const SET_WITHDRAWAL_AUTHORITY: u8 = 21;
-    pub const COLLECT_FEES: u8 = 22;
+    pub const SET_PAUSE_FLAGS: u8 = 14;
+    pub const SET_VAULT_ACCESS: u8 = 15;
+    pub const TRANSFER_PROGRAM_AUTHORITY: u8 = 16;
+    pub const TRANSFER_VAULT_AUTHORITY: u8 = 17;
+    pub const SET_STRATEGIST: u8 = 18;
+    pub const SET_NAV_AUTHORITY: u8 = 19;
+    pub const SET_WITHDRAWAL_AUTHORITY: u8 = 20;
+    pub const COLLECT_FEES: u8 = 21;
+    pub const INVEST_EXTERNAL: u8 = 22;
+    pub const RETURN_EXTERNAL: u8 = 23;
+    pub const SET_SWAP_AUTHORITY: u8 = 24;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -53,7 +56,7 @@ pub enum RoshiInstruction {
     #[codama(account(name = "vault", writable))]
     #[codama(account(name = "base_mint"))]
     #[codama(account(name = "share_mint", writable))]
-    #[codama(account(name = "fee_collector"))]
+    #[codama(account(name = "treasury"))]
     #[codama(account(name = "system_program", default_value = program("system")))]
     #[codama(account(name = "token_program", default_value = program("token")))]
     InitializeVault(#[codama(name = "args")] InitializeVaultArgs) = 1,
@@ -69,13 +72,13 @@ pub enum RoshiInstruction {
     #[codama(account(name = "action", writable))]
     RevokeAction(#[codama(name = "args")] RevokeActionArgs) = 3,
 
-    #[codama(account(name = "strategist", signer))]
+    #[codama(account(name = "executor", signer))]
     #[codama(account(name = "vault"))]
     #[codama(account(name = "sub_account", writable))]
     #[codama(account(name = "action"))]
     Manage(#[codama(name = "args")] ManageArgs) = 4,
 
-    #[codama(account(name = "strategist", signer))]
+    #[codama(account(name = "executor", signer))]
     #[codama(account(name = "vault"))]
     ManageBatch(#[codama(name = "args")] ManageBatchArgs) = 5,
 
@@ -121,7 +124,7 @@ pub enum RoshiInstruction {
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    #[codama(account(name = "fee_collector"))]
+    #[codama(account(name = "treasury"))]
     UpdateVaultConfig(#[codama(name = "args")] UpdateVaultConfigArgs) = 11,
 
     #[codama(account(name = "admin", signer, writable))]
@@ -137,39 +140,60 @@ pub enum RoshiInstruction {
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    SetPauseFlags(#[codama(name = "args")] SetPauseFlagsArgs) = 15,
+    SetPauseFlags(#[codama(name = "args")] SetPauseFlagsArgs) = 14,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    SetVaultAccess(#[codama(name = "args")] SetVaultAccessArgs) = 16,
+    SetVaultAccess(#[codama(name = "args")] SetVaultAccessArgs) = 15,
 
     #[codama(account(name = "authority", signer))]
     #[codama(account(name = "program_config", writable))]
-    TransferProgramAuthority(#[codama(name = "args")] TransferProgramAuthorityArgs) = 17,
+    TransferProgramAuthority(#[codama(name = "args")] TransferProgramAuthorityArgs) = 16,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    TransferVaultAuthority(#[codama(name = "args")] TransferVaultAuthorityArgs) = 18,
+    TransferVaultAuthority(#[codama(name = "args")] TransferVaultAuthorityArgs) = 17,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    SetStrategist(#[codama(name = "args")] SetStrategistArgs) = 19,
+    SetStrategist(#[codama(name = "args")] SetStrategistArgs) = 18,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    SetNavAuthority(#[codama(name = "args")] SetNavAuthorityArgs) = 20,
+    SetNavAuthority(#[codama(name = "args")] SetNavAuthorityArgs) = 19,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
-    SetWithdrawalAuthority(#[codama(name = "args")] SetWithdrawalAuthorityArgs) = 21,
+    SetWithdrawalAuthority(#[codama(name = "args")] SetWithdrawalAuthorityArgs) = 20,
 
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
     #[codama(account(name = "fee_sub_account"))]
     #[codama(account(name = "custody", writable))]
-    #[codama(account(name = "fee_collector", writable))]
+    #[codama(account(name = "treasury", writable))]
     #[codama(account(name = "token_program", default_value = program("token")))]
-    CollectFees(#[codama(name = "args")] CollectFeesArgs) = 22,
+    CollectFees(#[codama(name = "args")] CollectFeesArgs) = 21,
+
+    #[codama(account(name = "strategist", signer))]
+    #[codama(account(name = "vault", writable))]
+    #[codama(account(name = "sub_account"))]
+    #[codama(account(name = "custody", writable))]
+    #[codama(account(name = "external_account", writable))]
+    #[codama(account(name = "token_program", default_value = program("token")))]
+    InvestExternal(#[codama(name = "args")] InvestExternalArgs) = 22,
+
+    #[codama(account(name = "strategist", signer))]
+    #[codama(account(name = "external_authority", signer))]
+    #[codama(account(name = "vault", writable))]
+    #[codama(account(name = "sub_account"))]
+    #[codama(account(name = "external_account", writable))]
+    #[codama(account(name = "custody", writable))]
+    #[codama(account(name = "token_program", default_value = program("token")))]
+    ReturnExternal(#[codama(name = "args")] ReturnExternalArgs) = 23,
+
+    #[codama(account(name = "admin", signer))]
+    #[codama(account(name = "vault", writable))]
+    SetSwapAuthority(#[codama(name = "args")] SetSwapAuthorityArgs) = 24,
 }
 
 impl RoshiInstruction {
@@ -189,11 +213,14 @@ impl RoshiInstruction {
             Self::UpdateVaultConfig(_) => tags::UPDATE_VAULT_CONFIG,
             Self::InitializeAsset(_) => tags::INITIALIZE_ASSET,
             Self::UpdateAsset(_) => tags::UPDATE_ASSET,
+            Self::InvestExternal(_) => tags::INVEST_EXTERNAL,
+            Self::ReturnExternal(_) => tags::RETURN_EXTERNAL,
             Self::SetPauseFlags(_) => tags::SET_PAUSE_FLAGS,
             Self::SetVaultAccess(_) => tags::SET_VAULT_ACCESS,
             Self::TransferProgramAuthority(_) => tags::TRANSFER_PROGRAM_AUTHORITY,
             Self::TransferVaultAuthority(_) => tags::TRANSFER_VAULT_AUTHORITY,
             Self::SetStrategist(_) => tags::SET_STRATEGIST,
+            Self::SetSwapAuthority(_) => tags::SET_SWAP_AUTHORITY,
             Self::SetNavAuthority(_) => tags::SET_NAV_AUTHORITY,
             Self::SetWithdrawalAuthority(_) => tags::SET_WITHDRAWAL_AUTHORITY,
             Self::CollectFees(_) => tags::COLLECT_FEES,
@@ -221,6 +248,8 @@ impl RoshiInstruction {
             tags::UPDATE_VAULT_CONFIG => Ok(Self::UpdateVaultConfig(decode_payload(payload)?)),
             tags::INITIALIZE_ASSET => Ok(Self::InitializeAsset(decode_payload(payload)?)),
             tags::UPDATE_ASSET => Ok(Self::UpdateAsset(decode_payload(payload)?)),
+            tags::INVEST_EXTERNAL => Ok(Self::InvestExternal(decode_payload(payload)?)),
+            tags::RETURN_EXTERNAL => Ok(Self::ReturnExternal(decode_payload(payload)?)),
             tags::SET_PAUSE_FLAGS => Ok(Self::SetPauseFlags(decode_payload(payload)?)),
             tags::SET_VAULT_ACCESS => Ok(Self::SetVaultAccess(decode_payload(payload)?)),
             tags::TRANSFER_PROGRAM_AUTHORITY => {
@@ -230,6 +259,7 @@ impl RoshiInstruction {
                 Ok(Self::TransferVaultAuthority(decode_payload(payload)?))
             }
             tags::SET_STRATEGIST => Ok(Self::SetStrategist(decode_payload(payload)?)),
+            tags::SET_SWAP_AUTHORITY => Ok(Self::SetSwapAuthority(decode_payload(payload)?)),
             tags::SET_NAV_AUTHORITY => Ok(Self::SetNavAuthority(decode_payload(payload)?)),
             tags::SET_WITHDRAWAL_AUTHORITY => {
                 Ok(Self::SetWithdrawalAuthority(decode_payload(payload)?))
@@ -259,11 +289,14 @@ impl RoshiInstruction {
             Self::UpdateVaultConfig(args) => wincode::serialize_into(&mut data, args)?,
             Self::InitializeAsset(args) => wincode::serialize_into(&mut data, args)?,
             Self::UpdateAsset(args) => wincode::serialize_into(&mut data, args)?,
+            Self::InvestExternal(args) => wincode::serialize_into(&mut data, args)?,
+            Self::ReturnExternal(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetPauseFlags(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetVaultAccess(args) => wincode::serialize_into(&mut data, args)?,
             Self::TransferProgramAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::TransferVaultAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetStrategist(args) => wincode::serialize_into(&mut data, args)?,
+            Self::SetSwapAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetNavAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetWithdrawalAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::CollectFees(args) => wincode::serialize_into(&mut data, args)?,
@@ -320,6 +353,9 @@ impl_instruction_args! {
     SetNavAuthorityArgs = tags::SET_NAV_AUTHORITY,
     SetWithdrawalAuthorityArgs = tags::SET_WITHDRAWAL_AUTHORITY,
     CollectFeesArgs = tags::COLLECT_FEES,
+    InvestExternalArgs = tags::INVEST_EXTERNAL,
+    ReturnExternalArgs = tags::RETURN_EXTERNAL,
+    SetSwapAuthorityArgs = tags::SET_SWAP_AUTHORITY,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -343,7 +379,10 @@ mod tests {
     fn instruction_args_tags_match_canonical_tags() {
         assert_eq!(
             TAG_CASES,
-            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22]
+            &[
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24
+            ]
         );
         assert_eq!(
             RoshiInstruction::ProcessWithdrawals.tag(),
@@ -477,5 +516,8 @@ mod tests {
         ("setNavAuthority", tags::SET_NAV_AUTHORITY),
         ("setWithdrawalAuthority", tags::SET_WITHDRAWAL_AUTHORITY),
         ("collectFees", tags::COLLECT_FEES),
+        ("investExternal", tags::INVEST_EXTERNAL),
+        ("returnExternal", tags::RETURN_EXTERNAL),
+        ("setSwapAuthority", tags::SET_SWAP_AUTHORITY),
     ];
 }

@@ -12,6 +12,17 @@ pub const MAX_ACTION_OPS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
+pub enum ActionScope {
+    #[wincode(tag = 0)]
+    Manager,
+    #[wincode(tag = 1)]
+    Swap,
+    #[wincode(tag = 2)]
+    Public,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+#[wincode(tag_encoding = "u8")]
 pub enum Op {
     #[wincode(tag = 0)]
     Noop,

@@ -7,7 +7,7 @@ use crate::{
     instructions::{
         accounts::next_account,
         token::{self, TOKEN_PROGRAM_ID},
-        CollectFeesArgs,
+        InvestExternalArgs,
     },
     state::{
         sub_account::VaultSubAccount,
@@ -17,53 +17,51 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-/// Implements [`crate::instructions::RoshiInstruction::CollectFees`].
+/// Implements [`crate::instructions::RoshiInstruction::InvestExternal`].
 ///
 /// # Accounts
 ///
-/// 0. `[signer]` Vault admin.
-/// 1. `[writable]` Vault account with accrued `fees_payable`.
+/// 0. `[signer]` Vault strategist.
+/// 1. `[writable]` Vault account whose base assets are being deployed externally.
 /// 2. `[]` Vault subaccount PDA for `args.sub_account`.
 /// 3. `[writable]` Vault subaccount base custody token account.
-/// 4. `[writable]` Configured base treasury token account.
+/// 4. `[writable]` External base token account receiving the investment cash.
 /// 5. `[]` SPL Token program.
 ///
-/// Fees are accrued during NAV reporting, so collection only settles an
-/// existing payable and does not change `total_assets`.
-pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> ProgramResult {
+/// Moves base assets out to an external investment account without changing
+/// `total_assets`: the vault still owns the economic asset, only its custody
+/// location changes. The deployed amount is added to `external_assets`, while
+/// `ReturnExternal` moves cash back and decrements that tracked amount.
+pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -> ProgramResult {
     if args.amount == 0 {
         return Err(RoshiError::ZeroOutput.into());
     }
 
     let accounts_iter = &mut accounts.iter();
 
-    let admin = next_account(accounts_iter)?;
+    let strategist = next_account(accounts_iter)?;
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
-
     let mut vault = Account::load_as::<Vault>(vault_account)?;
     vault.verify_address(vault_account.key)?;
-    vault.verify_role(Role::Admin, admin)?;
-
-    if args.amount > vault.fees_payable {
-        return Err(RoshiError::InvalidVaultState.into());
+    vault.verify_role(Role::Strategist, strategist)?;
+    vault.verify_manage_enabled()?;
+    if !vault.external_enabled()? {
+        return Err(RoshiError::ExternalDisabled.into());
     }
 
-    let fee_sub_account = next_account(accounts_iter)?;
+    let sub_account = next_account(accounts_iter)?;
     let sub_account_bump =
-        VaultSubAccount::verify_account(vault_account.key, args.sub_account, fee_sub_account)?;
+        VaultSubAccount::verify_account(vault_account.key, args.sub_account, sub_account)?;
 
     let custody = next_account(accounts_iter)?;
     require_writable(custody)?;
     let base_mint = Pubkey::from(vault.base_mint);
-    token::verify_token_account_mint_and_owner(custody, &base_mint, fee_sub_account.key)?;
+    token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
 
-    let treasury = next_account(accounts_iter)?;
-    require_writable(treasury)?;
-    if treasury.key != &Pubkey::from(vault.treasury) {
-        return Err(RoshiError::InvalidTokenAccount.into());
-    }
-    token::verify_token_account_mint(treasury, &base_mint)?;
+    let external_account = next_account(accounts_iter)?;
+    require_writable(external_account)?;
+    token::verify_token_account_mint(external_account, &base_mint)?;
 
     let token_program = next_account(accounts_iter)?;
     if token_program.key != &TOKEN_PROGRAM_ID {
@@ -71,25 +69,25 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     }
 
     let sub_account_bump = [sub_account_bump];
-    let fee_sub_account_index = [args.sub_account];
+    let sub_account_index = [args.sub_account];
     let signer_seeds: &[&[u8]] = &[
         VaultSubAccount::SEED,
         vault_account.key.as_ref(),
-        &fee_sub_account_index,
+        &sub_account_index,
         &sub_account_bump,
     ];
     token::transfer_signed(
         token_program,
         custody,
-        treasury,
-        fee_sub_account,
+        external_account,
+        sub_account,
         args.amount,
         signer_seeds,
     )?;
 
-    vault.fees_payable = vault
-        .fees_payable
-        .checked_sub(args.amount)
+    vault.external_assets = vault
+        .external_assets
+        .checked_add(args.amount)
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
     vault.validate_state()?;
 
@@ -110,4 +108,23 @@ fn require_writable(account: &AccountInfo) -> ProgramResult {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_zero_amount() {
+        assert_eq!(
+            try_invest_external(
+                &[],
+                InvestExternalArgs {
+                    sub_account: 0,
+                    amount: 0,
+                },
+            ),
+            Err(ProgramError::from(RoshiError::ZeroOutput))
+        );
+    }
 }

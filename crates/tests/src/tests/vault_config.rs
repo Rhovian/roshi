@@ -119,21 +119,22 @@ fn test_update_vault_config() {
     fund(&mut svm, &vault.roles.admin);
 
     let before = vault.load(&svm);
-    let new_fee_collector = solana_pubkey::Pubkey::new_unique();
+    let new_treasury = solana_pubkey::Pubkey::new_unique();
     set_token_account(
         &mut svm,
-        new_fee_collector,
+        new_treasury,
         &vault.base_mint,
         &solana_pubkey::Pubkey::new_unique(),
         0,
     );
     let args = UpdateVaultConfigArgs {
-        fee_collector: new_fee_collector.to_bytes(),
+        treasury: new_treasury.to_bytes(),
         deposit_sub_account: 4,
         withdraw_sub_account: 5,
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 150,
         withdrawal_buffer_bps: 300,
+        external_enabled: true,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -144,11 +145,12 @@ fn test_update_vault_config() {
     send_ok(&mut svm, ix, &vault.roles.admin);
 
     let mut expected = before;
-    expected.fee_collector = new_fee_collector.to_bytes();
+    expected.treasury = new_treasury.to_bytes();
     expected.deposit_sub_account = 4;
     expected.withdraw_sub_account = 5;
     expected.performance_fee_bps = 150;
     expected.withdrawal_buffer_bps = 300;
+    expected.set_external_enabled(true);
     assert_eq!(vault.load(&svm), expected);
 }
 
@@ -163,7 +165,7 @@ fn test_update_vault_config_rejects_invalid_bps() {
     let before = vault.load(&svm);
     set_token_account(
         &mut svm,
-        vault.fee_collector,
+        vault.treasury,
         &vault.base_mint,
         &solana_pubkey::Pubkey::new_unique(),
         0,
@@ -171,12 +173,13 @@ fn test_update_vault_config_rejects_invalid_bps() {
 
     // > 100% performance fee must be rejected by validate_state on store.
     let args = UpdateVaultConfigArgs {
-        fee_collector: vault.fee_collector.to_bytes(),
+        treasury: vault.treasury.to_bytes(),
         deposit_sub_account: 0,
         withdraw_sub_account: 1,
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 10_001,
         withdrawal_buffer_bps: 0,
+        external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -203,21 +206,22 @@ fn test_update_vault_config_rejects_non_admin() {
 
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
-    let fee_collector = solana_pubkey::Pubkey::new_unique();
+    let treasury = solana_pubkey::Pubkey::new_unique();
     set_token_account(
         &mut svm,
-        fee_collector,
+        treasury,
         &vault.base_mint,
         &solana_pubkey::Pubkey::new_unique(),
         0,
     );
     let args = UpdateVaultConfigArgs {
-        fee_collector: fee_collector.to_bytes(),
+        treasury: treasury.to_bytes(),
         deposit_sub_account: 0,
         withdraw_sub_account: 1,
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(outsider.pubkey(), vault.address, args)
         .unwrap();
@@ -230,7 +234,7 @@ fn test_update_vault_config_rejects_non_admin() {
 }
 
 #[test]
-fn test_update_vault_config_rejects_fee_collector_for_wrong_mint() {
+fn test_update_vault_config_rejects_treasury_for_wrong_mint() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -239,22 +243,23 @@ fn test_update_vault_config_rejects_fee_collector_for_wrong_mint() {
     fund(&mut svm, &vault.roles.admin);
     let before = vault.load(&svm);
 
-    let new_fee_collector = solana_pubkey::Pubkey::new_unique();
+    let new_treasury = solana_pubkey::Pubkey::new_unique();
     let wrong_mint = solana_pubkey::Pubkey::new_unique();
     set_token_account(
         &mut svm,
-        new_fee_collector,
+        new_treasury,
         &wrong_mint,
         &solana_pubkey::Pubkey::new_unique(),
         0,
     );
     let args = UpdateVaultConfigArgs {
-        fee_collector: new_fee_collector.to_bytes(),
+        treasury: new_treasury.to_bytes(),
         deposit_sub_account: 0,
         withdraw_sub_account: 1,
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -293,21 +298,22 @@ fn test_update_vault_config_allows_withdraw_subaccount_rotation_with_liabilities
     )
     .unwrap();
 
-    let new_fee_collector = solana_pubkey::Pubkey::new_unique();
+    let new_treasury = solana_pubkey::Pubkey::new_unique();
     set_token_account(
         &mut svm,
-        new_fee_collector,
+        new_treasury,
         &vault.base_mint,
         &solana_pubkey::Pubkey::new_unique(),
         0,
     );
     let args = UpdateVaultConfigArgs {
-        fee_collector: new_fee_collector.to_bytes(),
+        treasury: new_treasury.to_bytes(),
         deposit_sub_account: 0,
         withdraw_sub_account: 5,
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(
         vault.roles.admin.pubkey(),
@@ -318,7 +324,7 @@ fn test_update_vault_config_allows_withdraw_subaccount_rotation_with_liabilities
     send_ok(&mut svm, ix, &vault.roles.admin);
 
     let mut expected = before;
-    expected.fee_collector = new_fee_collector.to_bytes();
+    expected.treasury = new_treasury.to_bytes();
     expected.withdraw_sub_account = 5;
     assert_eq!(vault.load(&svm), expected);
 }

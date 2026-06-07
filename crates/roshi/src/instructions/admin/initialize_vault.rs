@@ -18,14 +18,14 @@ use crate::{
 /// 3. `[writable]` Vault PDA derived from `[b"vault", tag, base_mint]`.
 /// 4. `[]` Base mint (decimals must equal `base_decimals`).
 /// 5. `[writable]` Share mint PDA derived from `[b"share_mint", vault]`.
-/// 6. `[]` Base fee collector token account.
+/// 6. `[]` Base treasury token account.
 /// 7. `[]` System program.
 /// 8. `[]` SPL Token program.
 ///
 /// # Implementation
 ///
 /// Verifies the program authority gate, validates the vault tag and PDA seeds,
-/// validates the base mint and fee collector, creates the vault account and
+/// validates the base mint and treasury, creates the vault account and
 /// share mint PDA with rent-exempt lamports, initializes the share mint with
 /// fixed 9 decimals and the vault PDA as mint authority, records configured
 /// role authorities, base-asset oracle config, and default subaccounts,
@@ -38,6 +38,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         tag,
         args.admin,
         args.strategist,
+        args.swap_authority,
         args.nav_authority,
         args.withdrawal_authority,
         args.base_mint,
@@ -46,7 +47,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.base_oracle,
         args.deposit_sub_account,
         args.withdraw_sub_account,
-        args.fee_collector,
+        args.treasury,
         args.performance_fee_bps,
         args.withdrawal_buffer_bps,
         args.private,

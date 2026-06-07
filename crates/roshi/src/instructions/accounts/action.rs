@@ -14,7 +14,7 @@ use super::{
     vault::VaultRoleContext,
 };
 use crate::state::{
-    action::{validate_ops, Action, Ops},
+    action::{validate_ops, Action, ActionScope, Ops},
     vault::Role,
     Account,
 };
@@ -64,7 +64,12 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
 
     /// Creates the rent-exempt Action PDA (funded by the admin) and stores the
     /// vault scope, approved `action_hash`, `ops`, and bump.
-    pub(crate) fn create_and_store(&self, action_hash: [u8; 32], ops: Ops) -> ProgramResult {
+    pub(crate) fn create_and_store(
+        &self,
+        action_hash: [u8; 32],
+        scope: ActionScope,
+        ops: Ops,
+    ) -> ProgramResult {
         validate_ops(&ops)?;
 
         let rent_exemption_lamports = Rent::get()?.minimum_balance(Action::SPACE);
@@ -92,6 +97,7 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
             vault: self.vault_key.to_bytes(),
             action_hash,
             ops,
+            scope,
             bump: self.action_bump,
         };
         let serialized =

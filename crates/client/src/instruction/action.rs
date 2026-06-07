@@ -1,5 +1,5 @@
 use roshi_interface::{
-    action::Ops,
+    action::{ActionScope, Ops},
     instructions::{AuthorizeActionArgs, RevokeActionArgs},
 };
 use solana_instruction::{AccountMeta, Instruction};
@@ -13,6 +13,7 @@ pub fn authorize_action(
     vault: Pubkey,
     action: Pubkey,
     action_hash: [u8; 32],
+    scope: ActionScope,
     ops: Ops,
 ) -> Result<Instruction> {
     new(
@@ -22,7 +23,11 @@ pub fn authorize_action(
             AccountMeta::new(action, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
-        &AuthorizeActionArgs { action_hash, ops },
+        &AuthorizeActionArgs {
+            action_hash,
+            scope,
+            ops,
+        },
     )
 }
 

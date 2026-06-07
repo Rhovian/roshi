@@ -8,14 +8,16 @@ use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 ///
 /// # Accounts
 ///
-/// 0. `[signer]` Vault strategist.
+/// 0. `[]` Action executor. Must be the vault strategist for manager actions
+///    or swap authority for swap actions; public actions do not require an
+///    executor role.
 /// 1. `[]` Vault account.
 /// 2. `..` Repeated `(subaccount PDA, Action PDA)` pairs, one per action.
 ///    N. `..` Shared CPI account section after all pairs.
 ///
 /// # Implementation
 ///
-/// Consumes the strategist, vault, and one `(subaccount PDA, Action PDA)` pair
+/// Consumes the executor, vault, and one `(subaccount PDA, Action PDA)` pair
 /// per action from the front of the account list. The remaining accounts form
 /// the shared CPI account section. Each action is validated and invoked in
 /// order so account writes from earlier actions are visible to later action

@@ -115,7 +115,7 @@ pub(crate) struct InitializeVaultContext<'a, 'info> {
     vault: &'a AccountInfo<'info>,
     base_mint_account: &'a AccountInfo<'info>,
     share_mint_account: &'a AccountInfo<'info>,
-    fee_collector: &'a AccountInfo<'info>,
+    treasury: &'a AccountInfo<'info>,
     system_program_acc: &'a AccountInfo<'info>,
     token_program_acc: &'a AccountInfo<'info>,
     tag: [u8; Vault::MAX_TAG_LEN],
@@ -144,7 +144,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         let share_mint_account = next_account(accounts_iter)?;
         require_writable(share_mint_account)?;
         require_uninitialized_account(share_mint_account)?;
-        let fee_collector = next_account(accounts_iter)?;
+        let treasury = next_account(accounts_iter)?;
 
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
@@ -172,7 +172,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             vault,
             base_mint_account,
             share_mint_account,
-            fee_collector,
+            treasury,
             system_program_acc,
             token_program_acc,
             tag,
@@ -202,8 +202,8 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
             args.base_decimals,
             None,
         )?;
-        token::verify_token_account_mint(self.fee_collector, &self.base_mint)?;
-        if self.fee_collector.key != &Pubkey::from(args.fee_collector) {
+        token::verify_token_account_mint(self.treasury, &self.base_mint)?;
+        if self.treasury.key != &Pubkey::from(args.treasury) {
             return Err(roshi_interface::error::RoshiError::InvalidTokenAccount.into());
         }
 

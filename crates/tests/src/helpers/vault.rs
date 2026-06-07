@@ -17,6 +17,7 @@ use super::{token::set_mint, transaction::send_ok};
 pub struct VaultRoles {
     pub admin: Keypair,
     pub strategist: Keypair,
+    pub swap_authority: Keypair,
     pub nav_authority: Keypair,
     pub withdrawal_authority: Keypair,
 }
@@ -27,6 +28,7 @@ impl VaultRoles {
         Self {
             admin: Keypair::new(),
             strategist: Keypair::new(),
+            swap_authority: Keypair::new(),
             nav_authority: Keypair::new(),
             withdrawal_authority: Keypair::new(),
         }
@@ -38,6 +40,7 @@ impl VaultRoles {
         Self {
             admin: keypair.insecure_clone(),
             strategist: keypair.insecure_clone(),
+            swap_authority: keypair.insecure_clone(),
             nav_authority: keypair.insecure_clone(),
             withdrawal_authority: keypair.insecure_clone(),
         }
@@ -61,7 +64,7 @@ pub struct VaultBuilder {
     base_oracle: OracleConfig,
     deposit_sub_account: u8,
     withdraw_sub_account: u8,
-    fee_collector: Pubkey,
+    treasury: Pubkey,
     performance_fee_bps: u16,
     withdrawal_buffer_bps: u16,
     private: bool,
@@ -78,7 +81,7 @@ impl Default for VaultBuilder {
             base_oracle: OracleConfig::default(),
             deposit_sub_account: 0,
             withdraw_sub_account: 1,
-            fee_collector: Pubkey::new_unique(),
+            treasury: Pubkey::new_unique(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
             private: false,
@@ -127,8 +130,8 @@ impl VaultBuilder {
         self
     }
 
-    pub fn fee_collector(mut self, fee_collector: Pubkey) -> Self {
-        self.fee_collector = fee_collector;
+    pub fn treasury(mut self, treasury: Pubkey) -> Self {
+        self.treasury = treasury;
         self
     }
 
@@ -165,6 +168,7 @@ impl VaultBuilder {
             tag_len: self.tag.len() as u8,
             admin: self.roles.admin.pubkey().to_bytes(),
             strategist: self.roles.strategist.pubkey().to_bytes(),
+            swap_authority: self.roles.swap_authority.pubkey().to_bytes(),
             nav_authority: self.roles.nav_authority.pubkey().to_bytes(),
             withdrawal_authority: self.roles.withdrawal_authority.pubkey().to_bytes(),
             base_mint: self.base_mint.to_bytes(),
@@ -172,7 +176,7 @@ impl VaultBuilder {
             base_oracle: self.base_oracle,
             deposit_sub_account: self.deposit_sub_account,
             withdraw_sub_account: self.withdraw_sub_account,
-            fee_collector: self.fee_collector.to_bytes(),
+            treasury: self.treasury.to_bytes(),
             performance_fee_bps: self.performance_fee_bps,
             withdrawal_buffer_bps: self.withdrawal_buffer_bps,
             private: self.private,
@@ -208,12 +212,12 @@ impl VaultBuilder {
     /// Install valid SPL base and share mints for this vault so
     /// `InitializeVault`'s mint validation passes: the base mint with the
     /// configured decimals, the share mint with 9 decimals owned by the vault
-    /// PDA, and the base fee collector token account.
+    /// PDA, and the base treasury token account.
     pub fn install_mints(&self, svm: &mut LiteSVM) {
         let vault_pda = self.address().0;
         set_mint(svm, self.base_mint, &vault_pda, self.base_decimals);
         set_mint(svm, self.share_mint_key(), &vault_pda, 9);
-        self.install_fee_collector(svm);
+        self.install_treasury(svm);
     }
 
     /// Install only the external token accounts that `InitializeVault` expects
@@ -222,13 +226,13 @@ impl VaultBuilder {
     pub fn install_initialize_vault_accounts(&self, svm: &mut LiteSVM) {
         let vault_pda = self.address().0;
         set_mint(svm, self.base_mint, &vault_pda, self.base_decimals);
-        self.install_fee_collector(svm);
+        self.install_treasury(svm);
     }
 
-    fn install_fee_collector(&self, svm: &mut LiteSVM) {
+    fn install_treasury(&self, svm: &mut LiteSVM) {
         super::token::set_token_account(
             svm,
-            self.fee_collector,
+            self.treasury,
             &self.base_mint,
             &Pubkey::new_unique(),
             0,
@@ -257,6 +261,7 @@ impl VaultBuilder {
             &self.tag,
             self.roles.admin.pubkey().to_bytes(),
             self.roles.strategist.pubkey().to_bytes(),
+            self.roles.swap_authority.pubkey().to_bytes(),
             self.roles.nav_authority.pubkey().to_bytes(),
             self.roles.withdrawal_authority.pubkey().to_bytes(),
             self.base_mint.to_bytes(),
@@ -265,7 +270,7 @@ impl VaultBuilder {
             self.base_oracle,
             self.deposit_sub_account,
             self.withdraw_sub_account,
-            self.fee_collector.to_bytes(),
+            self.treasury.to_bytes(),
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
             self.private,
@@ -296,7 +301,7 @@ impl VaultBuilder {
             tag: self.tag,
             base_mint: self.base_mint,
             share_mint,
-            fee_collector: self.fee_collector,
+            treasury: self.treasury,
             roles: self.roles,
         }
     }
@@ -310,7 +315,7 @@ pub struct TestVault {
     pub tag: Vec<u8>,
     pub base_mint: Pubkey,
     pub share_mint: Pubkey,
-    pub fee_collector: Pubkey,
+    pub treasury: Pubkey,
     pub roles: VaultRoles,
 }
 

@@ -40,6 +40,7 @@ mod tests {
             admin.to_bytes(),
             admin.to_bytes(),
             admin.to_bytes(),
+            admin.to_bytes(),
             base_mint.to_bytes(),
             Pubkey::new_unique().to_bytes(),
             6,

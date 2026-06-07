@@ -9,7 +9,7 @@ use roshi_interface::action::{
 };
 use roshi_interface::error::RoshiError;
 
-pub use roshi_interface::action::{Op, Ops, StoredOp, MAX_ACTION_OPS};
+pub use roshi_interface::action::{ActionScope, Op, Ops, StoredOp, MAX_ACTION_OPS};
 
 #[derive(SchemaWrite, SchemaRead)]
 #[repr(C)]
@@ -17,6 +17,7 @@ pub struct Action {
     pub vault: [u8; 32],
     pub action_hash: [u8; 32],
     pub ops: Ops,
+    pub scope: ActionScope,
     pub bump: u8,
 }
 
@@ -163,7 +164,7 @@ mod tests {
     fn action_layout_is_fixed_size() {
         assert_eq!(std::mem::size_of::<StoredOp>(), 4);
         assert_eq!(std::mem::size_of::<Ops>(), MAX_ACTION_OPS * 4 + 1);
-        assert_eq!(std::mem::size_of::<Action>(), 194);
-        assert_eq!(Action::SPACE, 195);
+        assert_eq!(std::mem::size_of::<Action>(), 195);
+        assert_eq!(Action::SPACE, 196);
     }
 }

@@ -1,4 +1,7 @@
-use crate::{action::Ops, oracle::OracleConfig};
+use crate::{
+    action::{ActionScope, Ops},
+    oracle::OracleConfig,
+};
 use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -12,6 +15,7 @@ pub struct InitializeVaultArgs {
     pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
+    pub swap_authority: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
@@ -19,7 +23,7 @@ pub struct InitializeVaultArgs {
     pub base_oracle: OracleConfig,
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
-    pub fee_collector: [u8; 32],
+    pub treasury: [u8; 32],
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub private: bool,
@@ -29,6 +33,7 @@ pub struct InitializeVaultArgs {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct AuthorizeActionArgs {
     pub action_hash: [u8; 32],
+    pub scope: ActionScope,
     pub ops: Ops,
 }
 
@@ -82,6 +87,18 @@ pub struct CancelRedeemArgs {
 pub struct ProcessWithdrawalsArgs;
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct InvestExternalArgs {
+    pub sub_account: u8,
+    pub amount: u64,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct ReturnExternalArgs {
+    pub sub_account: u8,
+    pub amount: u64,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct CollectFeesArgs {
     pub sub_account: u8,
     pub amount: u64,
@@ -95,12 +112,13 @@ pub struct ReportNavArgs {
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct UpdateVaultConfigArgs {
-    pub fee_collector: [u8; 32],
+    pub treasury: [u8; 32],
     pub deposit_sub_account: u8,
     pub withdraw_sub_account: u8,
     pub base_oracle: OracleConfig,
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
+    pub external_enabled: bool,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -143,6 +161,11 @@ pub struct TransferVaultAuthorityArgs {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetStrategistArgs {
     pub strategist: [u8; 32],
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct SetSwapAuthorityArgs {
+    pub swap_authority: [u8; 32],
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]

@@ -27,6 +27,10 @@ fn test_initialize_vault() {
     assert_eq!(state.admin, vault.roles.admin.pubkey().to_bytes());
     assert_eq!(state.strategist, vault.roles.strategist.pubkey().to_bytes());
     assert_eq!(
+        state.swap_authority,
+        vault.roles.swap_authority.pubkey().to_bytes()
+    );
+    assert_eq!(
         state.nav_authority,
         vault.roles.nav_authority.pubkey().to_bytes()
     );
@@ -36,7 +40,7 @@ fn test_initialize_vault() {
     );
     assert_eq!(state.base_mint, vault.base_mint.to_bytes());
     assert_eq!(state.share_mint, vault.share_mint.to_bytes());
-    assert_eq!(state.fee_collector, vault.fee_collector.to_bytes());
+    assert_eq!(state.treasury, vault.treasury.to_bytes());
     assert_eq!(state.base_decimals, 6);
     assert_eq!(state.deposit_sub_account, 0);
     assert_eq!(state.withdraw_sub_account, 1);
@@ -192,18 +196,18 @@ fn test_initialize_vault_rejects_readonly_share_mint() {
 }
 
 #[test]
-fn test_initialize_vault_rejects_fee_collector_for_wrong_mint() {
+fn test_initialize_vault_rejects_treasury_for_wrong_mint() {
     let Some((mut svm, authority, config_pda)) = setup_program() else {
         return;
     };
 
-    let fee_collector = solana_pubkey::Pubkey::new_unique();
-    let builder = VaultBuilder::new().fee_collector(fee_collector);
+    let treasury = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().treasury(treasury);
     let vault_pda = builder.address().0;
     set_mint(&mut svm, builder.base_mint_key(), &vault_pda, 6);
     set_token_account(
         &mut svm,
-        fee_collector,
+        treasury,
         &solana_pubkey::Pubkey::new_unique(),
         &solana_pubkey::Pubkey::new_unique(),
         0,

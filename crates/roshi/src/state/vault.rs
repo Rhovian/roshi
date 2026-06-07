@@ -13,6 +13,7 @@ use crate::state::flags;
 pub enum Role {
     Admin,
     Strategist,
+    SwapAuthority,
     NavAuthority,
     WithdrawalAuthority,
 }
@@ -23,6 +24,7 @@ pub enum Role {
 pub struct Vault {
     pub base_oracle: OracleConfig,
     pub total_assets: u64,
+    pub external_assets: u64,
     pub pending_withdrawal_assets: u64,
     pub fees_payable: u64,
     pub high_watermark: u64,
@@ -32,11 +34,12 @@ pub struct Vault {
     pub tag: [u8; 32],
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
+    pub swap_authority: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
     pub share_mint: [u8; 32],
-    pub fee_collector: [u8; 32],
+    pub treasury: [u8; 32],
     pub last_report_hash: [u8; 32],
     pub access_merkle_root: [u8; 32],
     pub performance_fee_bps: u16,
@@ -49,8 +52,9 @@ pub struct Vault {
     withdrawals_paused_flag: u8,
     manage_paused_flag: u8,
     private_flag: u8,
+    external_enabled_flag: u8,
     pub bump: u8,
-    _padding: [u8; 3],
+    _padding: [u8; 2],
 }
 
 impl Vault {
@@ -63,6 +67,7 @@ impl Vault {
         tag: &[u8],
         admin: [u8; 32],
         strategist: [u8; 32],
+        swap_authority: [u8; 32],
         nav_authority: [u8; 32],
         withdrawal_authority: [u8; 32],
         base_mint: [u8; 32],
@@ -71,7 +76,7 @@ impl Vault {
         base_oracle: OracleConfig,
         deposit_sub_account: u8,
         withdraw_sub_account: u8,
-        fee_collector: [u8; 32],
+        treasury: [u8; 32],
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
         private: bool,
@@ -93,6 +98,7 @@ impl Vault {
         Ok(Self {
             base_oracle,
             total_assets: 0,
+            external_assets: 0,
             pending_withdrawal_assets: 0,
             fees_payable: 0,
             high_watermark: 0,
@@ -102,11 +108,12 @@ impl Vault {
             tag,
             admin,
             strategist,
+            swap_authority,
             nav_authority,
             withdrawal_authority,
             base_mint,
             share_mint,
-            fee_collector,
+            treasury,
             last_report_hash: [0; 32],
             access_merkle_root,
             performance_fee_bps,
@@ -119,8 +126,9 @@ impl Vault {
             withdrawals_paused_flag: flags::bool_to_flag(false),
             manage_paused_flag: flags::bool_to_flag(false),
             private_flag: flags::bool_to_flag(private),
+            external_enabled_flag: flags::bool_to_flag(false),
             bump,
-            _padding: [0; 3],
+            _padding: [0; 2],
         })
     }
 
@@ -184,6 +192,7 @@ impl Vault {
         match role {
             Role::Admin => Pubkey::from(self.admin),
             Role::Strategist => Pubkey::from(self.strategist),
+            Role::SwapAuthority => Pubkey::from(self.swap_authority),
             Role::NavAuthority => Pubkey::from(self.nav_authority),
             Role::WithdrawalAuthority => Pubkey::from(self.withdrawal_authority),
         }
@@ -248,6 +257,10 @@ impl Vault {
         flags::flag_to_bool(self.private_flag, RoshiError::InvalidVaultState)
     }
 
+    pub fn external_enabled(&self) -> Result<bool, ProgramError> {
+        flags::flag_to_bool(self.external_enabled_flag, RoshiError::InvalidVaultState)
+    }
+
     pub fn set_deposits_paused(&mut self, deposits_paused: bool) {
         self.deposits_paused_flag = flags::bool_to_flag(deposits_paused);
     }
@@ -264,6 +277,10 @@ impl Vault {
         self.private_flag = flags::bool_to_flag(private);
     }
 
+    pub fn set_external_enabled(&mut self, external_enabled: bool) {
+        self.external_enabled_flag = flags::bool_to_flag(external_enabled);
+    }
+
     pub fn validate_state(&self) -> ProgramResult {
         Self::unpack_tag(&self.tag, self.tag_len)?;
         Self::validate_config(
@@ -278,7 +295,8 @@ impl Vault {
         flags::validate_flag(self.deposits_paused_flag, RoshiError::InvalidVaultState)?;
         flags::validate_flag(self.withdrawals_paused_flag, RoshiError::InvalidVaultState)?;
         flags::validate_flag(self.manage_paused_flag, RoshiError::InvalidVaultState)?;
-        flags::validate_flag(self.private_flag, RoshiError::InvalidVaultState)
+        flags::validate_flag(self.private_flag, RoshiError::InvalidVaultState)?;
+        flags::validate_flag(self.external_enabled_flag, RoshiError::InvalidVaultState)
     }
 }
 
@@ -324,6 +342,7 @@ mod tests {
             [2; 32],
             [3; 32],
             [4; 32],
+            [5; 32],
             base_mint.to_bytes(),
             Pubkey::new_unique().to_bytes(),
             6,
@@ -350,13 +369,15 @@ mod tests {
 
         assert_eq!(vault.tag_seed().unwrap(), b"test");
         assert_eq!(vault.strategist, [2; 32]);
-        assert_eq!(vault.nav_authority, [3; 32]);
-        assert_eq!(vault.withdrawal_authority, [4; 32]);
+        assert_eq!(vault.swap_authority, [3; 32]);
+        assert_eq!(vault.nav_authority, [4; 32]);
+        assert_eq!(vault.withdrawal_authority, [5; 32]);
         assert_eq!(vault.base_decimals, 6);
         assert_eq!(vault.deposit_sub_account, 7);
         assert_eq!(vault.withdraw_sub_account, 8);
-        assert_eq!(vault.fee_collector, [9; 32]);
+        assert_eq!(vault.treasury, [9; 32]);
         assert_eq!(vault.total_assets, 0);
+        assert_eq!(vault.external_assets, 0);
         assert_eq!(vault.pending_withdrawal_assets, 0);
         assert_eq!(vault.fees_payable, 0);
         assert_eq!(vault.high_watermark, 0);
@@ -369,6 +390,7 @@ mod tests {
         assert_eq!(vault.withdrawals_paused(), Ok(false));
         assert_eq!(vault.manage_paused(), Ok(false));
         assert_eq!(vault.private(), Ok(true));
+        assert_eq!(vault.external_enabled(), Ok(false));
         assert_eq!(vault.access_merkle_root, [10; 32]);
     }
 
@@ -394,8 +416,8 @@ mod tests {
         let vault = new_test_vault(false, [0; 32]);
 
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 560);
-        assert_eq!(Vault::SPACE, 561);
+        assert_eq!(core::mem::size_of::<Vault>(), 600);
+        assert_eq!(Vault::SPACE, 601);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()
@@ -410,16 +432,19 @@ mod tests {
         assert_eq!(vault.withdrawals_paused(), Ok(false));
         assert_eq!(vault.manage_paused(), Ok(false));
         assert_eq!(vault.private(), Ok(false));
+        assert_eq!(vault.external_enabled(), Ok(false));
 
         vault.set_deposits_paused(true);
         vault.set_withdrawals_paused(true);
         vault.set_manage_paused(true);
         vault.set_private(true);
+        vault.set_external_enabled(true);
 
         assert_eq!(vault.deposits_paused(), Ok(true));
         assert_eq!(vault.withdrawals_paused(), Ok(true));
         assert_eq!(vault.manage_paused(), Ok(true));
         assert_eq!(vault.private(), Ok(true));
+        assert_eq!(vault.external_enabled(), Ok(true));
     }
 
     #[test]

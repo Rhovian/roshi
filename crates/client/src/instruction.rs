@@ -22,12 +22,13 @@ pub const TOKEN_PROGRAM_ID: solana_pubkey::Pubkey =
 mod tests {
     use super::*;
     use roshi_interface::{
-        action::Ops,
+        action::{ActionScope, Ops},
         instructions::{
             AccountFlags, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
             InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs, InstructionArgs,
-            ManageArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs, RevokeActionArgs,
-            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+            InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs,
+            ReturnExternalArgs, RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs,
+            SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
             SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
             UpdateAssetArgs, UpdateVaultConfigArgs,
         },
@@ -75,12 +76,13 @@ mod tests {
         let vault = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let share_mint = roshi_interface::find_share_mint_address(&vault).0;
-        let fee_collector = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
         let args = InitializeVaultArgs {
             tag: [1; 32],
             tag_len: 4,
             admin: Pubkey::new_unique().to_bytes(),
             strategist: Pubkey::new_unique().to_bytes(),
+            swap_authority: Pubkey::new_unique().to_bytes(),
             nav_authority: Pubkey::new_unique().to_bytes(),
             withdrawal_authority: Pubkey::new_unique().to_bytes(),
             base_mint: base_mint.to_bytes(),
@@ -88,7 +90,7 @@ mod tests {
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             deposit_sub_account: 0,
             withdraw_sub_account: 1,
-            fee_collector: fee_collector.to_bytes(),
+            treasury: treasury.to_bytes(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
             private: true,
@@ -111,10 +113,7 @@ mod tests {
         assert_eq!(ix.accounts[3], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[4], AccountMeta::new_readonly(base_mint, false));
         assert_eq!(ix.accounts[5], AccountMeta::new(share_mint, false));
-        assert_eq!(
-            ix.accounts[6],
-            AccountMeta::new_readonly(fee_collector, false)
-        );
+        assert_eq!(ix.accounts[6], AccountMeta::new_readonly(treasury, false));
         assert_eq!(
             ix.accounts[7],
             AccountMeta::new_readonly(system_program::ID, false)
@@ -225,6 +224,7 @@ mod tests {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let strategist = Pubkey::new_unique();
+        let swap_authority = Pubkey::new_unique();
         let nav_authority = Pubkey::new_unique();
         let withdrawal_authority = Pubkey::new_unique();
 
@@ -233,6 +233,10 @@ mod tests {
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         let args: SetStrategistArgs = decode_args(&ix.data);
         assert_eq!(args.strategist, strategist.to_bytes());
+
+        let ix = set_swap_authority(admin, vault, swap_authority).unwrap();
+        let args: SetSwapAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.swap_authority, swap_authority.to_bytes());
 
         let ix = set_nav_authority(admin, vault, nav_authority).unwrap();
         let args: SetNavAuthorityArgs = decode_args(&ix.data);
@@ -453,10 +457,9 @@ mod tests {
         let vault = Pubkey::new_unique();
         let fee_sub_account = Pubkey::new_unique();
         let custody = Pubkey::new_unique();
-        let fee_collector = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
 
-        let ix =
-            collect_fees(admin, vault, 7, fee_sub_account, custody, fee_collector, 42).unwrap();
+        let ix = collect_fees(admin, vault, 7, fee_sub_account, custody, treasury, 42).unwrap();
 
         assert_eq!(ix.program_id, ID);
         assert_eq!(ix.accounts.len(), 6);
@@ -467,7 +470,7 @@ mod tests {
             AccountMeta::new_readonly(fee_sub_account, false)
         );
         assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
-        assert_eq!(ix.accounts[4], AccountMeta::new(fee_collector, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(treasury, false));
         assert_eq!(
             ix.accounts[5],
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
@@ -479,12 +482,104 @@ mod tests {
     }
 
     #[test]
+    fn builds_invest_external_instruction() {
+        let strategist = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let sub_account = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let external_account = Pubkey::new_unique();
+
+        let ix = invest_external(
+            strategist,
+            vault,
+            9,
+            sub_account,
+            custody,
+            external_account,
+            42,
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(strategist, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[2],
+            AccountMeta::new_readonly(sub_account, false)
+        );
+        assert_eq!(ix.accounts[3], AccountMeta::new(custody, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(external_account, false));
+        assert_eq!(
+            ix.accounts[5],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+
+        let args: InvestExternalArgs = decode_args(&ix.data);
+        assert_eq!(args.sub_account, 9);
+        assert_eq!(args.amount, 42);
+    }
+
+    #[test]
+    fn builds_return_external_instruction() {
+        let strategist = Pubkey::new_unique();
+        let external_authority = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let sub_account = Pubkey::new_unique();
+        let external_account = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+
+        let ix = return_external(
+            strategist,
+            external_authority,
+            vault,
+            9,
+            sub_account,
+            external_account,
+            custody,
+            42,
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 7);
+        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(strategist, true));
+        assert_eq!(
+            ix.accounts[1],
+            AccountMeta::new_readonly(external_authority, true)
+        );
+        assert_eq!(ix.accounts[2], AccountMeta::new(vault, false));
+        assert_eq!(
+            ix.accounts[3],
+            AccountMeta::new_readonly(sub_account, false)
+        );
+        assert_eq!(ix.accounts[4], AccountMeta::new(external_account, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new(custody, false));
+        assert_eq!(
+            ix.accounts[6],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+
+        let args: ReturnExternalArgs = decode_args(&ix.data);
+        assert_eq!(args.sub_account, 9);
+        assert_eq!(args.amount, 42);
+    }
+
+    #[test]
     fn builds_authorize_action_instruction() {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let action = Pubkey::new_unique();
 
-        let ix = authorize_action(admin, vault, action, [9; 32], Ops::empty()).unwrap();
+        let ix = authorize_action(
+            admin,
+            vault,
+            action,
+            [9; 32],
+            ActionScope::Manager,
+            Ops::empty(),
+        )
+        .unwrap();
 
         assert_eq!(ix.program_id, ID);
         assert_eq!(ix.accounts.len(), 4);
@@ -498,6 +593,7 @@ mod tests {
 
         let args: AuthorizeActionArgs = decode_args(&ix.data);
         assert_eq!(args.action_hash, [9; 32]);
+        assert_eq!(args.scope, ActionScope::Manager);
         assert_eq!(args.ops, Ops::empty());
     }
 
@@ -594,14 +690,15 @@ mod tests {
     fn builds_update_vault_config_instruction() {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
-        let fee_collector = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
         let args = UpdateVaultConfigArgs {
-            fee_collector: fee_collector.to_bytes(),
+            treasury: treasury.to_bytes(),
             deposit_sub_account: 2,
             withdraw_sub_account: 3,
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             performance_fee_bps: 150,
             withdrawal_buffer_bps: 300,
+            external_enabled: true,
         };
 
         let ix = update_vault_config(admin, vault, args).unwrap();
@@ -610,16 +707,14 @@ mod tests {
         assert_eq!(ix.accounts.len(), 3);
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(admin, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
-        assert_eq!(
-            ix.accounts[2],
-            AccountMeta::new_readonly(fee_collector, false)
-        );
+        assert_eq!(ix.accounts[2], AccountMeta::new_readonly(treasury, false));
 
         let args: UpdateVaultConfigArgs = decode_args(&ix.data);
-        assert_eq!(args.fee_collector, fee_collector.to_bytes());
+        assert_eq!(args.treasury, treasury.to_bytes());
         assert_eq!(args.deposit_sub_account, 2);
         assert_eq!(args.withdraw_sub_account, 3);
         assert_eq!(args.performance_fee_bps, 150);
         assert_eq!(args.withdrawal_buffer_bps, 300);
+        assert!(args.external_enabled);
     }
 }

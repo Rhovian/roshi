@@ -2,13 +2,15 @@
 //! commitment storage, fee accrual, and liability-aware gross NAV handling.
 
 use roshi::{error::RoshiError, state::sub_account::VaultSubAccount};
+use roshi_interface::instructions::UpdateVaultConfigArgs;
 use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_ata, set_mint_supply,
-    set_token_account, setup_program, token_balance, TestVault, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, associated_token_address, fund, send, send_ok,
+    send_ok_signed, set_ata, set_mint_supply, set_token_account, setup_program, token_balance,
+    TestVault, VaultBuilder,
 };
 
 const ONE_BASE: u64 = 1_000_000;
@@ -425,21 +427,19 @@ fn test_report_nav_rejects_gross_nav_below_payables_with_unstruck_withdrawals() 
 }
 
 #[test]
-fn test_collect_fees_pays_collector_without_changing_total_assets() {
+fn test_collect_fees_pays_treasury_without_changing_total_assets() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
 
-    let fee_collector = Pubkey::new_unique();
-    let builder = VaultBuilder::new()
-        .fee_collector(fee_collector)
-        .fees(1_000, 250);
+    let treasury = Pubkey::new_unique();
+    let builder = VaultBuilder::new().treasury(treasury).fees(1_000, 250);
     builder.install_mints(&mut svm);
     let vault = builder.install(&mut svm);
     set_mint_supply(&mut svm, &vault.share_mint, 1_000_000_000);
     set_token_account(
         &mut svm,
-        fee_collector,
+        treasury,
         &vault.base_mint,
         &Pubkey::new_unique(),
         0,
@@ -473,7 +473,7 @@ fn test_collect_fees_pays_collector_without_changing_total_assets() {
         fee_sub_account_index,
         fee_sub_account,
         custody,
-        fee_collector,
+        treasury,
         10_000,
     )
     .unwrap();
@@ -483,7 +483,98 @@ fn test_collect_fees_pays_collector_without_changing_total_assets() {
     assert_eq!(state.total_assets, 1_090_000);
     assert_eq!(state.fees_payable, 0);
     assert_eq!(token_balance(&svm, &custody), 0);
-    assert_eq!(token_balance(&svm, &fee_collector), 10_000);
+    assert_eq!(token_balance(&svm, &treasury), 10_000);
+}
+
+#[test]
+fn test_invest_external_moves_cash_without_changing_total_assets() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+
+    let owner = Keypair::new();
+    fund(&mut svm, &owner);
+    fund(&mut svm, &vault.roles.admin);
+    fund(&mut svm, &vault.roles.strategist);
+
+    let share_account = set_ata(&mut svm, &owner.pubkey(), &vault.share_mint, 0);
+    deposit_one_base(&mut svm, &vault, &owner, share_account);
+
+    let sub_account_index = 0;
+    let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
+    let custody = associated_token_address(&sub_account, &vault.base_mint);
+    let external_authority = Keypair::new();
+    fund(&mut svm, &external_authority);
+    let external_account = Pubkey::new_unique();
+    set_token_account(
+        &mut svm,
+        external_account,
+        &vault.base_mint,
+        &external_authority.pubkey(),
+        0,
+    );
+    let state = vault.load(&svm);
+    let ix = roshi_client::instruction::update_vault_config(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        UpdateVaultConfigArgs {
+            treasury: state.treasury,
+            deposit_sub_account: state.deposit_sub_account,
+            withdraw_sub_account: state.withdraw_sub_account,
+            base_oracle: state.base_oracle,
+            performance_fee_bps: state.performance_fee_bps,
+            withdrawal_buffer_bps: state.withdrawal_buffer_bps,
+            external_enabled: true,
+        },
+    )
+    .unwrap();
+    send_ok(&mut svm, ix, &vault.roles.admin);
+
+    let ix = roshi_client::instruction::invest_external(
+        vault.roles.strategist.pubkey(),
+        vault.address,
+        sub_account_index,
+        sub_account,
+        custody,
+        external_account,
+        400_000,
+    )
+    .unwrap();
+    send_ok(&mut svm, ix, &vault.roles.strategist);
+
+    let state = vault.load(&svm);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.external_assets, 400_000);
+    assert_eq!(token_balance(&svm, &custody), 600_000);
+    assert_eq!(token_balance(&svm, &external_account), 400_000);
+
+    let ix = roshi_client::instruction::return_external(
+        vault.roles.strategist.pubkey(),
+        external_authority.pubkey(),
+        vault.address,
+        sub_account_index,
+        sub_account,
+        external_account,
+        custody,
+        150_000,
+    )
+    .unwrap();
+    send_ok_signed(
+        &mut svm,
+        ix,
+        &vault.roles.strategist,
+        &[&external_authority],
+    );
+
+    let state = vault.load(&svm);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.external_assets, 250_000);
+    assert_eq!(token_balance(&svm, &custody), 750_000);
+    assert_eq!(token_balance(&svm, &external_account), 250_000);
 }
 
 #[test]
@@ -492,13 +583,13 @@ fn test_collect_fees_rejects_amount_above_payable() {
         return;
     };
 
-    let fee_collector = Pubkey::new_unique();
-    let builder = VaultBuilder::new().fee_collector(fee_collector);
+    let treasury = Pubkey::new_unique();
+    let builder = VaultBuilder::new().treasury(treasury);
     builder.install_mints(&mut svm);
     let vault = builder.install(&mut svm);
     set_token_account(
         &mut svm,
-        fee_collector,
+        treasury,
         &vault.base_mint,
         &Pubkey::new_unique(),
         0,
@@ -514,7 +605,7 @@ fn test_collect_fees_rejects_amount_above_payable() {
         fee_sub_account_index,
         fee_sub_account,
         custody,
-        fee_collector,
+        treasury,
         1,
     )
     .unwrap();
@@ -530,13 +621,13 @@ fn test_collect_fees_rejects_non_admin() {
         return;
     };
 
-    let fee_collector = Pubkey::new_unique();
-    let builder = VaultBuilder::new().fee_collector(fee_collector);
+    let treasury = Pubkey::new_unique();
+    let builder = VaultBuilder::new().treasury(treasury);
     builder.install_mints(&mut svm);
     let vault = builder.install(&mut svm);
     set_token_account(
         &mut svm,
-        fee_collector,
+        treasury,
         &vault.base_mint,
         &Pubkey::new_unique(),
         0,
@@ -554,7 +645,7 @@ fn test_collect_fees_rejects_non_admin() {
         fee_sub_account_index,
         fee_sub_account,
         custody,
-        fee_collector,
+        treasury,
         1,
     )
     .unwrap();

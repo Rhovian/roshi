@@ -5,7 +5,7 @@ use solana_pubkey::Pubkey;
 use super::{new, Result};
 
 pub fn manage(
-    strategist: Pubkey,
+    executor: Pubkey,
     vault: Pubkey,
     sub_account_pda: Pubkey,
     action: Pubkey,
@@ -13,7 +13,7 @@ pub fn manage(
     args: ManageArgs,
 ) -> Result<Instruction> {
     let mut accounts = vec![
-        AccountMeta::new_readonly(strategist, true),
+        AccountMeta::new_readonly(executor, true),
         AccountMeta::new_readonly(vault, false),
         AccountMeta::new(sub_account_pda, false),
         AccountMeta::new_readonly(action, false),
@@ -30,14 +30,14 @@ pub struct ManageBatchActionAccounts {
 }
 
 pub fn manage_batch(
-    strategist: Pubkey,
+    executor: Pubkey,
     vault: Pubkey,
     action_accounts: Vec<ManageBatchActionAccounts>,
     cpi_accounts: Vec<AccountMeta>,
     actions: Vec<ManageArgs>,
 ) -> Result<Instruction> {
     let mut accounts = Vec::with_capacity(2 + action_accounts.len() * 2 + cpi_accounts.len());
-    accounts.push(AccountMeta::new_readonly(strategist, true));
+    accounts.push(AccountMeta::new_readonly(executor, true));
     accounts.push(AccountMeta::new_readonly(vault, false));
 
     for action_accounts in action_accounts {

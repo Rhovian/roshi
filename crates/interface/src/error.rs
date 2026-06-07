@@ -25,6 +25,7 @@ pub enum RoshiError {
     SlippageExceeded = 19,
     InvalidTokenAccount = 20,
     InvalidMintAccount = 21,
+    ExternalDisabled = 22,
 }
 
 impl From<RoshiError> for ProgramError {

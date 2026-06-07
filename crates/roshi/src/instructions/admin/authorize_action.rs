@@ -17,5 +17,5 @@ use crate::instructions::{accounts::AuthorizeActionContext, AuthorizeActionArgs}
 /// re-derive and match the authorized CPI.
 pub fn try_authorize_action(accounts: &[AccountInfo], args: AuthorizeActionArgs) -> ProgramResult {
     let context = AuthorizeActionContext::load(accounts, &args.action_hash)?;
-    context.create_and_store(args.action_hash, args.ops)
+    context.create_and_store(args.action_hash, args.scope, args.ops)
 }
