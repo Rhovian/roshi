@@ -20,8 +20,10 @@ use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
 use wincode::serialize;
 
 use crate::helpers::{
-    assert_roshi_error, associated_token_address, fund, mint_supply, send, send_ok, set_ata,
-    set_token_account, setup_program, token_balance, VaultBuilder,
+    assert_roshi_error, associated_token_address_with_program, fund, mint_supply, send, send_ok,
+    set_ata, set_ata_with_program, set_mint, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, setup_program, token_balance, VaultBuilder,
+    TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
 
 const ONE_BASE: u64 = 1_000_000;
@@ -39,6 +41,7 @@ struct AtomicRedeemFixture {
     sub_account: Pubkey,
     custody: Pubkey,
     venue_account: Pubkey,
+    base_token_program: Pubkey,
     action_pda: Pubkey,
     action_hash: [u8; 32],
     ix_data: Vec<u8>,
@@ -47,18 +50,44 @@ struct AtomicRedeemFixture {
 
 impl AtomicRedeemFixture {
     fn setup(svm: &mut LiteSVM) -> Self {
+        Self::setup_with_base_program(svm, TOKEN_PROGRAM_ID)
+    }
+
+    fn setup_with_base_program(svm: &mut LiteSVM, base_token_program: Pubkey) -> Self {
         let builder = VaultBuilder::new();
-        builder.install_mints(svm);
+        if base_token_program == TOKEN_2022_PROGRAM_ID {
+            set_token_2022_mint(svm, builder.base_mint_key(), &builder.address().0, 6);
+            set_mint(svm, builder.share_mint_key(), &builder.address().0, 9);
+        } else {
+            builder.install_mints(svm);
+        }
         let vault = builder.install(svm);
 
         let owner = Keypair::new();
         fund(svm, &owner);
-        let source = set_ata(svm, &owner.pubkey(), &vault.base_mint, ONE_BASE);
+        let source = set_ata_with_program(
+            svm,
+            &owner.pubkey(),
+            &vault.base_mint,
+            ONE_BASE,
+            base_token_program,
+        );
         let share_account = set_ata(svm, &owner.pubkey(), &vault.share_mint, 0);
         let sub_account_index = 0;
         let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
-        let custody = associated_token_address(&sub_account, &vault.base_mint);
-        set_token_account(svm, custody, &vault.base_mint, &sub_account, 0);
+        let custody = associated_token_address_with_program(
+            &sub_account,
+            &vault.base_mint,
+            &base_token_program,
+        );
+        set_token_account_with_program(
+            svm,
+            custody,
+            &vault.base_mint,
+            &sub_account,
+            0,
+            base_token_program,
+        );
 
         send_ok(
             svm,
@@ -69,6 +98,7 @@ impl AtomicRedeemFixture {
                 custody,
                 share_account,
                 vault.share_mint,
+                base_token_program,
                 vault.base_mint,
                 ONE_BASE,
                 0,
@@ -81,26 +111,30 @@ impl AtomicRedeemFixture {
         svm.expire_blockhash();
 
         let recipient = Pubkey::new_unique();
-        set_token_account(svm, recipient, &vault.base_mint, &owner.pubkey(), 0);
+        set_token_account_with_program(
+            svm,
+            recipient,
+            &vault.base_mint,
+            &owner.pubkey(),
+            0,
+            base_token_program,
+        );
         let venue_account = Pubkey::new_unique();
-        set_token_account(
+        set_token_account_with_program(
             svm,
             venue_account,
             &vault.base_mint,
             &sub_account,
             REDEEM_AMOUNT,
+            base_token_program,
         );
 
         let ix_data = token_transfer_data(REDEEM_AMOUNT);
         let ops = Ops::empty();
         let action_metas = token_transfer_metas(venue_account, custody, sub_account);
-        let action_hash = compute_action_hash_from_metas(
-            &crate::helpers::TOKEN_PROGRAM_ID,
-            &ops,
-            &action_metas,
-            &ix_data,
-        )
-        .unwrap();
+        let action_hash =
+            compute_action_hash_from_metas(&base_token_program, &ops, &action_metas, &ix_data)
+                .unwrap();
         let action_pda = Action::find_address(&vault.address, &action_hash).0;
 
         Self {
@@ -112,6 +146,7 @@ impl AtomicRedeemFixture {
             sub_account,
             custody,
             venue_account,
+            base_token_program,
             action_pda,
             action_hash,
             ix_data,
@@ -150,19 +185,20 @@ impl AtomicRedeemFixture {
             self.vault.share_mint,
             self.recipient,
             self.custody,
+            self.base_token_program,
             self.sub_account,
             self.action_pda,
             vec![
                 AccountMeta::new(self.venue_account, false),
                 AccountMeta::new(self.custody, false),
                 AccountMeta::new_readonly(self.sub_account, false),
-                AccountMeta::new_readonly(crate::helpers::TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
             ],
             AtomicRedeemArgs {
                 shares,
                 min_output,
                 sub_account: self.sub_account_index,
-                program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
+                program_id: self.base_token_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -210,6 +246,29 @@ fn test_atomic_redeem_happy_path() {
         mint_supply(&svm, &fixture.vault.share_mint),
         ONE_BASE_SHARES - REDEEM_SHARES
     );
+    assert_eq!(
+        fixture.vault.load(&svm).total_assets,
+        ONE_BASE - REDEEM_AMOUNT
+    );
+}
+
+#[test]
+fn test_atomic_redeem_happy_path_with_token_2022_base() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = AtomicRedeemFixture::setup_with_base_program(&mut svm, TOKEN_2022_PROGRAM_ID);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    send_ok(
+        &mut svm,
+        fixture.ix(REDEEM_SHARES, REDEEM_AMOUNT, fixture.ix_data.clone()),
+        &fixture.owner,
+    );
+
+    assert_eq!(token_balance(&svm, &fixture.recipient), REDEEM_AMOUNT);
+    assert_eq!(token_balance(&svm, &fixture.custody), ONE_BASE);
     assert_eq!(
         fixture.vault.load(&svm).total_assets,
         ONE_BASE - REDEEM_AMOUNT
@@ -357,6 +416,7 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
         fixture.vault.share_mint,
         fixture.recipient,
         fixture.custody,
+        crate::helpers::TOKEN_PROGRAM_ID,
         fixture.sub_account,
         fixture.action_pda,
         vec![
@@ -430,6 +490,7 @@ fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
         fixture.vault.share_mint,
         fixture.recipient,
         fixture.custody,
+        crate::helpers::TOKEN_PROGRAM_ID,
         fixture.sub_account,
         fixture.action_pda,
         vec![

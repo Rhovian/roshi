@@ -18,8 +18,9 @@ use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
 use wincode::serialize;
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_token_account,
-    setup_program, token_balance, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok,
+    set_token_account_with_program, setup_program, token_balance, VaultBuilder,
+    TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
 
 const INPUT_BALANCE: u64 = 1_000_000;
@@ -36,10 +37,15 @@ struct SwapFixture {
     action_hash: [u8; 32],
     ix_data: Vec<u8>,
     ops: Ops,
+    token_program: Pubkey,
 }
 
 impl SwapFixture {
     fn setup(svm: &mut LiteSVM) -> Self {
+        Self::setup_with_program(svm, TOKEN_PROGRAM_ID)
+    }
+
+    fn setup_with_program(svm: &mut LiteSVM, token_program: Pubkey) -> Self {
         let builder = VaultBuilder::new();
         builder.install_mints(svm);
         let vault = builder.install(svm);
@@ -48,19 +54,21 @@ impl SwapFixture {
         let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
         let input_custody = Pubkey::new_unique();
         let output_custody = Pubkey::new_unique();
-        set_token_account(
+        set_token_account_with_program(
             svm,
             input_custody,
             &vault.base_mint,
             &sub_account,
             INPUT_BALANCE,
+            token_program,
         );
-        set_token_account(
+        set_token_account_with_program(
             svm,
             output_custody,
             &vault.base_mint,
             &sub_account,
             OUTPUT_BALANCE,
+            token_program,
         );
 
         let ix_data = token_transfer_data(SWAP_AMOUNT);
@@ -70,13 +78,8 @@ impl SwapFixture {
         ])
         .unwrap();
         let action_metas = token_transfer_metas(input_custody, output_custody, sub_account);
-        let action_hash = compute_action_hash_from_metas(
-            &crate::helpers::TOKEN_PROGRAM_ID,
-            &ops,
-            &action_metas,
-            &ix_data,
-        )
-        .unwrap();
+        let action_hash =
+            compute_action_hash_from_metas(&token_program, &ops, &action_metas, &ix_data).unwrap();
         let action_pda = Action::find_address(&vault.address, &action_hash).0;
 
         Self {
@@ -89,6 +92,7 @@ impl SwapFixture {
             action_hash,
             ix_data,
             ops,
+            token_program,
         }
     }
 
@@ -127,13 +131,13 @@ impl SwapFixture {
                 AccountMeta::new(self.input_custody, false),
                 AccountMeta::new(self.output_custody, false),
                 AccountMeta::new_readonly(self.sub_account, false),
-                AccountMeta::new_readonly(crate::helpers::TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.token_program, false),
             ],
             SwapArgs {
                 min_out,
                 max_in,
                 sub_account: self.sub_account_index,
-                program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
+                program_id: self.token_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -164,6 +168,36 @@ fn test_swap_happy_path() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
+    fixture.install_action(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    send_ok(
+        &mut svm,
+        fixture.ix(
+            fixture.vault.roles.swap_authority.pubkey(),
+            SWAP_AMOUNT,
+            SWAP_AMOUNT,
+        ),
+        &fixture.vault.roles.swap_authority,
+    );
+
+    assert_eq!(
+        token_balance(&svm, &fixture.input_custody),
+        INPUT_BALANCE - SWAP_AMOUNT
+    );
+    assert_eq!(
+        token_balance(&svm, &fixture.output_custody),
+        OUTPUT_BALANCE + SWAP_AMOUNT
+    );
+}
+
+#[test]
+fn test_swap_happy_path_with_token_2022_custody() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup_with_program(&mut svm, TOKEN_2022_PROGRAM_ID);
     fixture.install_action(&mut svm);
     fund(&mut svm, &fixture.vault.roles.swap_authority);
 

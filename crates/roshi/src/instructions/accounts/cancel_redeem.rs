@@ -45,7 +45,9 @@ impl<'a, 'info> CancelRedeemContext<'a, 'info> {
         let share_dest = next_account(accounts_iter)?;
         require_writable(share_dest)?;
         let token_program = next_account(accounts_iter)?;
-        token::verify_token_program(token_program)?;
+        if token_program.key != &token::TOKEN_PROGRAM_ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
 
         let vault = Vault::load_checked(vault_account)?;
         vault.verify_share_mint(share_mint)?;

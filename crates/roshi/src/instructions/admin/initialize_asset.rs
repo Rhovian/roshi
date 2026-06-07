@@ -12,8 +12,9 @@ use crate::{
 ///
 /// 0. `[signer, writable]` Vault admin (funds the Asset account).
 /// 1. `[]` Vault account that owns the asset config.
-/// 2. `[writable]` Asset PDA derived from `(vault, asset_mint)`.
-/// 3. `[]` System program for Asset account creation.
+/// 2. `[]` Asset mint.
+/// 3. `[writable]` Asset PDA derived from `(vault, asset_mint)`.
+/// 4. `[]` System program for Asset account creation.
 ///
 /// Verifies the vault admin, rejects the vault base mint, and writes the
 /// supported non-base asset config. The oracle is recorded as configuration and

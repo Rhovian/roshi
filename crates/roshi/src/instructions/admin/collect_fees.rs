@@ -64,7 +64,8 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     token::verify_token_account_mint(treasury, &base_mint)?;
 
     let token_program = next_account(accounts_iter)?;
-    token::verify_token_program(token_program)?;
+    token::verify_token_program_for(token_program, custody)?;
+    token::verify_token_program_for(token_program, treasury)?;
 
     let sub_account_bump = [sub_account_bump];
     let fee_sub_account_index = [args.sub_account];

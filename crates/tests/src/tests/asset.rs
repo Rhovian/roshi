@@ -18,7 +18,9 @@ use solana_sdk::{signature::Keypair, signer::Signer};
 use wincode::deserialize;
 
 use crate::helpers::{
-    assert_instruction_error, fund, send, send_ok, setup_program, TestVault, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok,
+    set_extended_token_2022_mint, set_mint, set_token_2022_mint, setup_program, TestVault,
+    VaultBuilder,
 };
 
 fn init_args(asset_mint: Pubkey) -> InitializeAssetArgs {
@@ -40,12 +42,14 @@ fn update_args() -> UpdateAssetArgs {
 /// Initialize an enabled asset under `vault` and return its PDA.
 fn create_asset(svm: &mut LiteSVM, vault: &TestVault, asset_mint: Pubkey) -> Pubkey {
     fund(svm, &vault.roles.admin);
+    set_mint(svm, asset_mint, &vault.roles.admin.pubkey(), 9);
     let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
     send_ok(
         svm,
         roshi_client::instruction::initialize_asset(
             vault.roles.admin.pubkey(),
             vault.address,
+            asset_mint,
             asset_pda,
             init_args(asset_mint),
         )
@@ -73,6 +77,7 @@ fn test_initialize_asset() {
     fund(&mut svm, &vault.roles.admin);
 
     let asset_mint = Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
     let (asset_pda, bump) = Asset::find_address(&vault.address, &asset_mint);
     assert!(svm.get_account(&asset_pda).is_none());
 
@@ -81,6 +86,7 @@ fn test_initialize_asset() {
         roshi_client::instruction::initialize_asset(
             vault.roles.admin.pubkey(),
             vault.address,
+            asset_mint,
             asset_pda,
             init_args(asset_mint),
         )
@@ -115,6 +121,7 @@ fn test_initialize_asset_rejects_non_admin() {
     let ix = roshi_client::instruction::initialize_asset(
         outsider.pubkey(),
         vault.address,
+        asset_mint,
         asset_pda,
         init_args(asset_mint),
     )
@@ -142,6 +149,7 @@ fn test_initialize_asset_rejects_base_mint() {
     let ix = roshi_client::instruction::initialize_asset(
         vault.roles.admin.pubkey(),
         vault.address,
+        base_mint,
         asset_pda,
         init_args(base_mint),
     )
@@ -164,11 +172,13 @@ fn test_initialize_asset_rejects_mismatched_seeds() {
     fund(&mut svm, &vault.roles.admin);
 
     let asset_mint = Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
     // The asset account does not match the PDA for asset_mint.
     let wrong_asset = Pubkey::new_unique();
     let ix = roshi_client::instruction::initialize_asset(
         vault.roles.admin.pubkey(),
         vault.address,
+        asset_mint,
         wrong_asset,
         init_args(asset_mint),
     )
@@ -193,6 +203,7 @@ fn test_initialize_asset_rejects_duplicate() {
     let ix = roshi_client::instruction::initialize_asset(
         vault.roles.admin.pubkey(),
         vault.address,
+        asset_mint,
         asset_pda,
         init_args(asset_mint),
     )
@@ -235,6 +246,64 @@ fn test_update_asset() {
     expected.oracle = new_oracle;
     expected.set_enabled(false);
     assert_eq!(load_asset(&svm, asset_pda), expected);
+}
+
+#[test]
+fn test_initialize_asset_accepts_bare_token_2022_mint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new().install(&mut svm);
+    fund(&mut svm, &vault.roles.admin);
+
+    let asset_mint = Pubkey::new_unique();
+    set_token_2022_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            init_args(asset_mint),
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    let asset = load_asset(&svm, asset_pda);
+    assert_eq!(asset.asset_mint, asset_mint.to_bytes());
+}
+
+#[test]
+fn test_initialize_asset_rejects_extended_token_2022_mint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new().install(&mut svm);
+    fund(&mut svm, &vault.roles.admin);
+
+    let asset_mint = Pubkey::new_unique();
+    set_extended_token_2022_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    let ix = roshi_client::instruction::initialize_asset(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        asset_mint,
+        asset_pda,
+        init_args(asset_mint),
+    )
+    .unwrap();
+    assert_roshi_error(
+        send(&mut svm, ix, &vault.roles.admin),
+        roshi::error::RoshiError::InvalidMintAccount,
+    );
+    assert!(svm.get_account(&asset_pda).is_none());
 }
 
 #[test]

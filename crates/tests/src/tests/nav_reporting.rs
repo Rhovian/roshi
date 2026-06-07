@@ -50,6 +50,7 @@ fn deposit_one_base(
         custody,
         share_account,
         vault.share_mint,
+        crate::helpers::TOKEN_PROGRAM_ID,
         vault.base_mint,
         ONE_BASE,
         0,

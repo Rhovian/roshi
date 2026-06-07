@@ -13,6 +13,7 @@ pub fn deposit(
     vault_custody_token_account: Pubkey,
     user_share_account: Pubkey,
     share_mint: Pubkey,
+    asset_token_program: Pubkey,
     asset_mint: Pubkey,
     amount: u64,
     min_shares_out: u64,
@@ -27,6 +28,7 @@ pub fn deposit(
         AccountMeta::new(user_share_account, false),
         AccountMeta::new(share_mint, false),
         AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        AccountMeta::new_readonly(asset_token_program, false),
     ];
     accounts.extend(additional_accounts);
 

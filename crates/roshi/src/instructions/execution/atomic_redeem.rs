@@ -25,11 +25,12 @@ use roshi_interface::{error::RoshiError, math::assets_for_redeem};
 /// 3. `[writable]` Share mint (`vault.share_mint`).
 /// 4. `[writable]` Recipient base token account (payout destination).
 /// 5. `[writable]` Vault base custody token account.
-/// 6. `[]` Subaccount PDA derived from `(vault, sub_account)`.
-/// 7. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
-/// 8. `[]` SPL Token program.
-/// 9. `..` CPI account section. `accounts_start` is relative to this section,
-///    and the target CPI program account must follow the selected CPI metas.
+/// 6. `[]` Base SPL Token program.
+/// 7. `[]` Subaccount PDA derived from `(vault, sub_account)`.
+/// 8. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
+/// 9. `[]` Classic SPL Token program.
+/// 10. `..` CPI account section. `accounts_start` is relative to this section,
+///     and the target CPI program account must follow the selected CPI metas.
 ///
 /// Atomically unwinds one pre-authorized vault position CPI, bounds the CPI
 /// amount by the caller's share entitlement, pays out realized base proceeds,
@@ -164,7 +165,7 @@ fn settle_atomic_redeem(
         &sub_account_bump_seed,
     ];
     token::transfer_signed(
-        context.token_program,
+        context.base_token_program,
         context.custody,
         context.recipient_token_account,
         context.sub_account,

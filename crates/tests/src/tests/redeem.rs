@@ -63,6 +63,7 @@ fn setup_redeem(svm: &mut LiteSVM) -> RedeemFixture {
             custody,
             share_account,
             share_mint,
+            crate::helpers::TOKEN_PROGRAM_ID,
             base_mint,
             ONE_BASE,
             0,

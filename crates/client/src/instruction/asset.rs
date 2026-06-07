@@ -8,6 +8,7 @@ use super::{new, Result};
 pub fn initialize_asset(
     admin: Pubkey,
     vault: Pubkey,
+    asset_mint: Pubkey,
     asset: Pubkey,
     args: InitializeAssetArgs,
 ) -> Result<Instruction> {
@@ -15,6 +16,7 @@ pub fn initialize_asset(
         vec![
             AccountMeta::new(admin, true),
             AccountMeta::new_readonly(vault, false),
+            AccountMeta::new_readonly(asset_mint, false),
             AccountMeta::new(asset, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],

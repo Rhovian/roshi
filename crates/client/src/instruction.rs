@@ -193,6 +193,7 @@ mod tests {
         let share_mint = Pubkey::new_unique();
         let recipient_token_account = Pubkey::new_unique();
         let custody = Pubkey::new_unique();
+        let base_token_program = Pubkey::new_unique();
         let sub_account_pda = Pubkey::new_unique();
         let action = Pubkey::new_unique();
         let cpi_account = Pubkey::new_unique();
@@ -206,6 +207,7 @@ mod tests {
             share_mint,
             recipient_token_account,
             custody,
+            base_token_program,
             sub_account_pda,
             action,
             vec![
@@ -229,7 +231,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 11);
+        assert_eq!(ix.accounts.len(), 12);
         assert_eq!(ix.accounts[0], AccountMeta::new(owner, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[2], AccountMeta::new(user_share_account, false));
@@ -241,16 +243,20 @@ mod tests {
         assert_eq!(ix.accounts[5], AccountMeta::new(custody, false));
         assert_eq!(
             ix.accounts[6],
+            AccountMeta::new_readonly(base_token_program, false)
+        );
+        assert_eq!(
+            ix.accounts[7],
             AccountMeta::new_readonly(sub_account_pda, false)
         );
-        assert_eq!(ix.accounts[7], AccountMeta::new_readonly(action, false));
+        assert_eq!(ix.accounts[8], AccountMeta::new_readonly(action, false));
         assert_eq!(
-            ix.accounts[8],
+            ix.accounts[9],
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
         );
-        assert_eq!(ix.accounts[9], AccountMeta::new(cpi_account, false));
+        assert_eq!(ix.accounts[10], AccountMeta::new(cpi_account, false));
         assert_eq!(
-            ix.accounts[10],
+            ix.accounts[11],
             AccountMeta::new_readonly(cpi_program, false)
         );
 
@@ -418,6 +424,7 @@ mod tests {
         let shares = Pubkey::new_unique();
         let share_mint = Pubkey::new_unique();
         let asset_mint = Pubkey::new_unique();
+        let asset_token_program = Pubkey::new_unique();
         let asset_pda = Pubkey::new_unique();
         let proof = vec![[1; 32], [2; 32]];
 
@@ -428,6 +435,7 @@ mod tests {
             custody,
             shares,
             share_mint,
+            asset_token_program,
             asset_mint,
             123,
             456,
@@ -437,7 +445,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(ix.accounts.len(), 9);
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(depositor, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[2], AccountMeta::new(source, false));
@@ -448,7 +456,11 @@ mod tests {
             ix.accounts[6],
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
         );
-        assert_eq!(ix.accounts[7], AccountMeta::new_readonly(asset_pda, false));
+        assert_eq!(
+            ix.accounts[7],
+            AccountMeta::new_readonly(asset_token_program, false)
+        );
+        assert_eq!(ix.accounts[8], AccountMeta::new_readonly(asset_pda, false));
 
         let args: DepositArgs = decode_args(&ix.data);
         assert_eq!(args.asset_mint, asset_mint.to_bytes());
@@ -792,15 +804,16 @@ mod tests {
             enabled: true,
         };
 
-        let ix = initialize_asset(admin, vault, asset, args).unwrap();
+        let ix = initialize_asset(admin, vault, asset_mint, asset, args).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 4);
+        assert_eq!(ix.accounts.len(), 5);
         assert_eq!(ix.accounts[0], AccountMeta::new(admin, true));
         assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
-        assert_eq!(ix.accounts[2], AccountMeta::new(asset, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new_readonly(asset_mint, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new(asset, false));
         assert_eq!(
-            ix.accounts[3],
+            ix.accounts[4],
             AccountMeta::new_readonly(system_program::ID, false)
         );
 

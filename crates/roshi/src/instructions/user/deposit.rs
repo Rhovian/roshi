@@ -21,9 +21,10 @@ use roshi_interface::{
 /// 3. `[writable]` Vault custody token account for the selected asset.
 /// 4. `[writable]` Depositor share token account.
 /// 5. `[writable]` Share mint (`vault.share_mint`).
-/// 6. `[]` SPL Token program.
-/// 7. `[]` Asset PDA (non-base deposits only).
-/// 8. `..` Oracle accounts (non-base deposits only).
+/// 6. `[]` Classic SPL Token program for share minting.
+/// 7. `[]` Deposited asset SPL Token program.
+/// 8. `[]` Asset PDA (non-base deposits only).
+/// 9. `..` Oracle accounts (non-base deposits only).
 ///
 /// If the vault is private, instruction data must include a Merkle proof for
 /// the depositor's wallet against `vault.access_merkle_root`.
@@ -66,7 +67,7 @@ pub fn try_deposit<'info>(
 
     // Pull the deposit into custody (the depositor authorizes the transfer).
     token::transfer(
-        context.token_program,
+        context.asset_token_program,
         context.source,
         context.custody,
         context.depositor,
@@ -79,7 +80,7 @@ pub fn try_deposit<'info>(
     let bump = [vault.bump];
     let signer_seeds: &[&[u8]] = &[Vault::SEED, tag, &base_mint, &bump];
     token::mint_to_signed(
-        context.token_program,
+        context.share_token_program,
         context.share_mint,
         context.share_dest,
         context.vault_account,

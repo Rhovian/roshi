@@ -7,7 +7,7 @@ use wincode::serialize;
 use super::shared::{next_account, require_writable};
 use crate::{
     instructions::{
-        token::{associated_token_address, verify_token_program},
+        token::{associated_token_address, verify_token_program_for},
         DepositArgs,
     },
     oracle::{OracleKind, OraclePrice, PythOracle, SwitchboardOracle},
@@ -23,9 +23,10 @@ use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 /// 3. `[writable]` Vault custody token account.
 /// 4. `[writable]` Depositor share token account.
 /// 5. `[writable]` Share mint.
-/// 6. `[]` SPL Token program.
-/// 7. `[]` Asset PDA (non-base deposits only).
-/// 8. `..` Oracle accounts (non-base deposits only; layout depends on the
+/// 6. `[]` Share SPL Token program.
+/// 7. `[]` Asset SPL Token program.
+/// 8. `[]` Asset PDA (non-base deposits only).
+/// 9. `..` Oracle accounts (non-base deposits only; layout depends on the
 ///    asset's oracle kind).
 pub(crate) struct DepositContext<'a, 'info> {
     pub(crate) depositor: &'a AccountInfo<'info>,
@@ -34,7 +35,8 @@ pub(crate) struct DepositContext<'a, 'info> {
     pub(crate) custody: &'a AccountInfo<'info>,
     pub(crate) share_dest: &'a AccountInfo<'info>,
     pub(crate) share_mint: &'a AccountInfo<'info>,
-    pub(crate) token_program: &'a AccountInfo<'info>,
+    pub(crate) share_token_program: &'a AccountInfo<'info>,
+    pub(crate) asset_token_program: &'a AccountInfo<'info>,
     extra: &'a [AccountInfo<'info>],
     pub(crate) vault: Vault,
 }
@@ -60,8 +62,13 @@ where
         require_writable(share_dest)?;
         let share_mint = next_account(accounts_iter)?;
         require_writable(share_mint)?;
-        let token_program = next_account(accounts_iter)?;
-        verify_token_program(token_program)?;
+        let share_token_program = next_account(accounts_iter)?;
+        if share_token_program.key != &crate::instructions::token::TOKEN_PROGRAM_ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        let asset_token_program = next_account(accounts_iter)?;
+        verify_token_program_for(asset_token_program, source)?;
+        verify_token_program_for(asset_token_program, custody)?;
         let extra = accounts_iter.as_slice();
 
         let vault = Vault::load_checked(vault_account)?;
@@ -74,7 +81,8 @@ where
             custody,
             share_dest,
             share_mint,
-            token_program,
+            share_token_program,
+            asset_token_program,
             extra,
             vault,
         })
@@ -92,7 +100,9 @@ where
         // both base and non-base assets, so it is always vault-controlled.
         let (sub_account, _) =
             VaultSubAccount::find_address(&vault_key, self.vault.deposit_sub_account);
-        if self.custody.key != &associated_token_address(&sub_account, &asset_mint) {
+        if self.custody.key
+            != &associated_token_address(&sub_account, &asset_mint, self.asset_token_program.key)
+        {
             return Err(RoshiError::InvalidTokenAccount.into());
         }
 

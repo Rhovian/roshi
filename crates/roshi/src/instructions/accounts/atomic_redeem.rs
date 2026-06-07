@@ -20,10 +20,11 @@ use crate::{
 ///    base mint).
 /// 5. `[writable]` Vault base custody token account (mint = base mint, owner =
 ///    sub_account PDA).
-/// 6. `[]` Subaccount PDA derived from `(vault, sub_account)`.
-/// 7. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
-/// 8. `[]` SPL Token program.
-/// 9. `..` CPI account section.
+/// 6. `[]` Base SPL Token program.
+/// 7. `[]` Subaccount PDA derived from `(vault, sub_account)`.
+/// 8. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.
+/// 9. `[]` Classic SPL Token program.
+/// 10. `..` CPI account section.
 pub(crate) struct AtomicRedeemContext<'a, 'info> {
     pub(crate) owner: &'a AccountInfo<'info>,
     pub(crate) vault_account: &'a AccountInfo<'info>,
@@ -31,6 +32,7 @@ pub(crate) struct AtomicRedeemContext<'a, 'info> {
     pub(crate) share_mint: &'a AccountInfo<'info>,
     pub(crate) recipient_token_account: &'a AccountInfo<'info>,
     pub(crate) custody: &'a AccountInfo<'info>,
+    pub(crate) base_token_program: &'a AccountInfo<'info>,
     pub(crate) sub_account: &'a AccountInfo<'info>,
     pub(crate) token_program: &'a AccountInfo<'info>,
     pub(crate) cpi_accounts: &'a [AccountInfo<'info>],
@@ -58,10 +60,13 @@ impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
         require_writable(recipient_token_account)?;
         let custody = next_account(accounts_iter)?;
         require_writable(custody)?;
+        let base_token_program = next_account(accounts_iter)?;
         let sub_account = next_account(accounts_iter)?;
         let action_account = next_account(accounts_iter)?;
         let token_program = next_account(accounts_iter)?;
-        token::verify_token_program(token_program)?;
+        if token_program.key != &token::TOKEN_PROGRAM_ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
         let cpi_accounts = accounts_iter.as_slice();
 
         let vault = Vault::load_checked(vault_account)?;
@@ -73,9 +78,11 @@ impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
 
         let base_mint = Pubkey::from(vault.base_mint);
         token::verify_token_account_mint(recipient_token_account, &base_mint)?;
+        token::verify_token_program_for(base_token_program, recipient_token_account)?;
         let sub_account_bump =
             VaultSubAccount::verify_account(&vault_key, args.sub_account, sub_account)?;
         token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
+        token::verify_token_program_for(base_token_program, custody)?;
         token::verify_custody_account(custody, sub_account.key)?;
 
         let action = Account::load_as::<Action>(action_account)?;
@@ -88,6 +95,7 @@ impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
             share_mint,
             recipient_token_account,
             custody,
+            base_token_program,
             sub_account,
             token_program,
             cpi_accounts,

@@ -1,5 +1,6 @@
 use solana_account_info::AccountInfo;
 use solana_cpi::{invoke, invoke_signed};
+use solana_instruction::{AccountMeta, Instruction};
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::{pubkey, Pubkey};
 
@@ -7,6 +8,9 @@ use roshi_interface::error::RoshiError;
 
 /// SPL Token program id.
 pub(crate) const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Token-2022 program id.
+pub(crate) const TOKEN_2022_PROGRAM_ID: Pubkey =
+    pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// Associated Token Account program id.
 pub(crate) const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
     pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
@@ -26,12 +30,22 @@ const TOKEN_ACCOUNT_DELEGATE: usize = 72;
 const TOKEN_ACCOUNT_STATE: usize = 108;
 const TOKEN_ACCOUNT_CLOSE_AUTHORITY: usize = 129;
 const TOKEN_ACCOUNT_LEN: usize = 165;
+const TRANSFER_INSTRUCTION: u8 = 3;
+const MINT_TO_INSTRUCTION: u8 = 7;
+const BURN_INSTRUCTION: u8 = 8;
 
-/// Derive the associated token account address for `wallet` and `mint` under
-/// the classic SPL Token program.
-pub(crate) fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+pub(crate) fn is_token_program(key: &Pubkey) -> bool {
+    key == &TOKEN_PROGRAM_ID || key == &TOKEN_2022_PROGRAM_ID
+}
+
+/// Derive the associated token account address for `wallet` and `mint`.
+pub(crate) fn associated_token_address(
+    wallet: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Pubkey {
     Pubkey::find_program_address(
-        &[wallet.as_ref(), TOKEN_PROGRAM_ID.as_ref(), mint.as_ref()],
+        &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &ASSOCIATED_TOKEN_PROGRAM_ID,
     )
     .0
@@ -45,11 +59,14 @@ pub(crate) fn verify_mint(
     decimals: u8,
     expected_authority: Option<&Pubkey>,
 ) -> ProgramResult {
-    if account.key != expected_key || account.owner != &TOKEN_PROGRAM_ID {
+    if account.key != expected_key || !is_token_program(account.owner) {
         return Err(RoshiError::InvalidMintAccount.into());
     }
 
     let data = account.try_borrow_data()?;
+    if account.owner == &TOKEN_2022_PROGRAM_ID && data.len() != MINT_LEN {
+        return Err(RoshiError::InvalidMintAccount.into());
+    }
     if data.len() < MINT_LEN || data[MINT_IS_INITIALIZED] != 1 || data[MINT_DECIMALS] != decimals {
         return Err(RoshiError::InvalidMintAccount.into());
     }
@@ -70,9 +87,22 @@ pub(crate) fn verify_mint(
     Ok(())
 }
 
-/// Verify `account` is the classic SPL Token program.
+/// Verify `account` is an accepted SPL Token program.
 pub(crate) fn verify_token_program(account: &AccountInfo) -> ProgramResult {
-    if account.key != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.key) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    Ok(())
+}
+
+/// Verify `token_program` is the program that owns `token_account`.
+pub(crate) fn verify_token_program_for(
+    token_program: &AccountInfo,
+    token_account: &AccountInfo,
+) -> ProgramResult {
+    verify_token_program(token_program)?;
+    if token_account.owner != token_program.key {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -81,7 +111,7 @@ pub(crate) fn verify_token_program(account: &AccountInfo) -> ProgramResult {
 
 /// Read the supply of an initialized SPL mint.
 pub(crate) fn mint_supply(account: &AccountInfo) -> Result<u64, ProgramError> {
-    if account.owner != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.owner) {
         return Err(RoshiError::InvalidMintAccount.into());
     }
 
@@ -124,7 +154,7 @@ pub(crate) fn verify_token_account_mint(
     account: &AccountInfo,
     expected_mint: &Pubkey,
 ) -> ProgramResult {
-    if account.owner != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.owner) {
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 
@@ -164,7 +194,7 @@ pub(crate) fn verify_token_account_mint_and_owner(
 /// Verify `account` is an initialized SPL token account fully controlled by
 /// `subaccount`, independent of mint.
 pub(crate) fn verify_custody_account(account: &AccountInfo, subaccount: &Pubkey) -> ProgramResult {
-    if account.owner != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.owner) {
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 
@@ -195,7 +225,7 @@ pub(crate) fn is_clean_custody(
     account: &AccountInfo,
     subaccount: &Pubkey,
 ) -> Result<bool, ProgramError> {
-    if account.owner != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.owner) {
         return Ok(false);
     }
 
@@ -234,7 +264,7 @@ fn has_transfer_authority(data: &[u8]) -> bool {
 
 /// Read the amount field of an initialized SPL token account.
 pub(crate) fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
-    if account.owner != &TOKEN_PROGRAM_ID {
+    if !is_token_program(account.owner) {
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 
@@ -258,14 +288,14 @@ pub(crate) fn transfer<'info>(
     authority: &AccountInfo<'info>,
     amount: u64,
 ) -> ProgramResult {
-    let instruction = spl_token_interface::instruction::transfer(
+    let instruction = token_amount_instruction(
         token_program.key,
+        TRANSFER_INSTRUCTION,
         source.key,
         destination.key,
         authority.key,
-        &[],
         amount,
-    )?;
+    );
 
     invoke(
         &instruction,
@@ -287,14 +317,14 @@ pub(crate) fn transfer_signed<'info>(
     amount: u64,
     signer_seeds: &[&[u8]],
 ) -> ProgramResult {
-    let instruction = spl_token_interface::instruction::transfer(
+    let instruction = token_amount_instruction(
         token_program.key,
+        TRANSFER_INSTRUCTION,
         source.key,
         destination.key,
         authority.key,
-        &[],
         amount,
-    )?;
+    );
 
     invoke_signed(
         &instruction,
@@ -317,14 +347,14 @@ pub(crate) fn burn<'info>(
     authority: &AccountInfo<'info>,
     amount: u64,
 ) -> ProgramResult {
-    let instruction = spl_token_interface::instruction::burn(
+    let instruction = token_amount_instruction(
         token_program.key,
+        BURN_INSTRUCTION,
         account.key,
         mint.key,
         authority.key,
-        &[],
         amount,
-    )?;
+    );
 
     invoke(
         &instruction,
@@ -346,14 +376,14 @@ pub(crate) fn mint_to_signed<'info>(
     amount: u64,
     signer_seeds: &[&[u8]],
 ) -> ProgramResult {
-    let instruction = spl_token_interface::instruction::mint_to(
+    let instruction = token_amount_instruction(
         token_program.key,
+        MINT_TO_INSTRUCTION,
         mint.key,
         destination.key,
         mint_authority.key,
-        &[],
         amount,
-    )?;
+    );
 
     invoke_signed(
         &instruction,
@@ -365,4 +395,27 @@ pub(crate) fn mint_to_signed<'info>(
         ],
         &[signer_seeds],
     )
+}
+
+fn token_amount_instruction(
+    token_program: &Pubkey,
+    instruction_tag: u8,
+    first: &Pubkey,
+    second: &Pubkey,
+    authority: &Pubkey,
+    amount: u64,
+) -> Instruction {
+    let mut data = Vec::with_capacity(9);
+    data.push(instruction_tag);
+    data.extend_from_slice(&amount.to_le_bytes());
+
+    Instruction {
+        program_id: *token_program,
+        accounts: vec![
+            AccountMeta::new(*first, false),
+            AccountMeta::new(*second, false),
+            AccountMeta::new_readonly(*authority, true),
+        ],
+        data,
+    }
 }

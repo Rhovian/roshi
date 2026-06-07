@@ -14,13 +14,14 @@ use super::{
     vault::VaultRoleContext,
 };
 use crate::{
-    instructions::InitializeAssetArgs,
+    instructions::{token, InitializeAssetArgs},
     state::{asset::Asset, vault::Role, Account},
 };
 
-/// Loads `[admin signer+writable, vault, asset (writable, uninitialized),
-/// system program]`, verifies the vault admin, rejects the vault base mint, and
-/// binds the asset account to the PDA for `(vault, asset_mint)`.
+/// Loads `[admin signer+writable, vault, asset_mint, asset (writable,
+/// uninitialized), system program]`, verifies the vault admin, rejects the vault
+/// base mint, validates the mint, and binds the asset account to the PDA for
+/// `(vault, asset_mint)`.
 pub(crate) struct InitializeAssetContext<'a, 'info> {
     admin: &'a AccountInfo<'info>,
     asset: &'a AccountInfo<'info>,
@@ -40,6 +41,7 @@ impl<'a, 'info> InitializeAssetContext<'a, 'info> {
         let admin = next_account(accounts_iter)?;
         require_writable_signer(admin)?;
         let vault_account = next_account(accounts_iter)?;
+        let asset_mint_account = next_account(accounts_iter)?;
         let asset = next_account(accounts_iter)?;
         require_uninitialized_account(asset)?;
         let system_program_acc = next_account(accounts_iter)?;
@@ -55,6 +57,11 @@ impl<'a, 'info> InitializeAssetContext<'a, 'info> {
         }
 
         let asset_mint = Pubkey::from(args.asset_mint);
+        if asset_mint_account.key != &asset_mint {
+            return Err(roshi_interface::error::RoshiError::InvalidMintAccount.into());
+        }
+        token::verify_mint(asset_mint_account, &asset_mint, args.asset_decimals, None)?;
+
         let (expected_asset_key, asset_bump) = Asset::find_address(&vault_key, &asset_mint);
         if asset.key != &expected_asset_key {
             return Err(ProgramError::InvalidSeeds);

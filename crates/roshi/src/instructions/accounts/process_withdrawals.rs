@@ -65,7 +65,7 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
         vault.verify_share_mint(share_mint)?;
 
         let token_program = next_account(accounts_iter)?;
-        token::verify_token_program(token_program)?;
+        token::verify_token_program_for(token_program, custody)?;
 
         let remaining = accounts_iter.as_slice();
         if remaining.is_empty() || !remaining.len().is_multiple_of(3) {

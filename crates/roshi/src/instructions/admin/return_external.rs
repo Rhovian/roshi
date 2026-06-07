@@ -72,7 +72,8 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
     token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
 
     let token_program = next_account(accounts_iter)?;
-    token::verify_token_program(token_program)?;
+    token::verify_token_program_for(token_program, custody)?;
+    token::verify_token_program_for(token_program, external_account)?;
 
     token::transfer(
         token_program,

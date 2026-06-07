@@ -62,7 +62,9 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
         let token_program = next_account(accounts_iter)?;
-        token::verify_token_program(token_program)?;
+        if token_program.key != &token::TOKEN_PROGRAM_ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
 
         let vault = Vault::load_checked(vault_account)?;
         vault.verify_share_mint(share_mint)?;

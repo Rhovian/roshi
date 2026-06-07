@@ -96,7 +96,8 @@ pub enum RoshiInstruction {
     #[codama(account(name = "vault_custody_token_account", writable))]
     #[codama(account(name = "user_share_account", writable))]
     #[codama(account(name = "share_mint", writable))]
-    #[codama(account(name = "token_program", default_value = program("token")))]
+    #[codama(account(name = "share_token_program", default_value = program("token")))]
+    #[codama(account(name = "asset_token_program"))]
     Deposit(#[codama(name = "args")] DepositArgs) = 7,
 
     #[codama(account(name = "owner", signer, writable))]
@@ -132,6 +133,7 @@ pub enum RoshiInstruction {
 
     #[codama(account(name = "admin", signer, writable))]
     #[codama(account(name = "vault"))]
+    #[codama(account(name = "asset_mint"))]
     #[codama(account(name = "asset", writable))]
     #[codama(account(name = "system_program", default_value = program("system")))]
     InitializeAsset(#[codama(name = "args")] InitializeAssetArgs) = 12,
@@ -204,6 +206,7 @@ pub enum RoshiInstruction {
     #[codama(account(name = "share_mint", writable))]
     #[codama(account(name = "recipient_token_account", writable))]
     #[codama(account(name = "custody", writable))]
+    #[codama(account(name = "base_token_program"))]
     #[codama(account(name = "sub_account"))]
     #[codama(account(name = "action"))]
     #[codama(account(name = "token_program", default_value = program("token")))]

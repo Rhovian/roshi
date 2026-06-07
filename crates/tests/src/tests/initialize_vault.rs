@@ -3,8 +3,9 @@ use solana_instruction::error::InstructionError;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, set_mint, set_token_account,
-    setup_program, VaultBuilder,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok,
+    set_extended_token_2022_mint, set_mint, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, setup_program, VaultBuilder, TOKEN_2022_PROGRAM_ID,
 };
 
 #[test]
@@ -237,6 +238,67 @@ fn test_initialize_vault_rejects_wrong_base_mint_decimals() {
     let ix = builder.instruction(authority.pubkey(), config_pda);
     assert_roshi_error(
         send(&mut svm, ix, &authority),
+        RoshiError::InvalidMintAccount,
+    );
+    assert!(svm.get_account(&vault_pda).is_none());
+}
+
+#[test]
+fn test_initialize_vault_accepts_bare_token_2022_base_mint() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let treasury = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().base_mint(base_mint).treasury(treasury);
+    let vault_pda = builder.address().0;
+    set_token_2022_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_token_account_with_program(
+        &mut svm,
+        treasury,
+        &base_mint,
+        &solana_pubkey::Pubkey::new_unique(),
+        0,
+        TOKEN_2022_PROGRAM_ID,
+    );
+
+    send_ok(
+        &mut svm,
+        builder.instruction(authority.pubkey(), config_pda),
+        &authority,
+    );
+
+    let vault = svm.get_account(&vault_pda).unwrap();
+    assert_eq!(vault.owner, ID);
+}
+
+#[test]
+fn test_initialize_vault_rejects_extended_token_2022_base_mint() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let treasury = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().base_mint(base_mint).treasury(treasury);
+    let vault_pda = builder.address().0;
+    set_extended_token_2022_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_token_account_with_program(
+        &mut svm,
+        treasury,
+        &base_mint,
+        &solana_pubkey::Pubkey::new_unique(),
+        0,
+        TOKEN_2022_PROGRAM_ID,
+    );
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            builder.instruction(authority.pubkey(), config_pda),
+            &authority,
+        ),
         RoshiError::InvalidMintAccount,
     );
     assert!(svm.get_account(&vault_pda).is_none());
