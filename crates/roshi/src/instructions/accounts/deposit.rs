@@ -7,7 +7,7 @@ use wincode::serialize;
 use super::shared::{next_account, require_writable};
 use crate::{
     instructions::{
-        token::{associated_token_address, TOKEN_PROGRAM_ID},
+        token::{associated_token_address, verify_token_program},
         DepositArgs,
     },
     oracle::{OracleKind, OraclePrice, PythOracle, SwitchboardOracle},
@@ -61,16 +61,11 @@ where
         let share_mint = next_account(accounts_iter)?;
         require_writable(share_mint)?;
         let token_program = next_account(accounts_iter)?;
-        if token_program.key != &TOKEN_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+        verify_token_program(token_program)?;
         let extra = accounts_iter.as_slice();
 
-        let vault = Account::load_as::<Vault>(vault_account)?;
-        vault.verify_address(vault_account.key)?;
-        if share_mint.key != &Pubkey::from(vault.share_mint) {
-            return Err(RoshiError::InvalidVaultState.into());
-        }
+        let vault = Vault::load_checked(vault_account)?;
+        vault.verify_share_mint(share_mint)?;
 
         Ok(Self {
             depositor,

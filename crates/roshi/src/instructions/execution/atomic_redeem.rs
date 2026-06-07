@@ -1,20 +1,16 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use wincode::serialize;
 
 use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 use crate::{
     instructions::{
-        accounts::{next_account, ValidatedManageAccounts},
-        token::{self, TOKEN_PROGRAM_ID},
-        AtomicRedeemArgs,
+        accounts::{AtomicRedeemContext, ValidatedManageAccounts},
+        token, AtomicRedeemArgs,
     },
     state::{
         action::{Action, ActionScope},
         sub_account::VaultSubAccount,
-        vault::Vault,
-        Account,
     },
 };
 use roshi_interface::{error::RoshiError, math::assets_for_redeem};
@@ -92,9 +88,7 @@ fn validate_redeem_entitlement(
     }
 
     let share_supply = token::mint_supply(context.share_mint)?;
-    let economic_share_supply = share_supply
-        .checked_add(context.vault.requested_withdrawal_shares)
-        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    let economic_share_supply = context.vault.economic_share_supply(share_supply)?;
     let max_assets_owed =
         assets_for_redeem(shares, context.vault.total_assets, economic_share_supply)
             .map_err(ProgramError::from)?;
@@ -192,98 +186,6 @@ fn settle_atomic_redeem(
     context.store_vault()
 }
 
-struct AtomicRedeemContext<'a, 'info> {
-    owner: &'a AccountInfo<'info>,
-    vault_account: &'a AccountInfo<'info>,
-    user_share_account: &'a AccountInfo<'info>,
-    share_mint: &'a AccountInfo<'info>,
-    recipient_token_account: &'a AccountInfo<'info>,
-    custody: &'a AccountInfo<'info>,
-    sub_account: &'a AccountInfo<'info>,
-    token_program: &'a AccountInfo<'info>,
-    cpi_accounts: &'a [AccountInfo<'info>],
-    vault: Vault,
-    action: Box<Action>,
-    sub_account_bump: u8,
-}
-
-impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
-    fn load(
-        accounts: &'a [AccountInfo<'info>],
-        args: &AtomicRedeemArgs,
-    ) -> Result<Self, ProgramError> {
-        let accounts_iter = &mut accounts.iter();
-
-        let owner = next_account(accounts_iter)?;
-        require_writable_signer(owner)?;
-        let vault_account = next_account(accounts_iter)?;
-        require_writable(vault_account)?;
-        let user_share_account = next_account(accounts_iter)?;
-        require_writable(user_share_account)?;
-        let share_mint = next_account(accounts_iter)?;
-        require_writable(share_mint)?;
-        let recipient_token_account = next_account(accounts_iter)?;
-        require_writable(recipient_token_account)?;
-        let custody = next_account(accounts_iter)?;
-        require_writable(custody)?;
-        let sub_account = next_account(accounts_iter)?;
-        let action_account = next_account(accounts_iter)?;
-        let token_program = next_account(accounts_iter)?;
-        if token_program.key != &TOKEN_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
-        let cpi_accounts = accounts_iter.as_slice();
-
-        let vault = Account::load_as::<Vault>(vault_account)?;
-        vault.verify_address(vault_account.key)?;
-        let vault_key = *vault_account.key;
-
-        let share_mint_key = Pubkey::from(vault.share_mint);
-        if share_mint.key != &share_mint_key {
-            return Err(RoshiError::InvalidVaultState.into());
-        }
-        token::verify_token_account_mint_and_owner(user_share_account, &share_mint_key, owner.key)?;
-
-        let base_mint = Pubkey::from(vault.base_mint);
-        token::verify_token_account_mint(recipient_token_account, &base_mint)?;
-        let sub_account_bump =
-            VaultSubAccount::verify_account(&vault_key, args.sub_account, sub_account)?;
-        token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
-
-        let action = Account::load_as::<Action>(action_account)?;
-        action.verify_for_vault(&vault_key, action_account.key)?;
-
-        Ok(Self {
-            owner,
-            vault_account,
-            user_share_account,
-            share_mint,
-            recipient_token_account,
-            custody,
-            sub_account,
-            token_program,
-            cpi_accounts,
-            vault,
-            action: Box::new(action),
-            sub_account_bump,
-        })
-    }
-
-    fn store_vault(&self) -> ProgramResult {
-        self.vault.validate_state()?;
-
-        let serialized =
-            serialize(&Account::Vault(self.vault)).map_err(|_| ProgramError::InvalidAccountData)?;
-        let mut data = self.vault_account.try_borrow_mut_data()?;
-        if serialized.len() > data.len() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        data[..serialized.len()].copy_from_slice(&serialized);
-
-        Ok(())
-    }
-}
-
 fn decode_withdrawal_amount(ix_data: &[u8], action: &Action) -> Result<u64, ProgramError> {
     let start = usize::from(action.redeem_amount_offset);
     let end = start
@@ -294,20 +196,4 @@ fn decode_withdrawal_amount(ix_data: &[u8], action: &Action) -> Result<u64, Prog
         .ok_or(ProgramError::from(RoshiError::InstructionSliceOutOfBounds))?;
 
     Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
-}
-
-fn require_writable_signer(account: &AccountInfo) -> ProgramResult {
-    if !account.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    require_writable(account)
-}
-
-fn require_writable(account: &AccountInfo) -> ProgramResult {
-    if !account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    Ok(())
 }

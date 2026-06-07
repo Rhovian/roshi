@@ -53,9 +53,7 @@ pub fn try_deposit<'info>(
 
     let base_atoms = context.resolve_base_atoms(&args)?;
     let share_supply = token::mint_supply(context.share_mint)?;
-    let economic_share_supply = share_supply
-        .checked_add(vault.requested_withdrawal_shares)
-        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    let economic_share_supply = vault.economic_share_supply(share_supply)?;
 
     let shares = if economic_share_supply == 0 {
         initial_shares_from_base_atoms(base_atoms, vault.base_decimals)?

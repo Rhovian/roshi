@@ -16,7 +16,7 @@ pub(super) fn require_writable_signer(account: &AccountInfo) -> ProgramResult {
     require_writable(account)
 }
 
-pub(super) fn require_writable(account: &AccountInfo) -> ProgramResult {
+pub(crate) fn require_writable(account: &AccountInfo) -> ProgramResult {
     if !account.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -36,6 +36,22 @@ pub(super) fn require_system_program(account: &AccountInfo) -> ProgramResult {
     if account.key != &system_program::ID {
         return Err(ProgramError::IncorrectProgramId);
     }
+
+    Ok(())
+}
+
+/// Close `account`: move its lamports to `refund_to`, clear its data, and return
+/// ownership to the system program.
+pub(crate) fn close_account(account: &AccountInfo, refund_to: &AccountInfo) -> ProgramResult {
+    let reclaimed = account.lamports();
+    let refund_balance = refund_to.lamports();
+    **refund_to.try_borrow_mut_lamports()? = refund_balance
+        .checked_add(reclaimed)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    **account.try_borrow_mut_lamports()? = 0;
+
+    account.resize(0)?;
+    account.assign(&system_program::ID);
 
     Ok(())
 }

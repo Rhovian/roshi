@@ -1,12 +1,11 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::program as system_program;
 use wincode::serialize;
 
-use super::shared::{next_account, require_writable, require_writable_signer};
+use super::shared::{close_account, next_account, require_writable, require_writable_signer};
 use crate::{
-    instructions::token::{self, TOKEN_PROGRAM_ID},
+    instructions::token,
     state::{vault::Vault, withdrawal_ticket::WithdrawalTicket, Account},
 };
 use roshi_interface::error::RoshiError;
@@ -46,15 +45,10 @@ impl<'a, 'info> CancelRedeemContext<'a, 'info> {
         let share_dest = next_account(accounts_iter)?;
         require_writable(share_dest)?;
         let token_program = next_account(accounts_iter)?;
-        if token_program.key != &TOKEN_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+        token::verify_token_program(token_program)?;
 
-        let vault = Account::load_as::<Vault>(vault_account)?;
-        vault.verify_address(vault_account.key)?;
-        if share_mint.key != &Pubkey::from(vault.share_mint) {
-            return Err(RoshiError::InvalidVaultState.into());
-        }
+        let vault = Vault::load_checked(vault_account)?;
+        vault.verify_share_mint(share_mint)?;
 
         let ticket = Account::load_as::<WithdrawalTicket>(ticket_account)?;
         if ticket.vault != vault_account.key.to_bytes() || ticket.owner != owner.key.to_bytes() {
@@ -81,17 +75,7 @@ impl<'a, 'info> CancelRedeemContext<'a, 'info> {
     }
 
     pub(crate) fn close_ticket(&self) -> ProgramResult {
-        let reclaimed = self.ticket_account.lamports();
-        let owner_balance = self.owner.lamports();
-        **self.owner.try_borrow_mut_lamports()? = owner_balance
-            .checked_add(reclaimed)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
-        **self.ticket_account.try_borrow_mut_lamports()? = 0;
-
-        self.ticket_account.resize(0)?;
-        self.ticket_account.assign(&system_program::ID);
-
-        Ok(())
+        close_account(self.ticket_account, self.owner)
     }
 
     pub(crate) fn store_vault(

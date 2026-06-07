@@ -2,14 +2,14 @@ use solana_account_info::AccountInfo;
 use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::{instruction::create_account, program as system_program};
+use solana_system_interface::instruction::create_account;
 use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::{
     shared::{
-        next_account, require_system_program, require_uninitialized_account, require_writable,
-        require_writable_signer,
+        close_account, next_account, require_system_program, require_uninitialized_account,
+        require_writable, require_writable_signer,
     },
     vault::VaultRoleContext,
 };
@@ -153,16 +153,6 @@ impl<'a, 'info> RevokeActionContext<'a, 'info> {
     /// Closes the Action account: drains its lamports to the admin, clears the
     /// data, and returns ownership to the system program.
     pub(crate) fn close(self) -> ProgramResult {
-        let reclaimed = self.action.lamports();
-        let admin_balance = self.admin.lamports();
-        **self.admin.try_borrow_mut_lamports()? = admin_balance
-            .checked_add(reclaimed)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
-        **self.action.try_borrow_mut_lamports()? = 0;
-
-        self.action.resize(0)?;
-        self.action.assign(&system_program::ID);
-
-        Ok(())
+        close_account(self.action, self.admin)
     }
 }

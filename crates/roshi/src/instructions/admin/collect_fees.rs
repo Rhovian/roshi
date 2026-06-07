@@ -5,9 +5,8 @@ use wincode::serialize;
 
 use crate::{
     instructions::{
-        accounts::next_account,
-        token::{self, TOKEN_PROGRAM_ID},
-        CollectFeesArgs,
+        accounts::{next_account, require_writable},
+        token, CollectFeesArgs,
     },
     state::{
         sub_account::VaultSubAccount,
@@ -41,8 +40,7 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
 
-    let mut vault = Account::load_as::<Vault>(vault_account)?;
-    vault.verify_address(vault_account.key)?;
+    let mut vault = Vault::load_checked(vault_account)?;
     vault.verify_role(Role::Admin, admin)?;
 
     if args.amount > vault.fees_payable {
@@ -66,9 +64,7 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     token::verify_token_account_mint(treasury, &base_mint)?;
 
     let token_program = next_account(accounts_iter)?;
-    if token_program.key != &TOKEN_PROGRAM_ID {
-        return Err(ProgramError::IncorrectProgramId);
-    }
+    token::verify_token_program(token_program)?;
 
     let sub_account_bump = [sub_account_bump];
     let fee_sub_account_index = [args.sub_account];
@@ -100,14 +96,6 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
         return Err(ProgramError::InvalidAccountData);
     }
     data[..serialized.len()].copy_from_slice(&serialized);
-
-    Ok(())
-}
-
-fn require_writable(account: &AccountInfo) -> ProgramResult {
-    if !account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
 
     Ok(())
 }

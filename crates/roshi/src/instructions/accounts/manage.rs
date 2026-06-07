@@ -121,8 +121,7 @@ fn validate_manage_accounts(
     action_acc: &AccountInfo,
     sub_account_index: u8,
 ) -> Result<ValidatedManageAccounts, ProgramError> {
-    let vault = Account::load_as::<Vault>(vault_acc)?;
-    vault.verify_address(vault_acc.key)?;
+    let vault = Vault::load_checked(vault_acc)?;
     let vault_key = *vault_acc.key;
 
     let sub_account_bump =

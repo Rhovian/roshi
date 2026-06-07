@@ -11,10 +11,7 @@ use super::shared::{
     require_writable_signer,
 };
 use crate::{
-    instructions::{
-        token::{self, TOKEN_PROGRAM_ID},
-        RedeemArgs,
-    },
+    instructions::{token, RedeemArgs},
     state::{vault::Vault, withdrawal_ticket::WithdrawalTicket, Account},
 };
 use roshi_interface::error::RoshiError;
@@ -65,15 +62,10 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
         let token_program = next_account(accounts_iter)?;
-        if token_program.key != &TOKEN_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+        token::verify_token_program(token_program)?;
 
-        let vault = Account::load_as::<Vault>(vault_account)?;
-        vault.verify_address(vault_account.key)?;
-        if share_mint.key != &Pubkey::from(vault.share_mint) {
-            return Err(RoshiError::InvalidVaultState.into());
-        }
+        let vault = Vault::load_checked(vault_account)?;
+        vault.verify_share_mint(share_mint)?;
         let base_mint = Pubkey::from(vault.base_mint);
         if recipient_token_account.key != &Pubkey::from(args.recipient_token_account) {
             return Err(RoshiError::InvalidTokenAccount.into());

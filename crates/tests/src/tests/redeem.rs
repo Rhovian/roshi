@@ -1019,7 +1019,7 @@ fn test_redeem_rejects_wrong_share_mint() {
     .unwrap();
     assert_roshi_error(
         send(&mut svm, ix, &fixture.owner),
-        RoshiError::InvalidVaultState,
+        RoshiError::InvalidMintAccount,
     );
 }
 

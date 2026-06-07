@@ -33,8 +33,7 @@ impl<'a, 'info> VaultRoleContext<'a, 'info> {
         vault_account: &'a AccountInfo<'info>,
         role: Role,
     ) -> Result<Self, ProgramError> {
-        let vault = Account::load_as::<Vault>(vault_account)?;
-        vault.verify_address(vault_account.key)?;
+        let vault = Vault::load_checked(vault_account)?;
         vault.verify_role(role, authority)?;
 
         Ok(Self {
@@ -149,9 +148,7 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
         let system_program_acc = next_account(accounts_iter)?;
         require_system_program(system_program_acc)?;
         let token_program_acc = next_account(accounts_iter)?;
-        if token_program_acc.key != &token::TOKEN_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+        token::verify_token_program(token_program_acc)?;
 
         ProgramConfigAuthorityContext::load(program_authority, program_config)?;
 

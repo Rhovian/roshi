@@ -5,9 +5,8 @@ use wincode::serialize;
 
 use crate::{
     instructions::{
-        accounts::next_account,
-        token::{self, TOKEN_PROGRAM_ID},
-        ReturnExternalArgs,
+        accounts::{next_account, require_writable},
+        token, ReturnExternalArgs,
     },
     state::{
         sub_account::VaultSubAccount,
@@ -46,8 +45,7 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
     }
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
-    let mut vault = Account::load_as::<Vault>(vault_account)?;
-    vault.verify_address(vault_account.key)?;
+    let mut vault = Vault::load_checked(vault_account)?;
     vault.verify_role(Role::Strategist, strategist)?;
     vault.verify_manage_enabled()?;
     if !vault.external_enabled()? {
@@ -74,9 +72,7 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
     token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
 
     let token_program = next_account(accounts_iter)?;
-    if token_program.key != &TOKEN_PROGRAM_ID {
-        return Err(ProgramError::IncorrectProgramId);
-    }
+    token::verify_token_program(token_program)?;
 
     token::transfer(
         token_program,
@@ -99,14 +95,6 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
         return Err(ProgramError::InvalidAccountData);
     }
     data[..serialized.len()].copy_from_slice(&serialized);
-
-    Ok(())
-}
-
-fn require_writable(account: &AccountInfo) -> ProgramResult {
-    if !account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
 
     Ok(())
 }

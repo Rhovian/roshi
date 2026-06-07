@@ -5,9 +5,8 @@ use wincode::serialize;
 
 use crate::{
     instructions::{
-        accounts::next_account,
-        token::{self, TOKEN_PROGRAM_ID},
-        InvestExternalArgs,
+        accounts::{next_account, require_writable},
+        token, InvestExternalArgs,
     },
     state::{
         sub_account::VaultSubAccount,
@@ -42,8 +41,7 @@ pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -
     let strategist = next_account(accounts_iter)?;
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
-    let mut vault = Account::load_as::<Vault>(vault_account)?;
-    vault.verify_address(vault_account.key)?;
+    let mut vault = Vault::load_checked(vault_account)?;
     vault.verify_role(Role::Strategist, strategist)?;
     vault.verify_manage_enabled()?;
     if !vault.external_enabled()? {
@@ -64,9 +62,7 @@ pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -
     token::verify_token_account_mint(external_account, &base_mint)?;
 
     let token_program = next_account(accounts_iter)?;
-    if token_program.key != &TOKEN_PROGRAM_ID {
-        return Err(ProgramError::IncorrectProgramId);
-    }
+    token::verify_token_program(token_program)?;
 
     let sub_account_bump = [sub_account_bump];
     let sub_account_index = [args.sub_account];
@@ -98,14 +94,6 @@ pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -
         return Err(ProgramError::InvalidAccountData);
     }
     data[..serialized.len()].copy_from_slice(&serialized);
-
-    Ok(())
-}
-
-fn require_writable(account: &AccountInfo) -> ProgramResult {
-    if !account.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
 
     Ok(())
 }

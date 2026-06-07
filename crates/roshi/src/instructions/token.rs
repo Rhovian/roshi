@@ -68,6 +68,15 @@ pub(crate) fn verify_mint(
     Ok(())
 }
 
+/// Verify `account` is the classic SPL Token program.
+pub(crate) fn verify_token_program(account: &AccountInfo) -> ProgramResult {
+    if account.key != &TOKEN_PROGRAM_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    Ok(())
+}
+
 /// Read the supply of an initialized SPL mint.
 pub(crate) fn mint_supply(account: &AccountInfo) -> Result<u64, ProgramError> {
     if account.owner != &TOKEN_PROGRAM_ID {

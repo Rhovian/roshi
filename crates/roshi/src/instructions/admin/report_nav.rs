@@ -1,6 +1,5 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
-use solana_pubkey::Pubkey;
 use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
@@ -37,18 +36,13 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let mut vault = Account::load_as::<Vault>(vault_account)?;
-    vault.verify_address(vault_account.key)?;
+    let mut vault = Vault::load_checked(vault_account)?;
     vault.verify_role(Role::NavAuthority, nav_authority)?;
 
     let share_mint = next_account(accounts_iter)?;
-    if share_mint.key != &Pubkey::from(vault.share_mint) {
-        return Err(RoshiError::InvalidMintAccount.into());
-    }
+    vault.verify_share_mint(share_mint)?;
     let share_supply = token::mint_supply(share_mint)?;
-    let economic_share_supply = share_supply
-        .checked_add(vault.requested_withdrawal_shares)
-        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    let economic_share_supply = vault.economic_share_supply(share_supply)?;
 
     if args.report_hash == EMPTY_REPORT_HASH {
         return Err(RoshiError::InvalidVaultState.into());

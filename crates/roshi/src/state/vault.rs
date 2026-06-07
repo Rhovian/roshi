@@ -213,6 +213,31 @@ impl Vault {
         Ok(())
     }
 
+    /// Deserialize the vault from `account` and verify it is the canonical PDA.
+    pub fn load_checked(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let vault = crate::state::Account::load_as::<Self>(account)?;
+        vault.verify_address(account.key)?;
+
+        Ok(vault)
+    }
+
+    /// Verify `account` is the vault's share mint.
+    pub fn verify_share_mint(&self, account: &AccountInfo) -> ProgramResult {
+        if account.key != &Pubkey::from(self.share_mint) {
+            return Err(RoshiError::InvalidMintAccount.into());
+        }
+
+        Ok(())
+    }
+
+    /// The economic share supply: circulating shares plus the shares already
+    /// burned for in-flight withdrawals.
+    pub fn economic_share_supply(&self, active_share_supply: u64) -> Result<u64, ProgramError> {
+        active_share_supply
+            .checked_add(self.requested_withdrawal_shares)
+            .ok_or(ProgramError::from(RoshiError::Overflow))
+    }
+
     pub fn verify_role(&self, role: Role, signer: &AccountInfo) -> ProgramResult {
         if !signer.is_signer {
             return Err(ProgramError::MissingRequiredSignature);
