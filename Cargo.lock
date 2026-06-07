@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "roshi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "roshi-interface",
  "solana-account-info",
@@ -2363,7 +2363,7 @@ dependencies = [
 
 [[package]]
 name = "roshi-tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "litesvm",
  "roshi",
