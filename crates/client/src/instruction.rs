@@ -29,8 +29,8 @@ mod tests {
             InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs, RedeemArgs,
             ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, SetNavAuthorityArgs,
             SetPauseFlagsArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
-            SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
-            UpdateAssetArgs, UpdateVaultConfigArgs,
+            SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs,
+            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -257,6 +257,82 @@ mod tests {
         let args: AtomicRedeemArgs = decode_args(&ix.data);
         assert_eq!(args.shares, 123);
         assert_eq!(args.min_output, 120);
+        assert_eq!(args.sub_account, 7);
+        assert_eq!(args.program_id, cpi_program.to_bytes());
+        assert_eq!(args.accounts_start, 0);
+        assert_eq!(args.accounts_len, 1);
+        assert_eq!(
+            args.account_flags,
+            vec![AccountFlags {
+                is_signer: false,
+                is_writable: true,
+            }]
+        );
+        assert_eq!(args.ix_data, ix_data);
+    }
+
+    #[test]
+    fn builds_swap_instruction() {
+        let swap_authority = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let sub_account_pda = Pubkey::new_unique();
+        let input_custody = Pubkey::new_unique();
+        let output_custody = Pubkey::new_unique();
+        let action = Pubkey::new_unique();
+        let cpi_account = Pubkey::new_unique();
+        let cpi_program = Pubkey::new_unique();
+        let ix_data = vec![3, 42, 0, 0, 0, 0, 0, 0, 0];
+
+        let ix = swap(
+            swap_authority,
+            vault,
+            sub_account_pda,
+            input_custody,
+            output_custody,
+            action,
+            vec![
+                AccountMeta::new(cpi_account, false),
+                AccountMeta::new_readonly(cpi_program, false),
+            ],
+            SwapArgs {
+                min_out: 120,
+                max_in: 123,
+                sub_account: 7,
+                program_id: cpi_program.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 1,
+                account_flags: vec![AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                }],
+                ix_data: ix_data.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(swap_authority, true)
+        );
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
+        assert_eq!(
+            ix.accounts[2],
+            AccountMeta::new_readonly(sub_account_pda, false)
+        );
+        assert_eq!(ix.accounts[3], AccountMeta::new(input_custody, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new(output_custody, false));
+        assert_eq!(ix.accounts[5], AccountMeta::new_readonly(action, false));
+        assert_eq!(ix.accounts[6], AccountMeta::new(cpi_account, false));
+        assert_eq!(
+            ix.accounts[7],
+            AccountMeta::new_readonly(cpi_program, false)
+        );
+
+        let args: SwapArgs = decode_args(&ix.data);
+        assert_eq!(args.min_out, 120);
+        assert_eq!(args.max_in, 123);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);

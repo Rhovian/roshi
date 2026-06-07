@@ -22,7 +22,9 @@ pub(crate) const MINT_LEN: usize = 82;
 const TOKEN_ACCOUNT_MINT: usize = 0;
 const TOKEN_ACCOUNT_OWNER: usize = 32;
 const TOKEN_ACCOUNT_AMOUNT: usize = 64;
+const TOKEN_ACCOUNT_DELEGATE: usize = 72;
 const TOKEN_ACCOUNT_STATE: usize = 108;
+const TOKEN_ACCOUNT_CLOSE_AUTHORITY: usize = 129;
 const TOKEN_ACCOUNT_LEN: usize = 165;
 
 /// Derive the associated token account address for `wallet` and `mint` under
@@ -153,6 +155,41 @@ pub(crate) fn verify_token_account_mint_and_owner(
     let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
         .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
     if &owner != expected_owner {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
+/// Verify `account` is an initialized SPL token account fully controlled by
+/// `subaccount`, independent of mint.
+pub(crate) fn verify_custody_account(account: &AccountInfo, subaccount: &Pubkey) -> ProgramResult {
+    if account.owner != &TOKEN_PROGRAM_ID {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &owner != subaccount {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let delegate_tag = u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATE..TOKEN_ACCOUNT_DELEGATE + 4]
+            .try_into()
+            .unwrap(),
+    );
+    let close_tag = u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_CLOSE_AUTHORITY..TOKEN_ACCOUNT_CLOSE_AUTHORITY + 4]
+            .try_into()
+            .unwrap(),
+    );
+    if delegate_tag != 0 || close_tag != 0 {
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 

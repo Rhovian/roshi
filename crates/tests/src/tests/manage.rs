@@ -212,7 +212,7 @@ fn test_manage_rejects_atomic_redeem_action() {
 }
 
 #[test]
-fn test_manage_swap_action_requires_swap_authority() {
+fn test_manage_rejects_swap_action() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -240,6 +240,17 @@ fn test_manage_swap_action_requires_swap_authority() {
     )
     .unwrap();
 
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix(fixture.vault.roles.swap_authority.pubkey()),
+            &fixture.vault.roles.swap_authority,
+        ),
+        InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
+    );
+    assert_eq!(fixture.scratch_lamports(&svm), 0);
+
     fund(&mut svm, &fixture.vault.roles.strategist);
     assert_instruction_error(
         send(
@@ -247,16 +258,9 @@ fn test_manage_swap_action_requires_swap_authority() {
             fixture.manage_ix(fixture.vault.roles.strategist.pubkey()),
             &fixture.vault.roles.strategist,
         ),
-        InstructionError::IllegalOwner,
+        InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
     );
-
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
-    send_ok(
-        &mut svm,
-        fixture.manage_ix(fixture.vault.roles.swap_authority.pubkey()),
-        &fixture.vault.roles.swap_authority,
-    );
-    assert_eq!(fixture.scratch_lamports(&svm), TRANSFER_LAMPORTS);
+    assert_eq!(fixture.scratch_lamports(&svm), 0);
 }
 
 /// End-to-end proof that the `Action` allowlist gates `manage`: an unauthorized

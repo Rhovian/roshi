@@ -35,6 +35,7 @@ pub mod tags {
     pub const RETURN_EXTERNAL: u8 = 23;
     pub const SET_SWAP_AUTHORITY: u8 = 24;
     pub const ATOMIC_REDEEM: u8 = 25;
+    pub const SWAP: u8 = 26;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -207,6 +208,14 @@ pub enum RoshiInstruction {
     #[codama(account(name = "action"))]
     #[codama(account(name = "token_program", default_value = program("token")))]
     AtomicRedeem(#[codama(name = "args")] AtomicRedeemArgs) = 25,
+
+    #[codama(account(name = "swap_authority", signer))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "sub_account"))]
+    #[codama(account(name = "input_custody", writable))]
+    #[codama(account(name = "output_custody", writable))]
+    #[codama(account(name = "action"))]
+    Swap(#[codama(name = "args")] SwapArgs) = 26,
 }
 
 impl RoshiInstruction {
@@ -238,6 +247,7 @@ impl RoshiInstruction {
             Self::SetWithdrawalAuthority(_) => tags::SET_WITHDRAWAL_AUTHORITY,
             Self::CollectFees(_) => tags::COLLECT_FEES,
             Self::AtomicRedeem(_) => tags::ATOMIC_REDEEM,
+            Self::Swap(_) => tags::SWAP,
         }
     }
 
@@ -281,6 +291,7 @@ impl RoshiInstruction {
             }
             tags::COLLECT_FEES => Ok(Self::CollectFees(decode_payload(payload)?)),
             tags::ATOMIC_REDEEM => Ok(Self::AtomicRedeem(decode_payload(payload)?)),
+            tags::SWAP => Ok(Self::Swap(decode_payload(payload)?)),
             _ => Err(()),
         }
     }
@@ -317,6 +328,7 @@ impl RoshiInstruction {
             Self::SetWithdrawalAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::CollectFees(args) => wincode::serialize_into(&mut data, args)?,
             Self::AtomicRedeem(args) => wincode::serialize_into(&mut data, args)?,
+            Self::Swap(args) => wincode::serialize_into(&mut data, args)?,
         }
 
         Ok(data)
@@ -374,6 +386,7 @@ impl_instruction_args! {
     ReturnExternalArgs = tags::RETURN_EXTERNAL,
     SetSwapAuthorityArgs = tags::SET_SWAP_AUTHORITY,
     AtomicRedeemArgs = tags::ATOMIC_REDEEM,
+    SwapArgs = tags::SWAP,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -399,7 +412,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25
+                23, 24, 25, 26
             ]
         );
         assert_eq!(
@@ -538,5 +551,6 @@ mod tests {
         ("returnExternal", tags::RETURN_EXTERNAL),
         ("setSwapAuthority", tags::SET_SWAP_AUTHORITY),
         ("atomicRedeem", tags::ATOMIC_REDEEM),
+        ("swap", tags::SWAP),
     ];
 }

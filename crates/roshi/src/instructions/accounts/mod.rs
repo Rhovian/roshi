@@ -8,6 +8,7 @@ mod process_withdrawals;
 mod program_config;
 mod redeem;
 mod shared;
+mod swap;
 mod vault;
 
 pub(crate) use action::{AuthorizeActionContext, RevokeActionContext};
@@ -20,6 +21,7 @@ pub(crate) use process_withdrawals::ProcessWithdrawalsContext;
 pub(crate) use program_config::{InitializeProgramContext, WritableProgramConfigAuthorityContext};
 pub(crate) use redeem::RedeemContext;
 pub(crate) use shared::{close_account, next_account, require_writable};
+pub(crate) use swap::SwapContext;
 pub(crate) use vault::{
     update_writable_vault_as_admin, InitializeVaultContext, WritableVaultRoleContext,
 };

@@ -11,6 +11,6 @@ pub use roshi_interface::instructions::{
     InvestExternalArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs,
     ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, RoshiInstruction, SetNavAuthorityArgs,
     SetPauseFlagsArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
-    SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+    SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
     UpdateAssetArgs, UpdateVaultConfigArgs,
 };

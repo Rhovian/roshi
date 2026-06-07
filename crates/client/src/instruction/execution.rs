@@ -1,4 +1,4 @@
-use roshi_interface::instructions::{AtomicRedeemArgs, ManageArgs, ManageBatchArgs};
+use roshi_interface::instructions::{AtomicRedeemArgs, ManageArgs, ManageBatchArgs, SwapArgs};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
@@ -74,6 +74,30 @@ pub fn atomic_redeem(
         AccountMeta::new_readonly(sub_account_pda, false),
         AccountMeta::new_readonly(action, false),
         AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+    ];
+    accounts.extend(cpi_accounts);
+
+    new(accounts, &args)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn swap(
+    swap_authority: Pubkey,
+    vault: Pubkey,
+    sub_account_pda: Pubkey,
+    input_custody: Pubkey,
+    output_custody: Pubkey,
+    action: Pubkey,
+    cpi_accounts: Vec<AccountMeta>,
+    args: SwapArgs,
+) -> Result<Instruction> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(swap_authority, true),
+        AccountMeta::new_readonly(vault, false),
+        AccountMeta::new_readonly(sub_account_pda, false),
+        AccountMeta::new(input_custody, false),
+        AccountMeta::new(output_custody, false),
+        AccountMeta::new_readonly(action, false),
     ];
     accounts.extend(cpi_accounts);
 
