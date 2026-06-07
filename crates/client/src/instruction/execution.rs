@@ -1,7 +1,8 @@
-use roshi_interface::instructions::{ManageArgs, ManageBatchArgs};
+use roshi_interface::instructions::{AtomicRedeemArgs, ManageArgs, ManageBatchArgs};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
+use super::TOKEN_PROGRAM_ID;
 use super::{new, Result};
 
 pub fn manage(
@@ -48,4 +49,33 @@ pub fn manage_batch(
     accounts.extend(cpi_accounts);
 
     new(accounts, &ManageBatchArgs { actions })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn atomic_redeem(
+    owner: Pubkey,
+    vault: Pubkey,
+    user_share_account: Pubkey,
+    share_mint: Pubkey,
+    recipient_token_account: Pubkey,
+    custody: Pubkey,
+    sub_account_pda: Pubkey,
+    action: Pubkey,
+    cpi_accounts: Vec<AccountMeta>,
+    args: AtomicRedeemArgs,
+) -> Result<Instruction> {
+    let mut accounts = vec![
+        AccountMeta::new(owner, true),
+        AccountMeta::new(vault, false),
+        AccountMeta::new(user_share_account, false),
+        AccountMeta::new(share_mint, false),
+        AccountMeta::new(recipient_token_account, false),
+        AccountMeta::new(custody, false),
+        AccountMeta::new_readonly(sub_account_pda, false),
+        AccountMeta::new_readonly(action, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+    ];
+    accounts.extend(cpi_accounts);
+
+    new(accounts, &args)
 }

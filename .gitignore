@@ -4,3 +4,9 @@
 # Program keypair — its pubkey is roshi's declare_id!. Kept local, never committed
 # (ground via `solana-keygen grind --starts-with Roshi:1`).
 /program-keypair.json
+
+# Local agent tooling and notes — kept out of version control.
+.claude/
+AGENTS.md
+CLAUDE.md
+plan.md

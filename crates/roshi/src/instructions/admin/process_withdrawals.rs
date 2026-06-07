@@ -97,7 +97,7 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
         }
 
         let remaining = accounts_iter.as_slice();
-        if remaining.is_empty() || remaining.len() % 3 != 0 {
+        if remaining.is_empty() || !remaining.len().is_multiple_of(3) {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 

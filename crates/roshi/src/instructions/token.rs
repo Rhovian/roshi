@@ -21,6 +21,7 @@ const MINT_IS_INITIALIZED: usize = 45;
 pub(crate) const MINT_LEN: usize = 82;
 const TOKEN_ACCOUNT_MINT: usize = 0;
 const TOKEN_ACCOUNT_OWNER: usize = 32;
+const TOKEN_ACCOUNT_AMOUNT: usize = 64;
 const TOKEN_ACCOUNT_STATE: usize = 108;
 const TOKEN_ACCOUNT_LEN: usize = 165;
 
@@ -147,6 +148,24 @@ pub(crate) fn verify_token_account_mint_and_owner(
     }
 
     Ok(())
+}
+
+/// Read the amount field of an initialized SPL token account.
+pub(crate) fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+    if account.owner != &TOKEN_PROGRAM_ID {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(u64::from_le_bytes(
+        data[TOKEN_ACCOUNT_AMOUNT..TOKEN_ACCOUNT_AMOUNT + 8]
+            .try_into()
+            .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?,
+    ))
 }
 
 /// CPI an SPL token transfer authorized by `authority` (a transaction signer).

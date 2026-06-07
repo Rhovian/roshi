@@ -241,6 +241,7 @@ pub fn invest_external(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn return_external(
     strategist: Pubkey,
     external_authority: Pubkey,

@@ -1,4 +1,5 @@
 use roshi::{
+    error::RoshiError,
     instructions::{AccountFlags, ManageArgs},
     state::{
         action::{compute_action_hash, Action, ActionScope, Op, Ops},
@@ -72,6 +73,7 @@ impl SystemTransferManageFixture {
                     action_hash: self.action_hash,
                     ops: self.ops,
                     scope: ActionScope::Manager,
+                    redeem_amount_offset: 0,
                     bump: action_bump,
                 }))
                 .unwrap(),
@@ -116,7 +118,9 @@ impl SystemTransferManageFixture {
     }
 
     fn scratch_lamports(&self, svm: &litesvm::LiteSVM) -> u64 {
-        svm.get_account(&self.scratch).unwrap().lamports
+        svm.get_account(&self.scratch)
+            .map(|account| account.lamports)
+            .unwrap_or(0)
     }
 }
 
@@ -166,7 +170,7 @@ fn test_manage_authority_check() {
 }
 
 #[test]
-fn test_manage_public_action_does_not_require_strategist() {
+fn test_manage_rejects_atomic_redeem_action() {
     let Some((mut svm, authority, _config_pda)) = setup_program() else {
         return;
     };
@@ -181,7 +185,8 @@ fn test_manage_public_action_does_not_require_strategist() {
                 vault: fixture.vault.address.to_bytes(),
                 action_hash: fixture.action_hash,
                 ops: fixture.ops,
-                scope: ActionScope::Public,
+                scope: ActionScope::AtomicRedeem,
+                redeem_amount_offset: 0,
                 bump: action_bump,
             }))
             .unwrap(),
@@ -195,12 +200,15 @@ fn test_manage_public_action_does_not_require_strategist() {
     let public_executor = Keypair::new();
     fund(&mut svm, &public_executor);
 
-    send_ok(
-        &mut svm,
-        fixture.manage_ix(public_executor.pubkey()),
-        &public_executor,
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix(public_executor.pubkey()),
+            &public_executor,
+        ),
+        InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
     );
-    assert_eq!(fixture.scratch_lamports(&svm), TRANSFER_LAMPORTS);
+    assert_eq!(fixture.scratch_lamports(&svm), 0);
 }
 
 #[test]
@@ -221,6 +229,7 @@ fn test_manage_swap_action_requires_swap_authority() {
                 action_hash: fixture.action_hash,
                 ops: fixture.ops,
                 scope: ActionScope::Swap,
+                redeem_amount_offset: 0,
                 bump: action_bump,
             }))
             .unwrap(),
@@ -278,6 +287,7 @@ fn test_authorized_action_lifecycle_gates_manage() {
             fixture.action_hash,
             ActionScope::Manager,
             fixture.ops,
+            0,
         )
         .unwrap(),
         &authority,
@@ -334,6 +344,7 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
                 action_hash: readonly_hash,
                 ops: readonly_ops,
                 scope: ActionScope::Manager,
+                redeem_amount_offset: 0,
                 bump: readonly_action_bump,
             }))
             .unwrap(),

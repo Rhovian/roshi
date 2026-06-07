@@ -11,12 +11,21 @@ use crate::{
 };
 use roshi_interface::error::RoshiError;
 
-pub(super) struct AuthorizedCpi<'a> {
+pub(crate) struct AuthorizedCpi<'a> {
     instruction: Instruction,
     account_infos: Vec<AccountInfo<'a>>,
     vault_key: Pubkey,
     sub_account_index: u8,
     sub_account_bump: u8,
+}
+
+impl AuthorizedCpi<'_> {
+    pub(crate) fn has_account_meta(&self, key: &Pubkey) -> bool {
+        self.instruction
+            .accounts
+            .iter()
+            .any(|meta| &meta.pubkey == key)
+    }
 }
 
 /// Validates and prepares one pre-authorized downstream CPI.
@@ -36,7 +45,7 @@ pub(super) struct AuthorizedCpi<'a> {
 /// flags, then recomputes the action hash from the effective CPI program id,
 /// stored `Ops`, rebuilt metas, and instruction data. The selected subaccount
 /// is promoted to signer when present in the CPI metas.
-pub(super) fn validate_authorized_cpi<'a>(
+pub(crate) fn validate_authorized_cpi<'a>(
     cpi_accounts: &[AccountInfo<'a>],
     validated_accounts: &ValidatedManageAccounts,
     program_id: [u8; 32],
@@ -122,7 +131,7 @@ pub(super) fn validate_authorized_cpi<'a>(
 
 /// Invokes a CPI after all Roshi and CPI-specific authorization checks have
 /// already been performed.
-pub(super) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramResult {
+pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramResult {
     let sub_account_index_seed = [authorized_cpi.sub_account_index];
     let sub_account_bump_seed = [authorized_cpi.sub_account_bump];
     let signer_seeds = &[

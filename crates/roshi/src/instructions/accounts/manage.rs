@@ -9,6 +9,7 @@ use crate::state::{
     vault::{Role, Vault},
     Account,
 };
+use roshi_interface::error::RoshiError;
 
 pub(crate) struct ValidatedManageAccounts {
     pub(crate) action: Action,
@@ -149,6 +150,6 @@ fn verify_action_executor(
     match scope {
         ActionScope::Manager => vault.verify_role(Role::Strategist, executor),
         ActionScope::Swap => vault.verify_role(Role::SwapAuthority, executor),
-        ActionScope::Public => Ok(()),
+        ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
     }
 }

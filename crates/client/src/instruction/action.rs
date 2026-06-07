@@ -15,6 +15,7 @@ pub fn authorize_action(
     action_hash: [u8; 32],
     scope: ActionScope,
     ops: Ops,
+    redeem_amount_offset: u16,
 ) -> Result<Instruction> {
     new(
         vec![
@@ -27,6 +28,7 @@ pub fn authorize_action(
             action_hash,
             scope,
             ops,
+            redeem_amount_offset,
         },
     )
 }

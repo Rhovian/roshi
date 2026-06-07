@@ -69,6 +69,7 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
         action_hash: [u8; 32],
         scope: ActionScope,
         ops: Ops,
+        redeem_amount_offset: u16,
     ) -> ProgramResult {
         validate_ops(&ops)?;
 
@@ -98,6 +99,7 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
             action_hash,
             ops,
             scope,
+            redeem_amount_offset,
             bump: self.action_bump,
         };
         let serialized =

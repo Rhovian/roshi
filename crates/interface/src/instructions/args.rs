@@ -35,6 +35,7 @@ pub struct AuthorizeActionArgs {
     pub action_hash: [u8; 32],
     pub scope: ActionScope,
     pub ops: Ops,
+    pub redeem_amount_offset: u16,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -50,6 +51,18 @@ pub struct AccountFlags {
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageArgs {
+    pub sub_account: u8,
+    pub program_id: [u8; 32],
+    pub accounts_start: u8,
+    pub accounts_len: u8,
+    pub account_flags: Vec<AccountFlags>,
+    pub ix_data: Vec<u8>,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct AtomicRedeemArgs {
+    pub shares: u64,
+    pub min_output: u64,
     pub sub_account: u8,
     pub program_id: [u8; 32],
     pub accounts_start: u8,

@@ -6,11 +6,11 @@ pub mod execution;
 pub mod user;
 
 pub use roshi_interface::instructions::{
-    AccountFlags, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
-    InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs, InvestExternalArgs,
-    ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs,
-    ReturnExternalArgs, RevokeActionArgs, RoshiInstruction, SetNavAuthorityArgs, SetPauseFlagsArgs,
-    SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-    TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
-    UpdateVaultConfigArgs,
+    AccountFlags, AtomicRedeemArgs, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs,
+    DepositArgs, InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs,
+    InvestExternalArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs,
+    ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, RoshiInstruction, SetNavAuthorityArgs,
+    SetPauseFlagsArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
+    SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+    UpdateAssetArgs, UpdateVaultConfigArgs,
 };

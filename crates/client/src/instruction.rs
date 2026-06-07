@@ -24,11 +24,11 @@ mod tests {
     use roshi_interface::{
         action::{ActionScope, Ops},
         instructions::{
-            AccountFlags, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs, DepositArgs,
-            InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs, InstructionArgs,
-            InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs, RedeemArgs, ReportNavArgs,
-            ReturnExternalArgs, RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs,
-            SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
+            AccountFlags, AtomicRedeemArgs, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs,
+            DepositArgs, InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs,
+            InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs, RedeemArgs,
+            ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, SetNavAuthorityArgs,
+            SetPauseFlagsArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
             SetWithdrawalAuthorityArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
             UpdateAssetArgs, UpdateVaultConfigArgs,
         },
@@ -43,7 +43,7 @@ mod tests {
     where
         T: InstructionArgs + SchemaRead<'a, DefaultConfig, Dst = T>,
     {
-        assert_eq!(data[0], u8::from(T::TAG));
+        assert_eq!(data[0], T::TAG);
         wincode::deserialize_exact(&data[1..]).unwrap()
     }
 
@@ -171,6 +171,92 @@ mod tests {
         assert_eq!(ix.accounts[3], AccountMeta::new_readonly(action, false));
 
         let args: ManageArgs = decode_args(&ix.data);
+        assert_eq!(args.sub_account, 7);
+        assert_eq!(args.program_id, cpi_program.to_bytes());
+        assert_eq!(args.accounts_start, 0);
+        assert_eq!(args.accounts_len, 1);
+        assert_eq!(
+            args.account_flags,
+            vec![AccountFlags {
+                is_signer: false,
+                is_writable: true,
+            }]
+        );
+        assert_eq!(args.ix_data, ix_data);
+    }
+
+    #[test]
+    fn builds_atomic_redeem_instruction() {
+        let owner = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let user_share_account = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
+        let recipient_token_account = Pubkey::new_unique();
+        let custody = Pubkey::new_unique();
+        let sub_account_pda = Pubkey::new_unique();
+        let action = Pubkey::new_unique();
+        let cpi_account = Pubkey::new_unique();
+        let cpi_program = Pubkey::new_unique();
+        let ix_data = vec![3, 42, 0, 0, 0, 0, 0, 0, 0];
+
+        let ix = atomic_redeem(
+            owner,
+            vault,
+            user_share_account,
+            share_mint,
+            recipient_token_account,
+            custody,
+            sub_account_pda,
+            action,
+            vec![
+                AccountMeta::new(cpi_account, false),
+                AccountMeta::new_readonly(cpi_program, false),
+            ],
+            AtomicRedeemArgs {
+                shares: 123,
+                min_output: 120,
+                sub_account: 7,
+                program_id: cpi_program.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 1,
+                account_flags: vec![AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                }],
+                ix_data: ix_data.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 11);
+        assert_eq!(ix.accounts[0], AccountMeta::new(owner, true));
+        assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[2], AccountMeta::new(user_share_account, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new(share_mint, false));
+        assert_eq!(
+            ix.accounts[4],
+            AccountMeta::new(recipient_token_account, false)
+        );
+        assert_eq!(ix.accounts[5], AccountMeta::new(custody, false));
+        assert_eq!(
+            ix.accounts[6],
+            AccountMeta::new_readonly(sub_account_pda, false)
+        );
+        assert_eq!(ix.accounts[7], AccountMeta::new_readonly(action, false));
+        assert_eq!(
+            ix.accounts[8],
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
+        );
+        assert_eq!(ix.accounts[9], AccountMeta::new(cpi_account, false));
+        assert_eq!(
+            ix.accounts[10],
+            AccountMeta::new_readonly(cpi_program, false)
+        );
+
+        let args: AtomicRedeemArgs = decode_args(&ix.data);
+        assert_eq!(args.shares, 123);
+        assert_eq!(args.min_output, 120);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);
@@ -578,6 +664,7 @@ mod tests {
             [9; 32],
             ActionScope::Manager,
             Ops::empty(),
+            7,
         )
         .unwrap();
 
@@ -595,6 +682,7 @@ mod tests {
         assert_eq!(args.action_hash, [9; 32]);
         assert_eq!(args.scope, ActionScope::Manager);
         assert_eq!(args.ops, Ops::empty());
+        assert_eq!(args.redeem_amount_offset, 7);
     }
 
     #[test]

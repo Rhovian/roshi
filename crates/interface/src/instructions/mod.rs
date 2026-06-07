@@ -34,12 +34,14 @@ pub mod tags {
     pub const INVEST_EXTERNAL: u8 = 22;
     pub const RETURN_EXTERNAL: u8 = 23;
     pub const SET_SWAP_AUTHORITY: u8 = 24;
+    pub const ATOMIC_REDEEM: u8 = 25;
 }
 
 // Codama parses the enum source directly and currently requires literal
 // discriminator values here; keep `tags::*` in sync via the IDL test below.
 #[repr(u8)]
 #[derive(codama_macros::CodamaInstructions)]
+#[allow(clippy::large_enum_variant)]
 #[codama(program(
     name = "roshi",
     address = "Roshi11111111111111111111111111111111111111"
@@ -194,6 +196,17 @@ pub enum RoshiInstruction {
     #[codama(account(name = "admin", signer))]
     #[codama(account(name = "vault", writable))]
     SetSwapAuthority(#[codama(name = "args")] SetSwapAuthorityArgs) = 24,
+
+    #[codama(account(name = "owner", signer, writable))]
+    #[codama(account(name = "vault", writable))]
+    #[codama(account(name = "user_share_account", writable))]
+    #[codama(account(name = "share_mint", writable))]
+    #[codama(account(name = "recipient_token_account", writable))]
+    #[codama(account(name = "custody", writable))]
+    #[codama(account(name = "sub_account"))]
+    #[codama(account(name = "action"))]
+    #[codama(account(name = "token_program", default_value = program("token")))]
+    AtomicRedeem(#[codama(name = "args")] AtomicRedeemArgs) = 25,
 }
 
 impl RoshiInstruction {
@@ -224,9 +237,11 @@ impl RoshiInstruction {
             Self::SetNavAuthority(_) => tags::SET_NAV_AUTHORITY,
             Self::SetWithdrawalAuthority(_) => tags::SET_WITHDRAWAL_AUTHORITY,
             Self::CollectFees(_) => tags::COLLECT_FEES,
+            Self::AtomicRedeem(_) => tags::ATOMIC_REDEEM,
         }
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn decode(data: &[u8]) -> Result<Self, ()> {
         let (tag, payload) = data.split_first().ok_or(())?;
 
@@ -265,6 +280,7 @@ impl RoshiInstruction {
                 Ok(Self::SetWithdrawalAuthority(decode_payload(payload)?))
             }
             tags::COLLECT_FEES => Ok(Self::CollectFees(decode_payload(payload)?)),
+            tags::ATOMIC_REDEEM => Ok(Self::AtomicRedeem(decode_payload(payload)?)),
             _ => Err(()),
         }
     }
@@ -300,6 +316,7 @@ impl RoshiInstruction {
             Self::SetNavAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetWithdrawalAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::CollectFees(args) => wincode::serialize_into(&mut data, args)?,
+            Self::AtomicRedeem(args) => wincode::serialize_into(&mut data, args)?,
         }
 
         Ok(data)
@@ -356,6 +373,7 @@ impl_instruction_args! {
     InvestExternalArgs = tags::INVEST_EXTERNAL,
     ReturnExternalArgs = tags::RETURN_EXTERNAL,
     SetSwapAuthorityArgs = tags::SET_SWAP_AUTHORITY,
+    AtomicRedeemArgs = tags::ATOMIC_REDEEM,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -381,7 +399,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24
+                23, 24, 25
             ]
         );
         assert_eq!(
@@ -519,5 +537,6 @@ mod tests {
         ("investExternal", tags::INVEST_EXTERNAL),
         ("returnExternal", tags::RETURN_EXTERNAL),
         ("setSwapAuthority", tags::SET_SWAP_AUTHORITY),
+        ("atomicRedeem", tags::ATOMIC_REDEEM),
     ];
 }

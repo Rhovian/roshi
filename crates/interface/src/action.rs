@@ -18,7 +18,7 @@ pub enum ActionScope {
     #[wincode(tag = 1)]
     Swap,
     #[wincode(tag = 2)]
-    Public,
+    AtomicRedeem,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
