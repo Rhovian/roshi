@@ -2,20 +2,23 @@ use roshi::{
     error::RoshiError,
     instructions::{AccountFlags, ManageArgs},
     state::{
-        action::{compute_action_hash, Action, ActionScope, Op, Ops},
+        action::{
+            compute_action_hash, compute_action_hash_from_metas, Action, ActionScope, Op, Ops,
+        },
         sub_account::VaultSubAccount,
         Account as RoshiAccount,
     },
     ID,
 };
 use solana_instruction::{error::InstructionError, AccountMeta};
+use solana_pubkey::Pubkey;
 use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
 use solana_system_interface::program as system_program;
 use wincode::serialize;
 
 use crate::helpers::{
-    assert_instruction_error, fund, send, send_ok, setup_program, TestVault, VaultBuilder,
-    VaultRoles,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_token_account,
+    setup_program, TestVault, VaultBuilder, VaultRoles,
 };
 
 const TRANSFER_LAMPORTS: u64 = 1_000_000;
@@ -146,6 +149,213 @@ fn system_transfer_data(lamports: u64) -> Vec<u8> {
     let mut data = vec![2, 0, 0, 0];
     data.extend_from_slice(&lamports.to_le_bytes());
     data
+}
+
+fn install_manager_action(
+    svm: &mut litesvm::LiteSVM,
+    vault: &TestVault,
+    action_hash: [u8; 32],
+    ops: Ops,
+) -> Pubkey {
+    let (action_pda, action_bump) = Action::find_address(&vault.address, &action_hash);
+    svm.set_account(
+        action_pda,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: vault.address.to_bytes(),
+                action_hash,
+                ops,
+                scope: ActionScope::Manager,
+                redeem_amount_offset: 0,
+                bump: action_bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    action_pda
+}
+
+fn token_transfer_data(amount: u64) -> Vec<u8> {
+    let mut data = vec![3];
+    data.extend_from_slice(&amount.to_le_bytes());
+    data
+}
+
+fn token_transfer_metas(
+    source: Pubkey,
+    destination: Pubkey,
+    authority: Pubkey,
+) -> Vec<AccountMeta> {
+    vec![
+        AccountMeta::new(source, false),
+        AccountMeta::new(destination, false),
+        AccountMeta::new_readonly(authority, true),
+    ]
+}
+
+fn set_account_owner_data(owner: Pubkey) -> Vec<u8> {
+    let mut data = vec![6, 2, 1];
+    data.extend_from_slice(owner.as_ref());
+    data
+}
+
+fn set_account_owner_metas(account: Pubkey, authority: Pubkey) -> Vec<AccountMeta> {
+    vec![
+        AccountMeta::new(account, false),
+        AccountMeta::new_readonly(authority, true),
+    ]
+}
+
+fn install_delegate(svm: &mut litesvm::LiteSVM, address: Pubkey) {
+    let mut account = svm.get_account(&address).unwrap();
+    account.data[72..76].copy_from_slice(&1u32.to_le_bytes());
+    account.data[76..108].copy_from_slice(Pubkey::new_unique().as_ref());
+    svm.set_account(address, account).unwrap();
+}
+
+fn token_account_owner(svm: &litesvm::LiteSVM, address: Pubkey) -> Pubkey {
+    let account = svm.get_account(&address).unwrap();
+    Pubkey::try_from(&account.data[32..64]).unwrap()
+}
+
+#[test]
+fn test_manage_rejects_dirty_custody_before_cpi() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new().roles(VaultRoles::shared(&authority));
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = Pubkey::new_unique();
+    let destination = Pubkey::new_unique();
+    set_token_account(&mut svm, custody, &vault.base_mint, &sub_account, 1);
+    set_token_account(
+        &mut svm,
+        destination,
+        &vault.base_mint,
+        &authority.pubkey(),
+        0,
+    );
+    install_delegate(&mut svm, custody);
+
+    let ix_data = token_transfer_data(1);
+    let metas = token_transfer_metas(custody, destination, sub_account);
+    let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
+    let action_hash =
+        compute_action_hash_from_metas(&crate::helpers::TOKEN_PROGRAM_ID, &ops, &metas, &ix_data)
+            .unwrap();
+    let action_pda = install_manager_action(&mut svm, &vault, action_hash, ops);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            roshi_client::instruction::manage(
+                authority.pubkey(),
+                vault.address,
+                sub_account,
+                action_pda,
+                vec![
+                    AccountMeta::new(custody, false),
+                    AccountMeta::new(destination, false),
+                    AccountMeta::new_readonly(sub_account, false),
+                    AccountMeta::new_readonly(crate::helpers::TOKEN_PROGRAM_ID, false),
+                ],
+                ManageArgs {
+                    sub_account: 0,
+                    program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
+                    accounts_start: 0,
+                    accounts_len: 3,
+                    account_flags: vec![
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                    ],
+                    ix_data,
+                },
+            )
+            .unwrap(),
+            &authority,
+        ),
+        RoshiError::InvalidTokenAccount,
+    );
+}
+
+#[test]
+fn test_manage_rejects_post_cpi_custody_owner_hijack() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new().roles(VaultRoles::shared(&authority));
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = Pubkey::new_unique();
+    let new_owner = Pubkey::new_unique();
+    set_token_account(&mut svm, custody, &vault.base_mint, &sub_account, 0);
+
+    let ix_data = set_account_owner_data(new_owner);
+    let metas = set_account_owner_metas(custody, sub_account);
+    let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
+    let action_hash =
+        compute_action_hash_from_metas(&crate::helpers::TOKEN_PROGRAM_ID, &ops, &metas, &ix_data)
+            .unwrap();
+    let action_pda = install_manager_action(&mut svm, &vault, action_hash, ops);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            roshi_client::instruction::manage(
+                authority.pubkey(),
+                vault.address,
+                sub_account,
+                action_pda,
+                vec![
+                    AccountMeta::new(custody, false),
+                    AccountMeta::new_readonly(sub_account, false),
+                    AccountMeta::new_readonly(crate::helpers::TOKEN_PROGRAM_ID, false),
+                ],
+                ManageArgs {
+                    sub_account: 0,
+                    program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
+                    accounts_start: 0,
+                    accounts_len: 2,
+                    account_flags: vec![
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                    ],
+                    ix_data,
+                },
+            )
+            .unwrap(),
+            &authority,
+        ),
+        RoshiError::InvalidTokenAccount,
+    );
+    assert_eq!(token_account_owner(&svm, custody), sub_account);
 }
 
 #[test]

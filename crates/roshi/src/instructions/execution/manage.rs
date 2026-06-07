@@ -36,5 +36,7 @@ pub fn try_manage(accounts: &[AccountInfo], args: ManageArgs) -> ProgramResult {
         args.ix_data,
     )?;
 
-    invoke_authorized_cpi(&authorized_cpi)
+    let custody = authorized_cpi.scan_subaccount_custody()?;
+    invoke_authorized_cpi(&authorized_cpi)?;
+    authorized_cpi.reverify_subaccount_custody(&custody)
 }

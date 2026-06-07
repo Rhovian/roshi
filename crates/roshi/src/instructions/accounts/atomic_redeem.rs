@@ -76,6 +76,7 @@ impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
         let sub_account_bump =
             VaultSubAccount::verify_account(&vault_key, args.sub_account, sub_account)?;
         token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
+        token::verify_custody_account(custody, sub_account.key)?;
 
         let action = Account::load_as::<Action>(action_account)?;
         action.verify_for_vault(&vault_key, action_account.key)?;

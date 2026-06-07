@@ -141,6 +141,7 @@ fn execute_unwind_cpi<'info>(
 
     let pre = token::token_amount(custody)?;
     invoke_authorized_cpi(&authorized_cpi)?;
+    token::verify_custody_account(custody, &sub_account_key)?;
     let post = token::token_amount(custody)?;
 
     post.checked_sub(pre)

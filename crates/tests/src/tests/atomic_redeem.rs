@@ -402,6 +402,79 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
     );
 }
 
+#[test]
+fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let mut fixture = AtomicRedeemFixture::setup(&mut svm);
+    let mut new_owner = [0u8; 32];
+    new_owner[31] = 1;
+    let new_owner = Pubkey::from(new_owner);
+    let ix_data = set_account_owner_data(new_owner);
+    fixture.action_hash = compute_action_hash_from_metas(
+        &crate::helpers::TOKEN_PROGRAM_ID,
+        &fixture.ops,
+        &set_account_owner_metas(fixture.custody, fixture.sub_account),
+        &ix_data,
+    )
+    .unwrap();
+    fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;
+    fixture.install_action(&mut svm, 3);
+
+    let ix = roshi_client::instruction::atomic_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        fixture.share_account,
+        fixture.vault.share_mint,
+        fixture.recipient,
+        fixture.custody,
+        fixture.sub_account,
+        fixture.action_pda,
+        vec![
+            AccountMeta::new(fixture.custody, false),
+            AccountMeta::new_readonly(fixture.sub_account, false),
+            AccountMeta::new_readonly(crate::helpers::TOKEN_PROGRAM_ID, false),
+        ],
+        AtomicRedeemArgs {
+            shares: REDEEM_SHARES,
+            min_output: 0,
+            sub_account: fixture.sub_account_index,
+            program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
+            accounts_start: 0,
+            accounts_len: 2,
+            account_flags: vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            ix_data,
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.owner),
+        RoshiError::InvalidTokenAccount,
+    );
+    assert_eq!(
+        token_account_owner(&svm, fixture.custody),
+        fixture.sub_account
+    );
+    assert_eq!(token_balance(&svm, &fixture.recipient), 0);
+    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
+    assert_eq!(
+        mint_supply(&svm, &fixture.vault.share_mint),
+        ONE_BASE_SHARES
+    );
+}
+
 fn token_transfer_data(amount: u64) -> Vec<u8> {
     let mut data = vec![3];
     data.extend_from_slice(&amount.to_le_bytes());
@@ -418,4 +491,22 @@ fn token_transfer_metas(
         AccountMeta::new(destination, false),
         AccountMeta::new_readonly(authority, true),
     ]
+}
+
+fn set_account_owner_data(owner: Pubkey) -> Vec<u8> {
+    let mut data = vec![6, 2, 1];
+    data.extend_from_slice(owner.as_ref());
+    data
+}
+
+fn set_account_owner_metas(account: Pubkey, authority: Pubkey) -> Vec<AccountMeta> {
+    vec![
+        AccountMeta::new(account, false),
+        AccountMeta::new_readonly(authority, true),
+    ]
+}
+
+fn token_account_owner(svm: &LiteSVM, address: Pubkey) -> Pubkey {
+    let account = svm.get_account(&address).unwrap();
+    Pubkey::try_from(&account.data[32..64]).unwrap()
 }

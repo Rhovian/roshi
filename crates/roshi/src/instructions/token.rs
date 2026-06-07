@@ -179,6 +179,45 @@ pub(crate) fn verify_custody_account(account: &AccountInfo, subaccount: &Pubkey)
         return Err(RoshiError::InvalidTokenAccount.into());
     }
 
+    if has_transfer_authority(&data) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
+/// Classify `account` as the subaccount's custody for the control scan.
+///
+/// Returns `Ok(true)` for a clean subaccount-owned token account, `Ok(false)`
+/// for accounts outside that custody set, and errors when a subaccount-owned
+/// token account has delegated transfer or close authority.
+pub(crate) fn is_clean_custody(
+    account: &AccountInfo,
+    subaccount: &Pubkey,
+) -> Result<bool, ProgramError> {
+    if account.owner != &TOKEN_PROGRAM_ID {
+        return Ok(false);
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Ok(false);
+    }
+
+    let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &owner != subaccount {
+        return Ok(false);
+    }
+
+    if has_transfer_authority(&data) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(true)
+}
+
+fn has_transfer_authority(data: &[u8]) -> bool {
     let delegate_tag = u32::from_le_bytes(
         data[TOKEN_ACCOUNT_DELEGATE..TOKEN_ACCOUNT_DELEGATE + 4]
             .try_into()
@@ -189,11 +228,8 @@ pub(crate) fn verify_custody_account(account: &AccountInfo, subaccount: &Pubkey)
             .try_into()
             .unwrap(),
     );
-    if delegate_tag != 0 || close_tag != 0 {
-        return Err(RoshiError::InvalidTokenAccount.into());
-    }
 
-    Ok(())
+    delegate_tag != 0 || close_tag != 0
 }
 
 /// Read the amount field of an initialized SPL token account.

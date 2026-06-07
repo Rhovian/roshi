@@ -15,6 +15,7 @@ pub(crate) struct AuthorizedCpi<'a> {
     instruction: Instruction,
     account_infos: Vec<AccountInfo<'a>>,
     vault_key: Pubkey,
+    sub_account_key: Pubkey,
     sub_account_index: u8,
     sub_account_bump: u8,
 }
@@ -25,6 +26,37 @@ impl AuthorizedCpi<'_> {
             .accounts
             .iter()
             .any(|meta| &meta.pubkey == key)
+    }
+
+    /// Pre-CPI: identify writable custody accounts controlled by the subaccount
+    /// and assert that each is clean before the downstream program runs.
+    pub(crate) fn scan_subaccount_custody(&self) -> Result<Vec<Pubkey>, ProgramError> {
+        let mut keys = Vec::new();
+        for (meta, info) in self.instruction.accounts.iter().zip(&self.account_infos) {
+            if meta.is_writable
+                && crate::instructions::token::is_clean_custody(info, &self.sub_account_key)?
+            {
+                keys.push(*info.key);
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Post-CPI: re-check the pre-identified custody accounts by key.
+    pub(crate) fn reverify_subaccount_custody(&self, keys: &[Pubkey]) -> ProgramResult {
+        for key in keys {
+            let info = self
+                .account_infos
+                .iter()
+                .find(|info| info.key == key)
+                .ok_or(ProgramError::from(RoshiError::InvalidTokenAccount))?;
+            if !crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
+                return Err(RoshiError::InvalidTokenAccount.into());
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -124,6 +156,7 @@ pub(crate) fn validate_authorized_cpi<'a>(
         },
         account_infos: cpi_account_infos.to_vec(),
         vault_key: validated_accounts.vault_key,
+        sub_account_key: validated_accounts.sub_account_key,
         sub_account_index: validated_accounts.sub_account_index,
         sub_account_bump: validated_accounts.sub_account_bump,
     })
