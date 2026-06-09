@@ -6,6 +6,7 @@ pub mod error;
 pub mod instructions;
 pub mod math;
 pub mod oracle;
+pub mod state;
 
 solana_pubkey::declare_id!("RoshianbALLAs1RzbvHSHpLRaA8ayaKERQCbfmLb9UP");
 

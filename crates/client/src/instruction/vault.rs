@@ -171,11 +171,15 @@ pub fn update_vault_config(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn report_nav(
     nav_authority: Pubkey,
     vault: Pubkey,
     share_mint: Pubkey,
-    total_assets: u64,
+    base_token_program: Pubkey,
+    deposit_base_custody: Pubkey,
+    withdraw_base_custody: Pubkey,
+    external_value: u64,
     report_hash: [u8; 32],
 ) -> Result<Instruction> {
     new(
@@ -183,9 +187,12 @@ pub fn report_nav(
             AccountMeta::new_readonly(nav_authority, true),
             AccountMeta::new(vault, false),
             AccountMeta::new_readonly(share_mint, false),
+            AccountMeta::new_readonly(base_token_program, false),
+            AccountMeta::new_readonly(deposit_base_custody, false),
+            AccountMeta::new_readonly(withdraw_base_custody, false),
         ],
         &ReportNavArgs {
-            total_assets,
+            external_value,
             report_hash,
         },
     )

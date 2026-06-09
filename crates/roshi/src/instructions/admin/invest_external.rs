@@ -10,7 +10,7 @@ use crate::{
     },
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault},
+        vault::{Role, Vault, VaultExt},
         Account,
     },
 };

@@ -607,21 +607,46 @@ mod tests {
         let nav_authority = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let share_mint = Pubkey::new_unique();
+        let base_token_program = Pubkey::new_unique();
+        let deposit_base_custody = Pubkey::new_unique();
+        let withdraw_base_custody = Pubkey::new_unique();
         let report_hash = [7; 32];
 
-        let ix = report_nav(nav_authority, vault, share_mint, 123, report_hash).unwrap();
+        let ix = report_nav(
+            nav_authority,
+            vault,
+            share_mint,
+            base_token_program,
+            deposit_base_custody,
+            withdraw_base_custody,
+            123,
+            report_hash,
+        )
+        .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 3);
+        assert_eq!(ix.accounts.len(), 6);
         assert_eq!(
             ix.accounts[0],
             AccountMeta::new_readonly(nav_authority, true)
         );
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[2], AccountMeta::new_readonly(share_mint, false));
+        assert_eq!(
+            ix.accounts[3],
+            AccountMeta::new_readonly(base_token_program, false)
+        );
+        assert_eq!(
+            ix.accounts[4],
+            AccountMeta::new_readonly(deposit_base_custody, false)
+        );
+        assert_eq!(
+            ix.accounts[5],
+            AccountMeta::new_readonly(withdraw_base_custody, false)
+        );
 
         let args: ReportNavArgs = decode_args(&ix.data);
-        assert_eq!(args.total_assets, 123);
+        assert_eq!(args.external_value, 123);
         assert_eq!(args.report_hash, report_hash);
     }
 

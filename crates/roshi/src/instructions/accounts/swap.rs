@@ -8,7 +8,7 @@ use crate::{
     state::{
         action::{Action, ActionScope},
         sub_account::VaultSubAccount,
-        vault::{Role, Vault},
+        vault::{Role, Vault, VaultExt},
         Account,
     },
 };

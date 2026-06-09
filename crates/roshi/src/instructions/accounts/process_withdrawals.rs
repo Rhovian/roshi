@@ -8,7 +8,7 @@ use crate::{
     instructions::token,
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault},
+        vault::{Role, Vault, VaultExt},
         withdrawal_ticket::WithdrawalTicket,
         Account,
     },

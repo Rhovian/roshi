@@ -88,6 +88,9 @@ pub enum RoshiInstruction {
     #[codama(account(name = "nav_authority", signer))]
     #[codama(account(name = "vault", writable))]
     #[codama(account(name = "share_mint"))]
+    #[codama(account(name = "base_token_program"))]
+    #[codama(account(name = "deposit_base_custody"))]
+    #[codama(account(name = "withdraw_base_custody"))]
     ReportNav(#[codama(name = "args")] ReportNavArgs) = 6,
 
     #[codama(account(name = "depositor", signer))]

@@ -131,7 +131,10 @@ pub struct CollectFeesArgs {
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ReportNavArgs {
-    pub total_assets: u64,
+    /// Marked base-atom value of everything outside idle base custody — venue
+    /// positions and any non-base idle. The program reads idle base on-chain and
+    /// forms gross NAV = idle + `external_value`.
+    pub external_value: u64,
     pub report_hash: [u8; 32],
 }
 

@@ -16,7 +16,7 @@ use super::{
 use crate::{
     instructions::{token, InitializeVaultArgs},
     state::{
-        vault::{Role, Vault},
+        vault::{Role, Vault, VaultExt},
         Account,
     },
 };

@@ -10,24 +10,41 @@ use solana_sdk::{signature::Keypair, signer::Signer};
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, associated_token_address, fund, send, send_ok,
     send_ok_signed, set_ata, set_mint_supply, set_token_account, setup_program, token_balance,
-    TestVault, VaultBuilder,
+    TestVault, VaultBuilder, TOKEN_PROGRAM_ID,
 };
 
 const ONE_BASE: u64 = 1_000_000;
 const ONE_BASE_SHARES: u64 = 1_000_000_000;
 
+/// The vault's deposit and withdraw sub-account base ATAs — the accounts the
+/// program reads idle base from (deposit = index 0, withdraw = index 1: the
+/// `VaultBuilder` defaults).
+fn base_custodies(vault: &TestVault) -> (Pubkey, Pubkey) {
+    let deposit = VaultSubAccount::find_address(&vault.address, 0).0;
+    let withdraw = VaultSubAccount::find_address(&vault.address, 1).0;
+    (
+        associated_token_address(&deposit, &vault.base_mint),
+        associated_token_address(&withdraw, &vault.base_mint),
+    )
+}
+
+/// Report `external_value`; the program reads idle base on-chain from the
+/// (passed) deposit and withdraw base ATAs, so gross NAV = idle + external_value.
 fn report_nav_ix(
     nav_authority: Pubkey,
-    vault: Pubkey,
-    share_mint: Pubkey,
-    total_assets: u64,
+    vault: &TestVault,
+    external_value: u64,
     report_hash: [u8; 32],
 ) -> solana_instruction::Instruction {
+    let (deposit_custody, withdraw_custody) = base_custodies(vault);
     roshi_client::instruction::report_nav(
         nav_authority,
-        vault,
-        share_mint,
-        total_assets,
+        vault.address,
+        vault.share_mint,
+        TOKEN_PROGRAM_ID,
+        deposit_custody,
+        withdraw_custody,
+        external_value,
         report_hash,
     )
     .unwrap()
@@ -106,8 +123,7 @@ fn test_report_nav_accepts_first_report() {
     let report_hash = [1; 32];
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         report_hash,
     );
@@ -116,6 +132,80 @@ fn test_report_nav_accepts_first_report() {
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, 1_000_000);
     assert_eq!(state.last_report_hash, report_hash);
+}
+
+#[test]
+fn test_report_nav_sums_idle_base_and_external_value() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    fund(&mut svm, &vault.roles.nav_authority);
+
+    // Idle base sitting in the deposit sub-account's base ATA, read on-chain.
+    let deposit_sub = VaultSubAccount::find_address(&vault.address, 0).0;
+    set_ata(&mut svm, &deposit_sub, &vault.base_mint, 1_000_000);
+
+    // Gross = idle (1_000_000) + external (500_000).
+    let ix = report_nav_ix(vault.roles.nav_authority.pubkey(), &vault, 500_000, [1; 32]);
+    send_ok(&mut svm, ix, &vault.roles.nav_authority);
+
+    assert_eq!(vault.load(&svm).total_assets, 1_500_000);
+}
+
+#[test]
+fn test_report_nav_counts_withdraw_buffer_as_idle() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    fund(&mut svm, &vault.roles.nav_authority);
+
+    // Base parked in the withdraw sub-account (index 1) buffer is idle too.
+    let withdraw_sub = VaultSubAccount::find_address(&vault.address, 1).0;
+    set_ata(&mut svm, &withdraw_sub, &vault.base_mint, 250_000);
+
+    let ix = report_nav_ix(vault.roles.nav_authority.pubkey(), &vault, 0, [1; 32]);
+    send_ok(&mut svm, ix, &vault.roles.nav_authority);
+
+    assert_eq!(vault.load(&svm).total_assets, 250_000);
+}
+
+#[test]
+fn test_report_nav_rejects_non_canonical_custody() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    fund(&mut svm, &vault.roles.nav_authority);
+
+    // A base account that is not the canonical deposit ATA must be rejected —
+    // the authority cannot substitute a sandbagged balance.
+    let (_, withdraw_custody) = base_custodies(&vault);
+    let ix = roshi_client::instruction::report_nav(
+        vault.roles.nav_authority.pubkey(),
+        vault.address,
+        vault.share_mint,
+        TOKEN_PROGRAM_ID,
+        Pubkey::new_unique(),
+        withdraw_custody,
+        0,
+        [1; 32],
+    )
+    .unwrap();
+    assert_instruction_error(
+        send(&mut svm, ix, &vault.roles.nav_authority),
+        InstructionError::InvalidSeeds,
+    );
 }
 
 #[test]
@@ -133,8 +223,7 @@ fn test_report_nav_rejects_non_nav_authority() {
 
     let ix = report_nav_ix(
         outsider.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
@@ -160,8 +249,7 @@ fn test_report_nav_rejects_zero_report_hash() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [0; 32],
     );
@@ -186,8 +274,7 @@ fn test_report_nav_accepts_initial_report() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
@@ -212,8 +299,7 @@ fn test_report_nav_accrues_performance_fees_against_high_watermark() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
@@ -221,8 +307,7 @@ fn test_report_nav_accrues_performance_fees_against_high_watermark() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_100_000,
         [2; 32],
     );
@@ -249,16 +334,14 @@ fn test_report_nav_excludes_unpaid_fees_from_next_fee_base() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_100_000,
         [2; 32],
     );
@@ -266,8 +349,7 @@ fn test_report_nav_excludes_unpaid_fees_from_next_fee_base() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_121_000,
         [3; 32],
     );
@@ -294,16 +376,14 @@ fn test_report_nav_rejects_gross_nav_below_existing_payable() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_100_000,
         [2; 32],
     );
@@ -312,8 +392,7 @@ fn test_report_nav_rejects_gross_nav_below_existing_payable() {
     let before = vault.load(&svm);
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         9_999,
         [3; 32],
     );
@@ -347,13 +426,9 @@ fn test_report_nav_includes_unstruck_withdrawal_shares_in_fee_denominator() {
     assert_eq!(state.pending_withdrawal_assets, 0);
     assert_eq!(state.requested_withdrawal_shares, ONE_BASE_SHARES / 2);
 
-    let ix = report_nav_ix(
-        vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
-        1_000_000,
-        [1; 32],
-    );
+    // The deposited base is idle in the deposit sub-account ATA, read on-chain;
+    // nothing is deployed externally, so report `external_value = 0`.
+    let ix = report_nav_ix(vault.roles.nav_authority.pubkey(), &vault, 0, [1; 32]);
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
 
     let state = vault.load(&svm);
@@ -379,16 +454,14 @@ fn test_report_nav_rejects_gross_nav_below_payables_with_unstruck_withdrawals() 
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_100_000,
         [2; 32],
     );
@@ -414,8 +487,7 @@ fn test_report_nav_rejects_gross_nav_below_payables_with_unstruck_withdrawals() 
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         9_999,
         [3; 32],
     );
@@ -450,16 +522,14 @@ fn test_collect_fees_pays_treasury_without_changing_total_assets() {
 
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_000_000,
         [1; 32],
     );
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
     let ix = report_nav_ix(
         vault.roles.nav_authority.pubkey(),
-        vault.address,
-        vault.share_mint,
+        &vault,
         1_100_000,
         [2; 32],
     );

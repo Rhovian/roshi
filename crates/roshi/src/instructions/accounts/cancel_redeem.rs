@@ -6,7 +6,7 @@ use wincode::serialize;
 use super::shared::{close_account, next_account, require_writable, require_writable_signer};
 use crate::{
     instructions::token,
-    state::{vault::Vault, withdrawal_ticket::WithdrawalTicket, Account},
+    state::{vault::{Vault, VaultExt}, withdrawal_ticket::WithdrawalTicket, Account},
 };
 use roshi_interface::error::RoshiError;
 

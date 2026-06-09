@@ -1,12 +1,14 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
+use solana_pubkey::Pubkey;
 use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
 use crate::{
     instructions::{accounts::next_account, token, ReportNavArgs},
     state::{
-        vault::{Role, Vault},
+        sub_account::VaultSubAccount,
+        vault::{Role, Vault, VaultExt},
         Account,
     },
 };
@@ -21,12 +23,17 @@ const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 /// 0. `[signer]` Vault NAV authority.
 /// 1. `[writable]` Vault account receiving the accepted NAV report.
 /// 2. `[]` SPL share mint.
+/// 3. `[]` Base-asset token program (owns the custody ATAs).
+/// 4. `[]` Deposit sub-account base ATA.
+/// 5. `[]` Withdraw sub-account base ATA.
 ///
-/// The NAV authority is trusted to report gross total portfolio NAV in base
-/// atoms. The gross report must include assets reserved or owed for pending
-/// withdrawals and unpaid fees. Roshi subtracts existing liabilities, accrues
-/// any performance fee into `fees_payable`, stores net `total_assets`, and
-/// records the report commitment and timestamp.
+/// The NAV authority reports `external_value` — the marked base-atom value of
+/// everything outside idle base custody (venue positions, non-base idle). The
+/// program reads **idle base** on-chain from the vault's deposit and withdraw
+/// sub-account base ATAs (so it cannot be misreported), forms gross NAV =
+/// idle + `external_value`, then subtracts existing liabilities, accrues any
+/// performance fee into `fees_payable`, stores net `total_assets`, and records
+/// the report commitment and timestamp.
 pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
 
@@ -48,8 +55,43 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         return Err(RoshiError::InvalidVaultState.into());
     }
 
-    let fee_base_assets = args
-        .total_assets
+    // Idle base: the vault's own base-mint balance, read live from its deposit and
+    // withdraw sub-account ATAs. Pinned to the canonical ATAs so the authority
+    // cannot substitute a sandbagged account. Gross NAV = idle + external_value.
+    let base_token_program = next_account(accounts_iter)?;
+    token::verify_token_program(base_token_program)?;
+    let deposit_custody = next_account(accounts_iter)?;
+    let withdraw_custody = next_account(accounts_iter)?;
+
+    let base_mint = Pubkey::from(vault.base_mint);
+    let deposit_ata = expect_base_custody(
+        vault_account.key,
+        vault.deposit_sub_account,
+        &base_mint,
+        base_token_program.key,
+        deposit_custody,
+    )?;
+    let withdraw_ata = expect_base_custody(
+        vault_account.key,
+        vault.withdraw_sub_account,
+        &base_mint,
+        base_token_program.key,
+        withdraw_custody,
+    )?;
+
+    let mut idle = custody_amount(deposit_custody)?;
+    // Distinct sub-accounts ⇒ distinct ATAs. If a vault points both roles at the
+    // same sub-account the ATAs coincide; count the balance once.
+    if withdraw_ata != deposit_ata {
+        idle = idle
+            .checked_add(custody_amount(withdraw_custody)?)
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    }
+    let gross_total_assets = idle
+        .checked_add(args.external_value)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+
+    let fee_base_assets = gross_total_assets
         .checked_sub(vault.fees_payable)
         .and_then(|assets| assets.checked_sub(vault.pending_withdrawal_assets))
         .ok_or(ProgramError::from(RoshiError::InvalidVaultState))?;
@@ -83,4 +125,31 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
     data[..serialized.len()].copy_from_slice(&serialized);
 
     Ok(())
+}
+
+/// Verify `custody` is the canonical base ATA of the vault's `sub_account_index`
+/// sub-account, returning that ATA address.
+fn expect_base_custody(
+    vault_key: &Pubkey,
+    sub_account_index: u8,
+    base_mint: &Pubkey,
+    base_token_program: &Pubkey,
+    custody: &AccountInfo,
+) -> Result<Pubkey, ProgramError> {
+    let (sub_account, _) = VaultSubAccount::find_address(vault_key, sub_account_index);
+    let expected = token::associated_token_address(&sub_account, base_mint, base_token_program);
+    if custody.key != &expected {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    Ok(expected)
+}
+
+/// Base balance held in a (pinned) custody ATA, or `0` if it isn't created yet.
+fn custody_amount(custody: &AccountInfo) -> Result<u64, ProgramError> {
+    if custody.data_is_empty() {
+        return Ok(0);
+    }
+
+    token::token_amount(custody)
 }
