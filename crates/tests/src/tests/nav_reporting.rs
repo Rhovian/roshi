@@ -8,9 +8,10 @@ use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, associated_token_address, fund, send, send_ok,
-    send_ok_signed, set_ata, set_mint_supply, set_token_account, setup_program, token_balance,
-    TestVault, VaultBuilder, TOKEN_PROGRAM_ID,
+    assert_instruction_error, assert_roshi_error, associated_token_address,
+    associated_token_address_with_program, fund, send, send_ok, send_ok_signed, set_ata,
+    set_mint_supply, set_token_account, setup_program, token_balance, TestVault, VaultBuilder,
+    TOKEN_2022_PROGRAM_ID,
 };
 
 const ONE_BASE: u64 = 1_000_000;
@@ -41,7 +42,7 @@ fn report_nav_ix(
         nav_authority,
         vault.address,
         vault.share_mint,
-        TOKEN_PROGRAM_ID,
+        vault.base_mint,
         deposit_custody,
         withdraw_custody,
         external_value,
@@ -195,13 +196,49 @@ fn test_report_nav_rejects_non_canonical_custody() {
         vault.roles.nav_authority.pubkey(),
         vault.address,
         vault.share_mint,
-        TOKEN_PROGRAM_ID,
+        vault.base_mint,
         Pubkey::new_unique(),
         withdraw_custody,
         0,
         [1; 32],
     )
     .unwrap();
+    assert_instruction_error(
+        send(&mut svm, ix, &vault.roles.nav_authority),
+        InstructionError::InvalidSeeds,
+    );
+}
+
+#[test]
+fn test_report_nav_rejects_wrong_token_program_ata_namespace() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    fund(&mut svm, &vault.roles.nav_authority);
+
+    let deposit_sub = VaultSubAccount::find_address(&vault.address, 0).0;
+    let wrong_deposit_custody = associated_token_address_with_program(
+        &deposit_sub,
+        &vault.base_mint,
+        &TOKEN_2022_PROGRAM_ID,
+    );
+    let (_, withdraw_custody) = base_custodies(&vault);
+    let ix = roshi_client::instruction::report_nav(
+        vault.roles.nav_authority.pubkey(),
+        vault.address,
+        vault.share_mint,
+        vault.base_mint,
+        wrong_deposit_custody,
+        withdraw_custody,
+        0,
+        [1; 32],
+    )
+    .unwrap();
+
     assert_instruction_error(
         send(&mut svm, ix, &vault.roles.nav_authority),
         InstructionError::InvalidSeeds,
@@ -221,12 +258,7 @@ fn test_report_nav_rejects_non_nav_authority() {
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
 
-    let ix = report_nav_ix(
-        outsider.pubkey(),
-        &vault,
-        1_000_000,
-        [1; 32],
-    );
+    let ix = report_nav_ix(outsider.pubkey(), &vault, 1_000_000, [1; 32]);
     assert_instruction_error(
         send(&mut svm, ix, &outsider),
         InstructionError::IllegalOwner,
@@ -390,12 +422,7 @@ fn test_report_nav_rejects_gross_nav_below_existing_payable() {
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
 
     let before = vault.load(&svm);
-    let ix = report_nav_ix(
-        vault.roles.nav_authority.pubkey(),
-        &vault,
-        9_999,
-        [3; 32],
-    );
+    let ix = report_nav_ix(vault.roles.nav_authority.pubkey(), &vault, 9_999, [3; 32]);
     assert_roshi_error(
         send(&mut svm, ix, &vault.roles.nav_authority),
         RoshiError::InvalidVaultState,
@@ -485,12 +512,7 @@ fn test_report_nav_rejects_gross_nav_below_payables_with_unstruck_withdrawals() 
     assert_eq!(before.pending_withdrawal_assets, 0);
     assert_eq!(before.requested_withdrawal_shares, ONE_BASE_SHARES / 2);
 
-    let ix = report_nav_ix(
-        vault.roles.nav_authority.pubkey(),
-        &vault,
-        9_999,
-        [3; 32],
-    );
+    let ix = report_nav_ix(vault.roles.nav_authority.pubkey(), &vault, 9_999, [3; 32]);
     assert_roshi_error(
         send(&mut svm, ix, &vault.roles.nav_authority),
         RoshiError::InvalidVaultState,

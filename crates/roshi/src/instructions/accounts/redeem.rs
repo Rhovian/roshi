@@ -12,7 +12,11 @@ use super::shared::{
 };
 use crate::{
     instructions::{token, RedeemArgs},
-    state::{vault::{Vault, VaultExt}, withdrawal_ticket::WithdrawalTicket, Account},
+    state::{
+        vault::{Vault, VaultExt},
+        withdrawal_ticket::WithdrawalTicket,
+        Account,
+    },
 };
 use roshi_interface::error::RoshiError;
 

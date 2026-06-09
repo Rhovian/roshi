@@ -607,7 +607,7 @@ mod tests {
         let nav_authority = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let share_mint = Pubkey::new_unique();
-        let base_token_program = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
         let deposit_base_custody = Pubkey::new_unique();
         let withdraw_base_custody = Pubkey::new_unique();
         let report_hash = [7; 32];
@@ -616,7 +616,7 @@ mod tests {
             nav_authority,
             vault,
             share_mint,
-            base_token_program,
+            base_mint,
             deposit_base_custody,
             withdraw_base_custody,
             123,
@@ -632,10 +632,7 @@ mod tests {
         );
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(ix.accounts[2], AccountMeta::new_readonly(share_mint, false));
-        assert_eq!(
-            ix.accounts[3],
-            AccountMeta::new_readonly(base_token_program, false)
-        );
+        assert_eq!(ix.accounts[3], AccountMeta::new_readonly(base_mint, false));
         assert_eq!(
             ix.accounts[4],
             AccountMeta::new_readonly(deposit_base_custody, false)

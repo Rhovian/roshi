@@ -327,9 +327,7 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::access::{access_merkle_leaf, access_merkle_node};
-    use wincode::{
-        config::DefaultConfig, serialize, SchemaRead, SchemaWrite, TypeMeta,
-    };
+    use wincode::{config::DefaultConfig, serialize, SchemaRead, SchemaWrite, TypeMeta};
 
     fn assert_zero_copy<T>()
     where

@@ -11,7 +11,12 @@ use crate::{
         DepositArgs,
     },
     oracle::{OracleKind, OraclePrice, PythOracle, SwitchboardOracle},
-    state::{asset::Asset, sub_account::VaultSubAccount, vault::{Vault, VaultExt}, Account},
+    state::{
+        asset::Asset,
+        sub_account::VaultSubAccount,
+        vault::{Vault, VaultExt},
+        Account,
+    },
 };
 use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 

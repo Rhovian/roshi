@@ -132,8 +132,7 @@ mod tests {
         let mut data = serialize(&Account::Vault(vault)).unwrap();
         let owner = crate::ID;
         let mut lamports = 1;
-        let account =
-            AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
 
         assert_eq!(Vault::load_checked(&account).unwrap(), vault);
     }
@@ -145,8 +144,7 @@ mod tests {
         let mut data = serialize(&Account::Vault(vault)).unwrap();
         let owner = crate::ID;
         let mut lamports = 1;
-        let account =
-            AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
 
         assert_eq!(
             Vault::load_checked(&account),

@@ -23,7 +23,7 @@ const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 /// 0. `[signer]` Vault NAV authority.
 /// 1. `[writable]` Vault account receiving the accepted NAV report.
 /// 2. `[]` SPL share mint.
-/// 3. `[]` Base-asset token program (owns the custody ATAs).
+/// 3. `[]` Base mint.
 /// 4. `[]` Deposit sub-account base ATA.
 /// 5. `[]` Withdraw sub-account base ATA.
 ///
@@ -58,24 +58,25 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
     // Idle base: the vault's own base-mint balance, read live from its deposit and
     // withdraw sub-account ATAs. Pinned to the canonical ATAs so the authority
     // cannot substitute a sandbagged account. Gross NAV = idle + external_value.
-    let base_token_program = next_account(accounts_iter)?;
-    token::verify_token_program(base_token_program)?;
+    let base_mint_account = next_account(accounts_iter)?;
     let deposit_custody = next_account(accounts_iter)?;
     let withdraw_custody = next_account(accounts_iter)?;
 
     let base_mint = Pubkey::from(vault.base_mint);
+    token::verify_mint(base_mint_account, &base_mint, vault.base_decimals, None)?;
+    let base_token_program = base_mint_account.owner;
     let deposit_ata = expect_base_custody(
         vault_account.key,
         vault.deposit_sub_account,
         &base_mint,
-        base_token_program.key,
+        base_token_program,
         deposit_custody,
     )?;
     let withdraw_ata = expect_base_custody(
         vault_account.key,
         vault.withdraw_sub_account,
         &base_mint,
-        base_token_program.key,
+        base_token_program,
         withdraw_custody,
     )?;
 

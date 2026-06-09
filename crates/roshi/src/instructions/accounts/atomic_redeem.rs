@@ -6,7 +6,12 @@ use wincode::serialize;
 use super::shared::{next_account, require_writable, require_writable_signer};
 use crate::{
     instructions::{token, AtomicRedeemArgs},
-    state::{action::Action, sub_account::VaultSubAccount, vault::{Vault, VaultExt}, Account},
+    state::{
+        action::Action,
+        sub_account::VaultSubAccount,
+        vault::{Vault, VaultExt},
+        Account,
+    },
 };
 
 /// Fixed atomic-redeem account layout:
