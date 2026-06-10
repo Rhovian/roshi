@@ -1,0 +1,4 @@
+[submodule "vendor/crucible"]
+	path = vendor/crucible
+	url = https://github.com/Rhovian/crucible.git
+	branch = main
