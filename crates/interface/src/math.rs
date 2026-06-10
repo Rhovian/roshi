@@ -387,6 +387,44 @@ mod tests {
     }
 
     #[test]
+    fn performance_fee_for_nav_floors_indivisible_accrual() {
+        // Profit of 11 at 1_000 bps is 1.1 units of fee. The fee must *floor*
+        // (charge 1, in the depositor's favour), never ceil to 2. The divisible
+        // example above can't tell floor from ceil; this one pins the direction.
+        assert_eq!(
+            performance_fee_for_nav(1_000_011, 1_000_000_000, 1_000_000, 1_000),
+            Ok((1, 1_000_010, 1_000_010))
+        );
+    }
+
+    #[test]
+    fn bps_ceil_never_exceeds_amount_exhaustive_over_bps() {
+        // Ground truth: bitwuzla-via-CBMC-6.8 reported `ceil <= amount` as a
+        // FAILURE, but its SMT2 backend crashes (smt2_conv invariant violation),
+        // so that verdict is a solver artifact. This native check is exhaustive
+        // over every valid bps at the boundary-relevant amounts.
+        let amounts = [
+            0u64,
+            1,
+            2,
+            3,
+            7,
+            9_999,
+            10_000,
+            10_001,
+            u64::MAX / 2,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        for &amount in &amounts {
+            for bps in 0..=BPS_DENOMINATOR {
+                let ceil = bps_ceil(amount, bps).unwrap();
+                assert!(ceil <= amount, "ceil {ceil} > amount {amount} at bps {bps}");
+            }
+        }
+    }
+
+    #[test]
     fn withdrawal_buffer_targets_can_round_up() {
         assert_eq!(bps_ceil(1_001, 100), Ok(11));
         assert_eq!(bps_floor(1_001, 100), Ok(10));
@@ -484,6 +522,47 @@ mod tests {
                 assets_for_redeem(total_shares, total_assets, total_shares),
                 Ok(total_assets)
             );
+        }
+
+        #[test]
+        fn prop_performance_fee_conserves_and_ratchets(
+            gross in 0u64..=1_000_000_000,
+            total_shares in 0u64..=1_000_000_000,
+            high_watermark in 0u64..=1_000_000_000,
+            bps in 0u16..=BPS_DENOMINATOR,
+        ) {
+            // These inputs are all in-domain, so the accrual must not error;
+            // a swallowed `Err` would hide exactly the regression we want loud.
+            let (fee, net, new_hwm) =
+                performance_fee_for_nav(gross, total_shares, high_watermark, bps).unwrap();
+            // Conservation: the fee is carved out of gross, nothing created.
+            prop_assert!(fee <= gross);
+            prop_assert_eq!(net, gross - fee);
+            // The high-watermark only ever ratchets up.
+            prop_assert!(new_hwm >= high_watermark);
+            // No fee with no rate and no fee with no shares to charge against.
+            if bps == 0 || total_shares == 0 {
+                prop_assert_eq!(fee, 0);
+            }
+        }
+
+        #[test]
+        fn prop_performance_fee_is_monotonic_in_bps(
+            gross in 0u64..=1_000_000_000,
+            total_shares in 0u64..=1_000_000_000,
+            high_watermark in 0u64..=1_000_000_000,
+            bps_a in 0u16..=BPS_DENOMINATOR,
+            bps_b in 0u16..=BPS_DENOMINATOR,
+        ) {
+            // A higher fee rate can never charge less on the same NAV report.
+            // Forces the fee-charged branch to be meaningful without the test
+            // re-deriving the fee formula (exact values live in the example tests).
+            let (lo, hi) = if bps_a <= bps_b { (bps_a, bps_b) } else { (bps_b, bps_a) };
+            let (fee_lo, ..) =
+                performance_fee_for_nav(gross, total_shares, high_watermark, lo).unwrap();
+            let (fee_hi, ..) =
+                performance_fee_for_nav(gross, total_shares, high_watermark, hi).unwrap();
+            prop_assert!(fee_hi >= fee_lo);
         }
 
     }
