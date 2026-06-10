@@ -5,10 +5,6 @@ pub mod sub_account;
 pub mod vault;
 pub mod withdrawal_ticket;
 
-/// Byte flags live in the interface crate (shared with the lifted `Vault`);
-/// re-export so `crate::state::flags` keeps resolving for the program's accounts.
-pub(crate) use roshi_interface::state::flags;
-
 use action::Action;
 use asset::Asset;
 use program_config::ProgramConfig;

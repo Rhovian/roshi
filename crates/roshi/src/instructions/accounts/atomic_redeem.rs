@@ -9,7 +9,7 @@ use crate::{
     state::{
         action::Action,
         sub_account::VaultSubAccount,
-        vault::{Vault, VaultExt},
+        vault::{self, Vault},
         Account,
     },
 };
@@ -74,10 +74,10 @@ impl<'a, 'info> AtomicRedeemContext<'a, 'info> {
         }
         let cpi_accounts = accounts_iter.as_slice();
 
-        let vault = Vault::load_checked(vault_account)?;
+        let vault = vault::load_checked(vault_account)?;
         let vault_key = *vault_account.key;
 
-        vault.verify_share_mint(share_mint)?;
+        vault::verify_share_mint(&vault, share_mint)?;
         let share_mint_key = Pubkey::from(vault.share_mint);
         token::verify_token_account_mint_and_owner(user_share_account, &share_mint_key, owner.key)?;
 

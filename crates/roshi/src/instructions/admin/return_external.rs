@@ -10,7 +10,7 @@ use crate::{
     },
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role},
         Account,
     },
 };
@@ -45,8 +45,8 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
     }
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
-    let mut vault = Vault::load_checked(vault_account)?;
-    vault.verify_role(Role::Strategist, strategist)?;
+    let mut vault = vault::load_checked(vault_account)?;
+    vault::verify_role(&vault, Role::Strategist, strategist)?;
     vault.verify_manage_enabled()?;
     if !vault.external_enabled()? {
         return Err(RoshiError::ExternalDisabled.into());

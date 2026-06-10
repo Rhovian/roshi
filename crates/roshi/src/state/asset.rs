@@ -3,7 +3,20 @@ use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::state::flags;
+const FLAG_FALSE: u8 = 0;
+const FLAG_TRUE: u8 = 1;
+
+const fn flag(value: bool) -> u8 {
+    value as u8
+}
+
+fn bool_flag(flag: u8) -> Result<bool, ProgramError> {
+    match flag {
+        FLAG_FALSE => Ok(false),
+        FLAG_TRUE => Ok(true),
+        _ => Err(RoshiError::InvalidAssetAccount.into()),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
@@ -44,7 +57,7 @@ impl Asset {
             asset_mint,
             oracle,
             asset_decimals,
-            enabled_flag: flags::bool_to_flag(enabled),
+            enabled_flag: flag(enabled),
             bump,
             _padding: [0; 5],
         })
@@ -58,18 +71,19 @@ impl Asset {
     }
 
     pub fn enabled(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.enabled_flag, RoshiError::InvalidAssetAccount)
+        bool_flag(self.enabled_flag)
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled_flag = flags::bool_to_flag(enabled);
+        self.enabled_flag = flag(enabled);
     }
 
     pub fn validate_state(&self) -> ProgramResult {
         self.oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidAssetAccount))?;
-        flags::validate_flag(self.enabled_flag, RoshiError::InvalidAssetAccount)
+        bool_flag(self.enabled_flag)?;
+        Ok(())
     }
 }
 

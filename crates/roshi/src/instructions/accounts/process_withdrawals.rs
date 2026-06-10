@@ -8,7 +8,7 @@ use crate::{
     instructions::token,
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role, Vault},
         withdrawal_ticket::WithdrawalTicket,
         Account,
     },
@@ -46,8 +46,8 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
         let withdrawal_authority = next_account(accounts_iter)?;
         let vault_account = next_account(accounts_iter)?;
         require_writable(vault_account)?;
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_role(Role::WithdrawalAuthority, withdrawal_authority)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_role(&vault, Role::WithdrawalAuthority, withdrawal_authority)?;
 
         let sub_account = next_account(accounts_iter)?;
         let sub_account_bump = VaultSubAccount::verify_account(
@@ -62,7 +62,7 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
         token::verify_token_account_mint_and_owner(custody, &base_mint, sub_account.key)?;
 
         let share_mint = next_account(accounts_iter)?;
-        vault.verify_share_mint(share_mint)?;
+        vault::verify_share_mint(&vault, share_mint)?;
 
         let token_program = next_account(accounts_iter)?;
         token::verify_token_program_for(token_program, custody)?;

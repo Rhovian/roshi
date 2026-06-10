@@ -14,7 +14,7 @@ use crate::{
     state::{
         asset::Asset,
         sub_account::VaultSubAccount,
-        vault::{Vault, VaultExt},
+        vault::{self, Vault},
         Account,
     },
 };
@@ -76,8 +76,8 @@ where
         verify_token_program_for(asset_token_program, custody)?;
         let extra = accounts_iter.as_slice();
 
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_share_mint(share_mint)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_share_mint(&vault, share_mint)?;
 
         Ok(Self {
             depositor,

@@ -13,7 +13,7 @@ use super::shared::{
 use crate::{
     instructions::{token, RedeemArgs},
     state::{
-        vault::{Vault, VaultExt},
+        vault::{self, Vault},
         withdrawal_ticket::WithdrawalTicket,
         Account,
     },
@@ -70,8 +70,8 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
             return Err(ProgramError::IncorrectProgramId);
         }
 
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_share_mint(share_mint)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_share_mint(&vault, share_mint)?;
         let base_mint = Pubkey::from(vault.base_mint);
         if recipient_token_account.key != &Pubkey::from(args.recipient_token_account) {
             return Err(RoshiError::InvalidTokenAccount.into());

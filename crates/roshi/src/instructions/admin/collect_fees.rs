@@ -10,7 +10,7 @@ use crate::{
     },
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role},
         Account,
     },
 };
@@ -40,8 +40,8 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     let vault_account = next_account(accounts_iter)?;
     require_writable(vault_account)?;
 
-    let mut vault = Vault::load_checked(vault_account)?;
-    vault.verify_role(Role::Admin, admin)?;
+    let mut vault = vault::load_checked(vault_account)?;
+    vault::verify_role(&vault, Role::Admin, admin)?;
 
     if args.amount > vault.fees_payable {
         return Err(RoshiError::InvalidVaultState.into());

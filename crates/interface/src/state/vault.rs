@@ -1,23 +1,28 @@
-//! The canonical `Vault` account layout and its pure (account-free) logic.
-//!
-//! This is the single source of truth for the vault's data and the validation /
-//! derivation logic that does not touch on-chain accounts. The Roshi program
-//! re-uses this type and adds the on-chain operations that need account context
-//! (`load_checked`, `verify_role`, `verify_share_mint`) via its own extension
-//! trait; off-chain readers decode it through [`Vault::from_account_data`].
+//! `Vault` account wire type and decode helpers.
 
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use wincode::{deserialize, SchemaRead, SchemaWrite};
 
 use crate::{
-    access::verify_access_merkle_proof,
-    error::RoshiError,
-    math::validate_percentage_bps,
-    oracle::OracleConfig,
-    state::{flags, VAULT_ACCOUNT_TAG},
-    ID,
+    access::verify_access_merkle_proof, error::RoshiError, math::validate_percentage_bps,
+    oracle::OracleConfig, state::VAULT_ACCOUNT_TAG, ID,
 };
+
+const FLAG_FALSE: u8 = 0;
+const FLAG_TRUE: u8 = 1;
+
+const fn flag(value: bool) -> u8 {
+    value as u8
+}
+
+fn bool_flag(flag: u8) -> Result<bool, ProgramError> {
+    match flag {
+        FLAG_FALSE => Ok(false),
+        FLAG_TRUE => Ok(true),
+        _ => Err(RoshiError::InvalidVaultState.into()),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -132,19 +137,18 @@ impl Vault {
             base_decimals,
             deposit_sub_account,
             withdraw_sub_account,
-            deposits_paused_flag: flags::bool_to_flag(false),
-            withdrawals_paused_flag: flags::bool_to_flag(false),
-            manage_paused_flag: flags::bool_to_flag(false),
-            private_flag: flags::bool_to_flag(private),
-            external_enabled_flag: flags::bool_to_flag(false),
+            deposits_paused_flag: flag(false),
+            withdrawals_paused_flag: flag(false),
+            manage_paused_flag: flag(false),
+            private_flag: flag(private),
+            external_enabled_flag: flag(false),
             bump,
             _padding: [0; 2],
         })
     }
 
     /// Decode a `Vault` from raw Roshi account data — the wincode `Account::Vault`
-    /// payload (a one-byte tag then the vault). The off-chain read path; the
-    /// program loads via its `AccountInfo`-based extension trait instead.
+    /// payload (a one-byte tag then the vault).
     pub fn from_account_data(data: &[u8]) -> Result<Self, ProgramError> {
         let (&tag, rest) = data
             .split_first()
@@ -265,43 +269,43 @@ impl Vault {
     }
 
     pub fn deposits_paused(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.deposits_paused_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.deposits_paused_flag)
     }
 
     pub fn withdrawals_paused(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.withdrawals_paused_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.withdrawals_paused_flag)
     }
 
     pub fn manage_paused(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.manage_paused_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.manage_paused_flag)
     }
 
     pub fn private(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.private_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.private_flag)
     }
 
     pub fn external_enabled(&self) -> Result<bool, ProgramError> {
-        flags::flag_to_bool(self.external_enabled_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.external_enabled_flag)
     }
 
     pub fn set_deposits_paused(&mut self, deposits_paused: bool) {
-        self.deposits_paused_flag = flags::bool_to_flag(deposits_paused);
+        self.deposits_paused_flag = flag(deposits_paused);
     }
 
     pub fn set_withdrawals_paused(&mut self, withdrawals_paused: bool) {
-        self.withdrawals_paused_flag = flags::bool_to_flag(withdrawals_paused);
+        self.withdrawals_paused_flag = flag(withdrawals_paused);
     }
 
     pub fn set_manage_paused(&mut self, manage_paused: bool) {
-        self.manage_paused_flag = flags::bool_to_flag(manage_paused);
+        self.manage_paused_flag = flag(manage_paused);
     }
 
     pub fn set_private(&mut self, private: bool) {
-        self.private_flag = flags::bool_to_flag(private);
+        self.private_flag = flag(private);
     }
 
     pub fn set_external_enabled(&mut self, external_enabled: bool) {
-        self.external_enabled_flag = flags::bool_to_flag(external_enabled);
+        self.external_enabled_flag = flag(external_enabled);
     }
 
     pub fn validate_state(&self) -> ProgramResult {
@@ -315,11 +319,12 @@ impl Vault {
         self.base_oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidVaultState))?;
-        flags::validate_flag(self.deposits_paused_flag, RoshiError::InvalidVaultState)?;
-        flags::validate_flag(self.withdrawals_paused_flag, RoshiError::InvalidVaultState)?;
-        flags::validate_flag(self.manage_paused_flag, RoshiError::InvalidVaultState)?;
-        flags::validate_flag(self.private_flag, RoshiError::InvalidVaultState)?;
-        flags::validate_flag(self.external_enabled_flag, RoshiError::InvalidVaultState)
+        bool_flag(self.deposits_paused_flag)?;
+        bool_flag(self.withdrawals_paused_flag)?;
+        bool_flag(self.manage_paused_flag)?;
+        bool_flag(self.private_flag)?;
+        bool_flag(self.external_enabled_flag)?;
+        Ok(())
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{
     state::{
         action::{Action, ActionScope},
         sub_account::VaultSubAccount,
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role},
         Account,
     },
 };
@@ -43,8 +43,8 @@ impl<'a, 'info> SwapContext<'a, 'info> {
 
         let swap_authority = next_account(accounts_iter)?;
         let vault_account = next_account(accounts_iter)?;
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_role(Role::SwapAuthority, swap_authority)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_role(&vault, Role::SwapAuthority, swap_authority)?;
         vault.verify_manage_enabled()?;
 
         let vault_key = *vault_account.key;

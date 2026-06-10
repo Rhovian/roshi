@@ -7,7 +7,7 @@ use super::shared::{close_account, next_account, require_writable, require_writa
 use crate::{
     instructions::token,
     state::{
-        vault::{Vault, VaultExt},
+        vault::{self, Vault},
         withdrawal_ticket::WithdrawalTicket,
         Account,
     },
@@ -53,8 +53,8 @@ impl<'a, 'info> CancelRedeemContext<'a, 'info> {
             return Err(ProgramError::IncorrectProgramId);
         }
 
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_share_mint(share_mint)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_share_mint(&vault, share_mint)?;
 
         let ticket = Account::load_as::<WithdrawalTicket>(ticket_account)?;
         if ticket.vault != vault_account.key.to_bytes() || ticket.owner != owner.key.to_bytes() {

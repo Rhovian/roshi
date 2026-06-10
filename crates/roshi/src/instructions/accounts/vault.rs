@@ -16,7 +16,7 @@ use super::{
 use crate::{
     instructions::{token, InitializeVaultArgs},
     state::{
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role, Vault},
         Account,
     },
 };
@@ -33,8 +33,8 @@ impl<'a, 'info> VaultRoleContext<'a, 'info> {
         vault_account: &'a AccountInfo<'info>,
         role: Role,
     ) -> Result<Self, ProgramError> {
-        let vault = Vault::load_checked(vault_account)?;
-        vault.verify_role(role, authority)?;
+        let vault = vault::load_checked(vault_account)?;
+        vault::verify_role(&vault, role, authority)?;
 
         Ok(Self {
             vault_account,

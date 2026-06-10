@@ -6,7 +6,7 @@ use super::shared::next_account;
 use crate::state::{
     action::{Action, ActionScope},
     sub_account::VaultSubAccount,
-    vault::{Role, Vault, VaultExt},
+    vault::{self, Role, Vault},
     Account,
 };
 use roshi_interface::error::RoshiError;
@@ -121,7 +121,7 @@ fn validate_manage_accounts(
     action_acc: &AccountInfo,
     sub_account_index: u8,
 ) -> Result<ValidatedManageAccounts, ProgramError> {
-    let vault = Vault::load_checked(vault_acc)?;
+    let vault = vault::load_checked(vault_acc)?;
     let vault_key = *vault_acc.key;
 
     let sub_account_bump =
@@ -147,7 +147,7 @@ fn verify_action_executor(
     scope: ActionScope,
 ) -> Result<(), ProgramError> {
     match scope {
-        ActionScope::Manager => vault.verify_role(Role::Strategist, executor),
+        ActionScope::Manager => vault::verify_role(&vault, Role::Strategist, executor),
         ActionScope::Swap => Err(RoshiError::UnauthorizedAction.into()),
         ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
     }

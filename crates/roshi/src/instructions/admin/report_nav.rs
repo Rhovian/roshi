@@ -8,7 +8,7 @@ use crate::{
     instructions::{accounts::next_account, token, ReportNavArgs},
     state::{
         sub_account::VaultSubAccount,
-        vault::{Role, Vault, VaultExt},
+        vault::{self, Role},
         Account,
     },
 };
@@ -43,11 +43,11 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let mut vault = Vault::load_checked(vault_account)?;
-    vault.verify_role(Role::NavAuthority, nav_authority)?;
+    let mut vault = vault::load_checked(vault_account)?;
+    vault::verify_role(&vault, Role::NavAuthority, nav_authority)?;
 
     let share_mint = next_account(accounts_iter)?;
-    vault.verify_share_mint(share_mint)?;
+    vault::verify_share_mint(&vault, share_mint)?;
     let share_supply = token::mint_supply(share_mint)?;
     let economic_share_supply = vault.economic_share_supply(share_supply)?;
 
