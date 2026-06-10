@@ -131,9 +131,12 @@ pub struct CollectFeesArgs {
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ReportNavArgs {
-    /// Marked base-atom value of everything outside idle base custody — venue
-    /// positions and any non-base idle. The program reads idle base on-chain and
-    /// forms gross NAV = idle + `external_value`.
+    /// Marked base-atom value of everything the program does *not* read as idle:
+    /// venue positions, non-base idle, and any base not held in the vault's
+    /// current deposit/withdraw custodies (e.g. base stranded in a sub-account
+    /// after a repoint — accounting for it is the off-chain NAV's job). The
+    /// program reads idle base on-chain and forms gross NAV = idle +
+    /// `external_value`.
     pub external_value: u64,
     pub report_hash: [u8; 32],
 }

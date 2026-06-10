@@ -252,6 +252,24 @@ impl Vault {
             .ok_or(ProgramError::from(RoshiError::Overflow))
     }
 
+    /// Base custody only ever moves through the sub-accounts whose base ATAs
+    /// `report_nav` reads as idle — the vault's current deposit and withdraw
+    /// sub-accounts. External investment, returns, and fee collection are pinned
+    /// to these so the on-chain idle read always covers base in the *current*
+    /// custodies. The admin may repoint either sub-account, but every base
+    /// movement stays consistent with whatever the vault currently designates.
+    ///
+    /// Repointing while the old custody still holds base strands it: the on-chain
+    /// idle read no longer sees it, so the off-chain NAV must fold that balance
+    /// into the reported `external_value`.
+    pub fn verify_idle_sub_account(&self, sub_account: u8) -> ProgramResult {
+        if sub_account == self.deposit_sub_account || sub_account == self.withdraw_sub_account {
+            return Ok(());
+        }
+
+        Err(RoshiError::InvalidSubAccount.into())
+    }
+
     pub fn verify_manage_enabled(&self) -> ProgramResult {
         if self.manage_paused()? {
             return Err(RoshiError::VaultPaused.into());

@@ -147,7 +147,7 @@ fn verify_action_executor(
     scope: ActionScope,
 ) -> Result<(), ProgramError> {
     match scope {
-        ActionScope::Manager => vault::verify_role(&vault, Role::Strategist, executor),
+        ActionScope::Manager => vault::verify_role(vault, Role::Strategist, executor),
         ActionScope::Swap => Err(RoshiError::UnauthorizedAction.into()),
         ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
     }

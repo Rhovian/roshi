@@ -22,7 +22,8 @@ use roshi_interface::error::RoshiError;
 ///
 /// 0. `[signer]` Vault strategist.
 /// 1. `[writable]` Vault account whose base assets are being deployed externally.
-/// 2. `[]` Vault subaccount PDA for `args.sub_account`.
+/// 2. `[]` Vault subaccount PDA for `args.sub_account` (must be the vault's
+///    current deposit or withdraw sub-account).
 /// 3. `[writable]` Vault subaccount base custody token account.
 /// 4. `[writable]` External base token account receiving the investment cash.
 /// 5. `[]` SPL Token program.
@@ -47,6 +48,7 @@ pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -
     if !vault.external_enabled()? {
         return Err(RoshiError::ExternalDisabled.into());
     }
+    vault.verify_idle_sub_account(args.sub_account)?;
 
     let sub_account = next_account(accounts_iter)?;
     let sub_account_bump =

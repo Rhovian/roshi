@@ -23,7 +23,8 @@ use roshi_interface::error::RoshiError;
 /// 0. `[signer]` Vault strategist.
 /// 1. `[signer]` External token account authority.
 /// 2. `[writable]` Vault account whose external asset accounting is reduced.
-/// 3. `[]` Vault subaccount PDA for `args.sub_account`.
+/// 3. `[]` Vault subaccount PDA for `args.sub_account` (must be the vault's
+///    current deposit or withdraw sub-account).
 /// 4. `[writable]` External base token account returning cash.
 /// 5. `[writable]` Vault subaccount base custody token account.
 /// 6. `[]` SPL Token program.
@@ -54,6 +55,7 @@ pub fn try_return_external(accounts: &[AccountInfo], args: ReturnExternalArgs) -
     if args.amount > vault.external_assets {
         return Err(RoshiError::InvalidVaultState.into());
     }
+    vault.verify_idle_sub_account(args.sub_account)?;
 
     let sub_account = next_account(accounts_iter)?;
     VaultSubAccount::verify_account(vault_account.key, args.sub_account, sub_account)?;

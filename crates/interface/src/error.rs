@@ -28,6 +28,7 @@ pub enum RoshiError {
     ExternalDisabled = 22,
     WithdrawalExceedsEntitlement = 23,
     InsufficientShares = 24,
+    InvalidSubAccount = 25,
 }
 
 impl From<RoshiError> for ProgramError {

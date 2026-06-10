@@ -22,7 +22,8 @@ use roshi_interface::error::RoshiError;
 ///
 /// 0. `[signer]` Vault admin.
 /// 1. `[writable]` Vault account with accrued `fees_payable`.
-/// 2. `[]` Vault subaccount PDA for `args.sub_account`.
+/// 2. `[]` Vault subaccount PDA for `args.sub_account` (must be the vault's
+///    current deposit or withdraw sub-account).
 /// 3. `[writable]` Vault subaccount base custody token account.
 /// 4. `[writable]` Configured base treasury token account.
 /// 5. `[]` SPL Token program.
@@ -46,6 +47,7 @@ pub fn try_collect_fees(accounts: &[AccountInfo], args: CollectFeesArgs) -> Prog
     if args.amount > vault.fees_payable {
         return Err(RoshiError::InvalidVaultState.into());
     }
+    vault.verify_idle_sub_account(args.sub_account)?;
 
     let fee_sub_account = next_account(accounts_iter)?;
     let sub_account_bump =

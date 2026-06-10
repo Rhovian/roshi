@@ -557,7 +557,8 @@ fn test_collect_fees_pays_treasury_without_changing_total_assets() {
     );
     send_ok(&mut svm, ix, &vault.roles.nav_authority);
 
-    let fee_sub_account_index = 7;
+    // Fees settle out of the vault's deposit custody (an idle sub-account).
+    let fee_sub_account_index = 0;
     let fee_sub_account = VaultSubAccount::find_address(&vault.address, fee_sub_account_index).0;
     let custody = set_ata(&mut svm, &fee_sub_account, &vault.base_mint, 10_000);
     let ix = roshi_client::instruction::collect_fees(
@@ -689,7 +690,8 @@ fn test_collect_fees_rejects_amount_above_payable() {
     );
     fund(&mut svm, &vault.roles.admin);
 
-    let fee_sub_account_index = 7;
+    // Fees settle out of the vault's deposit custody (an idle sub-account).
+    let fee_sub_account_index = 0;
     let fee_sub_account = VaultSubAccount::find_address(&vault.address, fee_sub_account_index).0;
     let custody = set_ata(&mut svm, &fee_sub_account, &vault.base_mint, 1);
     let ix = roshi_client::instruction::collect_fees(
@@ -705,6 +707,108 @@ fn test_collect_fees_rejects_amount_above_payable() {
     assert_roshi_error(
         send(&mut svm, ix, &vault.roles.admin),
         RoshiError::InvalidVaultState,
+    );
+}
+
+#[test]
+fn test_collect_fees_rejects_non_idle_sub_account() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let treasury = Pubkey::new_unique();
+    let builder = VaultBuilder::new().treasury(treasury).fees(1_000, 250);
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    set_mint_supply(&mut svm, &vault.share_mint, 1_000_000_000);
+    fund(&mut svm, &vault.roles.nav_authority);
+    fund(&mut svm, &vault.roles.admin);
+
+    // Accrue a payable so collection clears the amount-vs-payable gate and
+    // reaches the sub-account check.
+    let ix = report_nav_ix(
+        vault.roles.nav_authority.pubkey(),
+        &vault,
+        1_000_000,
+        [1; 32],
+    );
+    send_ok(&mut svm, ix, &vault.roles.nav_authority);
+    let ix = report_nav_ix(
+        vault.roles.nav_authority.pubkey(),
+        &vault,
+        1_100_000,
+        [2; 32],
+    );
+    send_ok(&mut svm, ix, &vault.roles.nav_authority);
+
+    // Index 7 is neither the deposit (0) nor withdraw (1) sub-account, so the
+    // program refuses to settle fees out of base it never counts as idle.
+    let stray_index = 7;
+    let stray_sub_account = VaultSubAccount::find_address(&vault.address, stray_index).0;
+    let custody = set_ata(&mut svm, &stray_sub_account, &vault.base_mint, 10_000);
+    let ix = roshi_client::instruction::collect_fees(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        stray_index,
+        stray_sub_account,
+        custody,
+        treasury,
+        1,
+    )
+    .unwrap();
+    assert_roshi_error(
+        send(&mut svm, ix, &vault.roles.admin),
+        RoshiError::InvalidSubAccount,
+    );
+}
+
+#[test]
+fn test_invest_external_rejects_non_idle_sub_account() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    fund(&mut svm, &vault.roles.admin);
+    fund(&mut svm, &vault.roles.strategist);
+
+    let state = vault.load(&svm);
+    let ix = roshi_client::instruction::update_vault_config(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        UpdateVaultConfigArgs {
+            treasury: state.treasury,
+            deposit_sub_account: state.deposit_sub_account,
+            withdraw_sub_account: state.withdraw_sub_account,
+            base_oracle: state.base_oracle,
+            performance_fee_bps: state.performance_fee_bps,
+            withdrawal_buffer_bps: state.withdrawal_buffer_bps,
+            external_enabled: true,
+        },
+    )
+    .unwrap();
+    send_ok(&mut svm, ix, &vault.roles.admin);
+
+    // Deploying from a sub-account the NAV read never sees would strand base
+    // outside idle accounting — rejected before any token movement.
+    let stray_index = 7;
+    let stray_sub_account = VaultSubAccount::find_address(&vault.address, stray_index).0;
+    let custody = associated_token_address(&stray_sub_account, &vault.base_mint);
+    let ix = roshi_client::instruction::invest_external(
+        vault.roles.strategist.pubkey(),
+        vault.address,
+        stray_index,
+        stray_sub_account,
+        custody,
+        Pubkey::new_unique(),
+        1,
+    )
+    .unwrap();
+    assert_roshi_error(
+        send(&mut svm, ix, &vault.roles.strategist),
+        RoshiError::InvalidSubAccount,
     );
 }
 
@@ -729,7 +833,8 @@ fn test_collect_fees_rejects_non_admin() {
     let outsider = Keypair::new();
     fund(&mut svm, &outsider);
 
-    let fee_sub_account_index = 7;
+    // Fees settle out of the vault's deposit custody (an idle sub-account).
+    let fee_sub_account_index = 0;
     let fee_sub_account = VaultSubAccount::find_address(&vault.address, fee_sub_account_index).0;
     let custody = set_ata(&mut svm, &fee_sub_account, &vault.base_mint, 1);
     let ix = roshi_client::instruction::collect_fees(
