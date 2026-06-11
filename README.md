@@ -72,8 +72,10 @@ the real program through `roshi-client` instructions and, after every mutated
 action sequence, checks accounting invariants — base-token conservation (the
 program mints/burns only shares, never base), withdrawal-queue accounting
 (`requested_withdrawal_shares` and `pending_withdrawal_assets` reconcile against
-the live tickets), and high-watermark monotonicity (never regresses, so
-performance fees can't be double-charged). Alongside the core deposit/redeem/NAV
+the live tickets), high-watermark monotonicity (never regresses, so performance
+fees can't be double-charged), and NAV-report conservation (right after a report,
+net `total_assets` + accrued fees + pending withdrawals equals gross NAV, pinning
+the fee/liability arithmetic). Alongside the core deposit/redeem/NAV
 loop it exercises the strategist arbitrary-CPI surface: a pre-authorized `manage`
 token transfer drives the action-authorization machinery (`authorize_action`,
 `validate_authorized_cpi`, sub-account `invoke_signed`, the custody clean-check),

@@ -634,7 +634,38 @@ impl RoshiFixture {
             hash,
         )
         .unwrap();
-        submit(&mut self.ctx, ix, &[&self.operator.clone()])
+        let ok = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
+        if ok {
+            // NAV-report conservation: the program's own fee/liability arithmetic
+            // must balance the moment a report lands. Gross NAV is idle custody +
+            // the reported external value; out of it the program carves accrued
+            // fees and pending withdrawals, leaving net `total_assets`. So
+            //   total_assets + fees_payable + pending_withdrawal_assets
+            //     == idle + external_value.
+            // `report_nav` moves no tokens, so idle is unchanged from what the
+            // program read. This pins the highest-risk subtraction in the program;
+            // a stray over/under-charge of fees or liabilities breaks it even when
+            // base conservation still holds. Single custody here (deposit ==
+            // withdraw sub-account), so idle is the one custody balance.
+            let account = self.ctx.get_account(&self.vault).expect("vault exists");
+            let vault = Vault::from_account_data(&account.data).expect("vault decodes");
+            let idle = token_balance(&self.ctx.svm, &self.custody) as u128;
+            let net_plus_liabilities = vault.total_assets as u128
+                + vault.fees_payable as u128
+                + vault.pending_withdrawal_assets as u128;
+            let gross = idle + external_value as u128;
+            fuzz_assert_eq!(
+                net_plus_liabilities,
+                gross,
+                "NAV report imbalance: total_assets {} + fees {} + pending {} != idle {} + external {}",
+                vault.total_assets,
+                vault.fees_payable,
+                vault.pending_withdrawal_assets,
+                idle,
+                external_value
+            );
+        }
+        ok
     }
 
     /// Flip pause flags.
