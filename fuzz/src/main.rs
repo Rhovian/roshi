@@ -9,6 +9,7 @@
 //! only *shares*; it never creates or destroys base tokens. So the sum of every
 //! base-token balance in the system must equal the amount installed at setup.
 
+use anchor_lang::prelude::Clock;
 use crucible_fuzzer::*;
 use std::rc::Rc;
 
@@ -56,6 +57,9 @@ const PERF_FEE_BPS: u16 = 100;
 const WITHDRAWAL_BUFFER_BPS: u16 = 250;
 const MAX_BPS: u16 = 10_000;
 const FUND_LAMPORTS: u64 = 100_000_000_000;
+/// Wall-time advanced per slot by `action_advance_slots` (oracle staleness is
+/// `unix_timestamp`-based, so slots alone don't age a price).
+const SECONDS_PER_SLOT: i64 = 1;
 
 #[derive(Clone)]
 struct FuzzUser {
@@ -1156,10 +1160,19 @@ impl RoshiFixture {
         submit(&mut self.ctx, ix, &[&self.operator.clone()])
     }
 
-    /// Advance the clock so time-dependent paths (fees, reporting) are reachable.
+    /// Advance the clock so time-dependent paths (fees, reporting, oracle
+    /// staleness) are reachable. LiteSVM's `warp_to_slot` moves `Clock.slot`
+    /// only; `unix_timestamp` starts at 0 and never advances on its own, which
+    /// would leave the oracle staleness check (`publish_time + max_age < now`)
+    /// permanently unreachable. Advance wall time alongside slots — sysvars are
+    /// restored every fuzz iteration, so this never leaks across sequences.
     pub fn action_advance_slots(&mut self, #[range(0..32)] slots: u64) -> bool {
-        let target = self.ctx.slot() + slots + 1;
+        let advanced = slots + 1;
+        let target = self.ctx.slot() + advanced;
         self.ctx.warp_to_slot(target);
+        let mut clock: Clock = self.ctx.svm.get_sysvar();
+        clock.unix_timestamp += advanced as i64 * SECONDS_PER_SLOT;
+        self.ctx.set_sysvar(&clock);
         true
     }
 }
