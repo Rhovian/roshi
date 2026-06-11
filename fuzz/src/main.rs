@@ -94,6 +94,11 @@ struct RoshiFixture {
     /// Authorized AtomicRedeem action (empty ops: bounded by the on-chain
     /// entitlement and the custody-increase check, not the action hash).
     atomic_action: Pubkey,
+    /// A revocable Manager action (custody -> treasury) and its hash, toggled by
+    /// `action_revoke_action` to drive `revoke_action` and prove a revoked
+    /// action can no longer move funds.
+    revocable_action: Pubkey,
+    revocable_action_hash: [u8; 32],
     users: Vec<FuzzUser>,
     /// Every base-token account in the system, for the conservation sum.
     base_accounts: Vec<Pubkey>,
@@ -237,48 +242,17 @@ impl RoshiFixture {
         let external_account = set_ata(&mut ctx.svm, &external_authority.pubkey(), &base_mint, 0);
 
         // 4b. Authorize one Manager action: an SPL token transfer custody ->
-        //     external, authorized by the sub-account PDA. The ops pin the two
-        //     token accounts, the sub-account authority (with its promoted signer
-        //     flag), and the transfer discriminator byte — but deliberately leave
-        //     the amount free, so the fuzzer can drive variable-amount transfers
-        //     through one authorization. The recomputed hash at `manage` time
-        //     must match this, which is exactly the authz path under test.
-        let transfer_metas = vec![
-            AccountMeta::new(custody, false),
-            AccountMeta::new(external_account, false),
-            AccountMeta::new_readonly(sub_account, true),
-        ];
-        let transfer_ops = Ops::new([
-            Op::IngestAccount { index: 0 },
-            Op::IngestAccount { index: 1 },
-            Op::IngestAccount { index: 2 },
-            Op::IngestInstruction { offset: 0, len: 1 },
-        ])
-        .expect("ops within capacity");
-        // The hash ingests only ix_data[0..1] (the discriminator), so any amount
-        // appended after it satisfies the same authorization.
-        let action_hash = compute_action_hash_from_metas(
-            &support::TOKEN_PROGRAM_ID,
-            &transfer_ops,
-            &transfer_metas,
-            &[SPL_TRANSFER_TAG],
-        )
-        .expect("action hash");
-        let (manage_action, _) = Action::find_address(&vault, &action_hash);
-        submit_ok(
+        //     external, signed by the sub-account PDA, amount free. The
+        //     recomputed hash at `manage` time must match this — the authz path
+        //     under test.
+        let (manage_action, _) = authorize_transfer_action(
             &mut ctx,
-            roshi_client::instruction::authorize_action(
-                operator.pubkey(),
-                vault,
-                manage_action,
-                action_hash,
-                ActionScope::Manager,
-                transfer_ops,
-                0,
-            )
-            .unwrap(),
-            &[&operator],
-            "authorize_action",
+            &operator,
+            vault,
+            sub_account,
+            custody,
+            external_account,
+            ActionScope::Manager,
         );
 
         // 4c. Second base custody (the swap output leg) owned by the sub-account,
@@ -286,10 +260,24 @@ impl RoshiFixture {
         //     custody. Drives `swap` end to end.
         let swap_custody = Pubkey::new_unique();
         set_token_account(&mut ctx.svm, swap_custody, &base_mint, &sub_account, 0);
-        let swap_forward_action =
-            authorize_swap_action(&mut ctx, &operator, vault, sub_account, custody, swap_custody);
-        let swap_reverse_action =
-            authorize_swap_action(&mut ctx, &operator, vault, sub_account, swap_custody, custody);
+        let (swap_forward_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            custody,
+            swap_custody,
+            ActionScope::Swap,
+        );
+        let (swap_reverse_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            swap_custody,
+            custody,
+            ActionScope::Swap,
+        );
 
         // 4d. AtomicRedeem: a sub-account-owned venue account pre-funded with
         //     deployed capital, plus an AtomicRedeem action whose unwind CPI
@@ -318,6 +306,20 @@ impl RoshiFixture {
             .unwrap(),
             &[&operator],
             "authorize_action(atomic_redeem)",
+        );
+
+        // 4e. A revocable Manager action (custody -> treasury) used only to drive
+        //     `revoke_action`: action_revoke_action closes it and asserts a manage
+        //     against it then moves no funds, then re-authorizes it. Distinct
+        //     destination from manage_action so it gets its own Action PDA.
+        let (revocable_action, revocable_action_hash) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            custody,
+            treasury,
+            ActionScope::Manager,
         );
 
         // 5. Users, each funded with base; share ATA starts empty.
@@ -356,6 +358,8 @@ impl RoshiFixture {
             swap_reverse_action,
             atomic_venue,
             atomic_action,
+            revocable_action,
+            revocable_action_hash,
             users,
             base_accounts,
             initial_base,
@@ -573,11 +577,13 @@ impl RoshiFixture {
 
     /// Build a `manage` instruction that CPIs an SPL token transfer of `amount`
     /// from custody to `destination`, signed by the sub-account PDA, against the
-    /// pre-authorized `manage_action`. With `destination == external_account`
-    /// the recomputed action hash matches and the transfer is authorized; any
-    /// other destination breaks the hash (account 1 is pinned) and must reject.
+    /// pre-authorized `action`. The recomputed action hash matches only when
+    /// `(action, destination)` are a pinned pair (e.g. `manage_action` with
+    /// `external_account`); any mismatch — wrong destination, or a revoked
+    /// action whose account is closed — must reject.
     fn manage_transfer_ix(
         &self,
+        action: Pubkey,
         destination: Pubkey,
         amount: u64,
     ) -> solana_instruction::Instruction {
@@ -587,7 +593,7 @@ impl RoshiFixture {
             self.operator.pubkey(),
             self.vault,
             self.sub_account,
-            self.manage_action,
+            action,
             vec![
                 AccountMeta::new(self.custody, false),
                 AccountMeta::new(destination, false),
@@ -629,7 +635,7 @@ impl RoshiFixture {
             return false;
         }
         let amount = amount % (available + 1);
-        let ix = self.manage_transfer_ix(self.external_account, amount);
+        let ix = self.manage_transfer_ix(self.manage_action, self.external_account, amount);
         submit(&mut self.ctx, ix, &[&self.operator.clone()])
     }
 
@@ -651,7 +657,7 @@ impl RoshiFixture {
         // 1..=available: a real transfer attempt, so a successful (buggy) move
         // would be observable rather than a no-op zero transfer.
         let amount = (amount % available) + 1;
-        let ix = self.manage_transfer_ix(destination, amount);
+        let ix = self.manage_transfer_ix(self.manage_action, destination, amount);
         let moved = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
         let custody_after = token_balance(&self.ctx.svm, &self.custody);
         fuzz_assert!(
@@ -660,6 +666,60 @@ impl RoshiFixture {
              custody {custody_before} -> {custody_after} (success={moved})"
         );
         moved
+    }
+
+    /// Drive `revoke_action` and its security guarantee. If the revocable Manager
+    /// action is currently authorized, revoke it (admin signs), then attempt a
+    /// `manage` against the now-closed action and assert it moves no custody
+    /// funds — proving revocation removes authority (conservation can't see this:
+    /// the would-be destination, treasury, is tracked). If it's already revoked,
+    /// re-authorize it (same accounts → same hash/PDA) so the next call can
+    /// revoke again.
+    pub fn action_revoke_action(&mut self) -> bool {
+        let authorized = self
+            .ctx
+            .get_account(&self.revocable_action)
+            .map(|a| a.owner == self.program_id && !a.data.is_empty())
+            .unwrap_or(false);
+
+        if !authorized {
+            let operator = self.operator.clone();
+            let (action, _) = authorize_transfer_action(
+                &mut self.ctx,
+                &operator,
+                self.vault,
+                self.sub_account,
+                self.custody,
+                self.treasury,
+                ActionScope::Manager,
+            );
+            debug_assert_eq!(action, self.revocable_action);
+            return true;
+        }
+
+        let revoke = roshi_client::instruction::revoke_action(
+            self.operator.pubkey(),
+            self.vault,
+            self.revocable_action,
+            self.revocable_action_hash,
+        )
+        .unwrap();
+        if !submit(&mut self.ctx, revoke, &[&self.operator.clone()]) {
+            return false;
+        }
+
+        // The action is closed now: a manage against it must reject before any
+        // transfer, leaving custody untouched.
+        let custody_before = token_balance(&self.ctx.svm, &self.custody);
+        let ix = self.manage_transfer_ix(self.revocable_action, self.treasury, 1);
+        let moved = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
+        let custody_after = token_balance(&self.ctx.svm, &self.custody);
+        fuzz_assert!(
+            !moved && custody_after == custody_before,
+            "revoked action still moved custody funds: \
+             {custody_before} -> {custody_after} (success={moved})"
+        );
+        true
     }
 
     /// Run two authorized custody -> external transfers in one `ManageBatch`.
@@ -974,19 +1034,19 @@ fn pad_tag(tag: &[u8]) -> [u8; 32] {
     out
 }
 
-/// Authorize a Swap action that transfers base `input -> output` (both owned by
-/// `sub_account`), pinning the two custody accounts, the sub-account authority,
-/// and the transfer discriminator — leaving only the amount free — and return
-/// its Action PDA. Matches the `manage` action's tightness: a true
-/// transfer-only, variable-amount authorization.
-fn authorize_swap_action(
+/// Authorize a transfer-only action (`Manager` or `Swap` scope) that moves base
+/// `input -> output` (both owned by `sub_account`), pinning the three accounts
+/// and the transfer discriminator — leaving only the amount free. Returns the
+/// Action PDA and its hash (the hash is needed to revoke it later).
+fn authorize_transfer_action(
     ctx: &mut TestContext,
     operator: &Keypair,
     vault: Pubkey,
     sub_account: Pubkey,
     input: Pubkey,
     output: Pubkey,
-) -> Pubkey {
+    scope: ActionScope,
+) -> (Pubkey, [u8; 32]) {
     let ops = Ops::new([
         Op::IngestAccount { index: 0 },
         Op::IngestAccount { index: 1 },
@@ -1012,15 +1072,15 @@ fn authorize_swap_action(
             vault,
             action,
             action_hash,
-            ActionScope::Swap,
+            scope,
             ops,
             0,
         )
         .unwrap(),
         &[operator],
-        "authorize_action(swap)",
+        "authorize_action(transfer)",
     );
-    action
+    (action, action_hash)
 }
 
 #[invariant_test]

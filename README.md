@@ -76,12 +76,15 @@ the live tickets), high-watermark monotonicity (never regresses, so performance
 fees can't be double-charged), and NAV-report conservation (right after a report,
 net `total_assets` + accrued fees + pending withdrawals equals gross NAV, pinning
 the fee/liability arithmetic). Alongside the core deposit/redeem/NAV
-loop it exercises the arbitrary-CPI surface: pre-authorized `manage`, `swap`, and
-`atomic_redeem` CPIs drive the action-authorization machinery (`authorize_action`,
-`validate_authorized_cpi`, sub-account `invoke_signed`, the custody clean-check,
-swap input/output bounds, and the atomic-redeem entitlement/unwind-into-custody
-checks with share burn), and a tampered `manage` variant asserts an unauthorized
-destination can never move custody funds. The engine is a fork pinned as the `vendor/crucible` submodule (litesvm
+loop it exercises the arbitrary-CPI surface: pre-authorized `manage`,
+`manage_batch`, `swap`, and `atomic_redeem` CPIs drive the action-authorization
+machinery (`authorize_action`, `validate_authorized_cpi`, sub-account
+`invoke_signed`, the custody clean-check, swap input/output bounds, and the
+atomic-redeem entitlement/unwind-into-custody checks with share burn). Two
+negative invariants pin authorization: a tampered `manage` asserts an unpinned
+destination can never move custody funds, and `revoke_action` is exercised by
+revoking an action and asserting a `manage` against it then moves nothing. The
+engine is a fork pinned as the `vendor/crucible` submodule (litesvm
 0.12 / solana 4.x, so its instruction types match the program's).
 
 One-time setup:
