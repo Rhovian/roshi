@@ -53,6 +53,39 @@ pub fn send_ok(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> Transacti
     }
 }
 
+/// Like [`send`], but the instruction may mark signers whose keypairs this
+/// repo does not hold (the program keypair lives in the deployment repo):
+/// their signature slots are left as defaults. Only valid because
+/// [`super::setup_program`] builds the SVM with sigverify disabled.
+#[allow(clippy::result_large_err)]
+pub fn send_partially_signed(
+    svm: &mut LiteSVM,
+    ix: Instruction,
+    payer: &Keypair,
+) -> TransactionResult {
+    let blockhash = svm.latest_blockhash();
+    let message =
+        solana_sdk::message::Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &blockhash);
+    let mut tx = Transaction::new_unsigned(message);
+    tx.partial_sign(&[payer], blockhash);
+    svm.send_transaction(tx)
+}
+
+/// [`send_partially_signed`] a transaction expected to succeed.
+pub fn send_ok_partially_signed(
+    svm: &mut LiteSVM,
+    ix: Instruction,
+    payer: &Keypair,
+) -> TransactionMetadata {
+    match send_partially_signed(svm, ix, payer) {
+        Ok(meta) => meta,
+        Err(failure) => panic!(
+            "transaction failed unexpectedly\nlogs:\n{}",
+            failure.meta.pretty_logs(),
+        ),
+    }
+}
+
 /// [`send_signed`] a transaction expected to succeed.
 pub fn send_ok_signed(
     svm: &mut LiteSVM,

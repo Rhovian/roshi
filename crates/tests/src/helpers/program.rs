@@ -6,7 +6,7 @@ use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
-use super::transaction::{fund, send_ok};
+use super::transaction::{fund, send_ok_partially_signed};
 
 pub fn program_so_path() -> PathBuf {
     std::env::var_os("ROSHI_PROGRAM_SO")
@@ -14,7 +14,9 @@ pub fn program_so_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("../../target/deploy/roshi.so"))
 }
 
-pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
+/// Load the program into a fresh SVM without initializing the program config.
+/// Returns a funded keypair to drive (or attack) initialization.
+pub fn setup_uninitialized_program() -> Option<(LiteSVM, Keypair)> {
     let program_so = program_so_path();
     if !Path::new(&program_so).exists() {
         eprintln!(
@@ -24,16 +26,26 @@ pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
         return None;
     }
 
-    let mut svm = LiteSVM::new();
+    // Sigverify is disabled so initialization can carry the program account's
+    // required signer flag without the program keypair, which lives in the
+    // deployment repo. is_signer enforcement still comes from the message
+    // header, so signer-gating tests are unaffected.
+    let mut svm = LiteSVM::new().with_sigverify(false);
     svm.add_program_from_file(ID, program_so).unwrap();
 
     let authority = Keypair::new();
     fund(&mut svm, &authority);
 
+    Some((svm, authority))
+}
+
+pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
+    let (mut svm, authority) = setup_uninitialized_program()?;
+
     let (config_pda, _) = ProgramConfig::find_address();
     let ix = initialize_program_ix(&authority.pubkey(), &config_pda, &authority.pubkey());
 
-    send_ok(&mut svm, ix, &authority);
+    send_ok_partially_signed(&mut svm, ix, &authority);
 
     Some((svm, authority, config_pda))
 }

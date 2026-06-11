@@ -92,6 +92,19 @@ impl<'a, 'info> InitializeProgramContext<'a, 'info> {
         let payer = next_account(accounts_iter)?;
         require_writable_signer(payer)?;
 
+        // The program's own keypair must co-sign: the config PDA is a global
+        // singleton, so without this gate whoever lands the first
+        // InitializeProgram seizes the program authority (init front-run).
+        // Binding init to possession of the program keypair makes deploy and
+        // initialize safely non-atomic.
+        let program = next_account(accounts_iter)?;
+        if program.key != &crate::ID {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        if !program.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+
         let program_config = next_account(accounts_iter)?;
         require_uninitialized_account(program_config)?;
 

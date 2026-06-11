@@ -56,11 +56,12 @@ mod tests {
         let ix = initialize_program(payer, program_config, authority).unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 3);
+        assert_eq!(ix.accounts.len(), 4);
         assert_eq!(ix.accounts[0], AccountMeta::new(payer, true));
-        assert_eq!(ix.accounts[1], AccountMeta::new(program_config, false));
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(ID, true));
+        assert_eq!(ix.accounts[2], AccountMeta::new(program_config, false));
         assert_eq!(
-            ix.accounts[2],
+            ix.accounts[3],
             AccountMeta::new_readonly(system_program::ID, false)
         );
 
