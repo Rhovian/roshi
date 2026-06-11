@@ -903,8 +903,10 @@ fn pad_tag(tag: &[u8]) -> [u8; 32] {
 }
 
 /// Authorize a Swap action that transfers base `input -> output` (both owned by
-/// `sub_account`), pinning the two custody accounts but leaving the amount free,
-/// and return its Action PDA. Mirrors the swap integration fixture's ops.
+/// `sub_account`), pinning the two custody accounts, the sub-account authority,
+/// and the transfer discriminator — leaving only the amount free — and return
+/// its Action PDA. Matches the `manage` action's tightness: a true
+/// transfer-only, variable-amount authorization.
 fn authorize_swap_action(
     ctx: &mut TestContext,
     operator: &Keypair,
@@ -913,14 +915,20 @@ fn authorize_swap_action(
     input: Pubkey,
     output: Pubkey,
 ) -> Pubkey {
-    let ops = Ops::new([Op::IngestAccount { index: 0 }, Op::IngestAccount { index: 1 }])
-        .expect("ops within capacity");
+    let ops = Ops::new([
+        Op::IngestAccount { index: 0 },
+        Op::IngestAccount { index: 1 },
+        Op::IngestAccount { index: 2 },
+        Op::IngestInstruction { offset: 0, len: 1 },
+    ])
+    .expect("ops within capacity");
     let metas = vec![
         AccountMeta::new(input, false),
         AccountMeta::new(output, false),
         AccountMeta::new_readonly(sub_account, true),
     ];
-    // These ops ingest only the two accounts, so the transfer amount is free.
+    // Ops ingest the three accounts and ix_data[0..1] (the transfer
+    // discriminator), so only the amount appended after it is free.
     let action_hash =
         compute_action_hash_from_metas(&support::TOKEN_PROGRAM_ID, &ops, &metas, &[SPL_TRANSFER_TAG])
             .expect("action hash");
