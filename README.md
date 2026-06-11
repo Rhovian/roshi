@@ -76,11 +76,11 @@ the live tickets), high-watermark monotonicity (never regresses, so performance
 fees can't be double-charged), and NAV-report conservation (right after a report,
 net `total_assets` + accrued fees + pending withdrawals equals gross NAV, pinning
 the fee/liability arithmetic). Alongside the core deposit/redeem/NAV
-loop it exercises the strategist arbitrary-CPI surface: a pre-authorized `manage`
-token transfer drives the action-authorization machinery (`authorize_action`,
-`validate_authorized_cpi`, sub-account `invoke_signed`, the custody clean-check),
-and a tampered variant asserts an unauthorized destination can never move custody
-funds. The engine is a fork pinned as the `vendor/crucible` submodule (litesvm
+loop it exercises the strategist arbitrary-CPI surface: pre-authorized `manage`
+and `swap` CPIs drive the action-authorization machinery (`authorize_action`,
+`validate_authorized_cpi`, sub-account `invoke_signed`, the custody clean-check
+and swap input/output bounds), and a tampered `manage` variant asserts an
+unauthorized destination can never move custody funds. The engine is a fork pinned as the `vendor/crucible` submodule (litesvm
 0.12 / solana 4.x, so its instruction types match the program's).
 
 One-time setup:
@@ -98,10 +98,9 @@ just fuzz-stateful    # stateful: single action over a live state pool (faster)
 just fuzz-cov         # LCOV + HTML coverage report (needs genhtml)
 ```
 
-This covers the core accounting loop plus the `manage` CPI-authorization path.
-Remaining gaps — `swap`/`atomic_redeem`/`manage_batch`, private-vault access
-control, multi-asset/oracle pricing, and stronger solvency invariants — are
-tracked in #10.
+This covers the core accounting loop plus the `manage` and `swap` CPI paths.
+Remaining gaps — `atomic_redeem`/`manage_batch`, private-vault access control,
+and multi-asset/oracle pricing — are tracked in #10.
 
 ## Design Docs
 

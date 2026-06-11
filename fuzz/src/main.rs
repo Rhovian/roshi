@@ -13,7 +13,7 @@ use crucible_fuzzer::*;
 use std::rc::Rc;
 
 use roshi::{
-    instructions::{AccountFlags, InitializeVaultArgs, ManageArgs, UpdateVaultConfigArgs},
+    instructions::{AccountFlags, InitializeVaultArgs, ManageArgs, SwapArgs, UpdateVaultConfigArgs},
     oracle::OracleConfig,
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
@@ -74,6 +74,14 @@ struct RoshiFixture {
     /// arbitrary-CPI authorization machinery (`manage`, `validate_authorized_cpi`,
     /// `invoke_authorized_cpi`, the custody clean-check) through real CPI.
     manage_action: Pubkey,
+    /// Second base custody owned by the sub-account, the `swap` output leg.
+    swap_custody: Pubkey,
+    /// Authorized Swap actions moving base between the two custodies, one per
+    /// direction so the fuzzer can't permanently strand base out of the
+    /// withdrawal-paying custody. Same-mint "swaps" are degenerate but exercise
+    /// all of `try_swap` (input/output bounds, custody reverify, the CPI).
+    swap_forward_action: Pubkey,
+    swap_reverse_action: Pubkey,
     users: Vec<FuzzUser>,
     /// Every base-token account in the system, for the conservation sum.
     base_accounts: Vec<Pubkey>,
@@ -261,9 +269,19 @@ impl RoshiFixture {
             "authorize_action",
         );
 
+        // 4c. Second base custody (the swap output leg) owned by the sub-account,
+        //     plus a Swap action in each direction between it and the deposit
+        //     custody. Drives `swap` end to end.
+        let swap_custody = Pubkey::new_unique();
+        set_token_account(&mut ctx.svm, swap_custody, &base_mint, &sub_account, 0);
+        let swap_forward_action =
+            authorize_swap_action(&mut ctx, &operator, vault, sub_account, custody, swap_custody);
+        let swap_reverse_action =
+            authorize_swap_action(&mut ctx, &operator, vault, sub_account, swap_custody, custody);
+
         // 5. Users, each funded with base; share ATA starts empty.
         let mut users = Vec::with_capacity(NUM_USERS);
-        let mut base_accounts = vec![custody, external_account, treasury];
+        let mut base_accounts = vec![custody, swap_custody, external_account, treasury];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
             ctx.svm.airdrop(&kp.pubkey(), FUND_LAMPORTS).unwrap();
@@ -292,6 +310,9 @@ impl RoshiFixture {
             custody,
             external_account,
             manage_action,
+            swap_custody,
+            swap_forward_action,
+            swap_reverse_action,
             users,
             base_accounts,
             initial_base,
@@ -598,6 +619,66 @@ impl RoshiFixture {
         moved
     }
 
+    /// Execute an authorized base->base swap between the two sub-account
+    /// custodies. Degenerate as a swap, but exercises all of `try_swap`: the
+    /// realized input/output bounds, custody reverification, and the signed CPI.
+    /// `reverse` picks the direction so base is never one-way stranded.
+    pub fn action_swap(&mut self, reverse: bool, amount: u64) -> bool {
+        let (input, output, action) = if reverse {
+            (self.swap_custody, self.custody, self.swap_reverse_action)
+        } else {
+            (self.custody, self.swap_custody, self.swap_forward_action)
+        };
+        let available = token_balance(&self.ctx.svm, &input);
+        if available == 0 {
+            return false;
+        }
+        let amount = amount % (available + 1);
+        let mut ix_data = vec![SPL_TRANSFER_TAG];
+        ix_data.extend_from_slice(&amount.to_le_bytes());
+        let ix = roshi_client::instruction::swap(
+            self.operator.pubkey(),
+            self.vault,
+            self.sub_account,
+            input,
+            output,
+            action,
+            vec![
+                AccountMeta::new(input, false),
+                AccountMeta::new(output, false),
+                AccountMeta::new_readonly(self.sub_account, false),
+                AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+            ],
+            SwapArgs {
+                // The transfer moves exactly `amount`, so spent == received ==
+                // amount: within max_in and at/above min_out by construction.
+                min_out: 0,
+                max_in: amount,
+                sub_account: 0,
+                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap();
+        submit(&mut self.ctx, ix, &[&self.operator.clone()])
+    }
+
     /// Sweep accrued performance fees to the treasury.
     pub fn action_collect_fees(&mut self, amount: u64) -> bool {
         let available = token_balance(&self.ctx.svm, &self.custody);
@@ -698,6 +779,47 @@ fn pad_tag(tag: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out[..tag.len()].copy_from_slice(tag);
     out
+}
+
+/// Authorize a Swap action that transfers base `input -> output` (both owned by
+/// `sub_account`), pinning the two custody accounts but leaving the amount free,
+/// and return its Action PDA. Mirrors the swap integration fixture's ops.
+fn authorize_swap_action(
+    ctx: &mut TestContext,
+    operator: &Keypair,
+    vault: Pubkey,
+    sub_account: Pubkey,
+    input: Pubkey,
+    output: Pubkey,
+) -> Pubkey {
+    let ops = Ops::new([Op::IngestAccount { index: 0 }, Op::IngestAccount { index: 1 }])
+        .expect("ops within capacity");
+    let metas = vec![
+        AccountMeta::new(input, false),
+        AccountMeta::new(output, false),
+        AccountMeta::new_readonly(sub_account, true),
+    ];
+    // These ops ingest only the two accounts, so the transfer amount is free.
+    let action_hash =
+        compute_action_hash_from_metas(&support::TOKEN_PROGRAM_ID, &ops, &metas, &[SPL_TRANSFER_TAG])
+            .expect("action hash");
+    let (action, _) = Action::find_address(&vault, &action_hash);
+    submit_ok(
+        ctx,
+        roshi_client::instruction::authorize_action(
+            operator.pubkey(),
+            vault,
+            action,
+            action_hash,
+            ActionScope::Swap,
+            ops,
+            0,
+        )
+        .unwrap(),
+        &[operator],
+        "authorize_action(swap)",
+    );
+    action
 }
 
 #[invariant_test]
