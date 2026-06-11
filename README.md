@@ -70,10 +70,16 @@ the final argument to choose a different output file.
 invariant-fuzzing harness (LibAFL + LiteSVM, sBPF edge-coverage guided). It drives
 the real program through `roshi-client` instructions and, after every mutated
 action sequence, checks accounting invariants — base-token conservation (the
-program mints/burns only shares, never base) and withdrawal-queue accounting
+program mints/burns only shares, never base), withdrawal-queue accounting
 (`requested_withdrawal_shares` and `pending_withdrawal_assets` reconcile against
-the live tickets). The engine is a fork pinned as the `vendor/crucible` submodule
-(litesvm 0.12 / solana 4.x, so its instruction types match the program's).
+the live tickets), and high-watermark monotonicity (never regresses, so
+performance fees can't be double-charged). Alongside the core deposit/redeem/NAV
+loop it exercises the strategist arbitrary-CPI surface: a pre-authorized `manage`
+token transfer drives the action-authorization machinery (`authorize_action`,
+`validate_authorized_cpi`, sub-account `invoke_signed`, the custody clean-check),
+and a tampered variant asserts an unauthorized destination can never move custody
+funds. The engine is a fork pinned as the `vendor/crucible` submodule (litesvm
+0.12 / solana 4.x, so its instruction types match the program's).
 
 One-time setup:
 
@@ -90,9 +96,10 @@ just fuzz-stateful    # stateful: single action over a live state pool (faster)
 just fuzz-cov         # LCOV + HTML coverage report (needs genhtml)
 ```
 
-This covers the core accounting loop. The strategist-CPI surface
-(`manage`/`swap`/`atomic_redeem`), access control, and stronger solvency
-invariants are tracked in #10.
+This covers the core accounting loop plus the `manage` CPI-authorization path.
+Remaining gaps — `swap`/`atomic_redeem`/`manage_batch`, private-vault access
+control, multi-asset/oracle pricing, and stronger solvency invariants — are
+tracked in #10.
 
 ## Design Docs
 

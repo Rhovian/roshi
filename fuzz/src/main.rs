@@ -13,9 +13,10 @@ use crucible_fuzzer::*;
 use std::rc::Rc;
 
 use roshi::{
-    instructions::{InitializeVaultArgs, UpdateVaultConfigArgs},
+    instructions::{AccountFlags, InitializeVaultArgs, ManageArgs, UpdateVaultConfigArgs},
     oracle::OracleConfig,
     state::{
+        action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         program_config::ProgramConfig,
         sub_account::VaultSubAccount,
         vault::Vault,
@@ -25,9 +26,13 @@ use roshi::{
     ID,
 };
 use roshi_interface::find_share_mint_address;
+use solana_instruction::AccountMeta;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
+
+/// SPL Token `Transfer` instruction discriminator (classic token program).
+const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
 use support::{set_ata, set_mint, set_token_account, token_balance};
@@ -64,6 +69,11 @@ struct RoshiFixture {
     sub_account: Pubkey,
     custody: Pubkey,
     external_account: Pubkey,
+    /// Pre-authorized Manager action: an SPL token transfer custody -> external
+    /// signed by the sub-account PDA, with the amount left free. Drives the
+    /// arbitrary-CPI authorization machinery (`manage`, `validate_authorized_cpi`,
+    /// `invoke_authorized_cpi`, the custody clean-check) through real CPI.
+    manage_action: Pubkey,
     users: Vec<FuzzUser>,
     /// Every base-token account in the system, for the conservation sum.
     base_accounts: Vec<Pubkey>,
@@ -72,6 +82,9 @@ struct RoshiFixture {
     /// Monotonic source of unique report hashes (avoids replay rejection so NAV
     /// reports actually advance the epoch, which is what prices withdrawals).
     report_nonce: u64,
+    /// Highest `high_watermark` seen across this lineage's invariant checks; the
+    /// watermark must never regress (a reset double-charges performance fees).
+    prev_high_watermark: u64,
 }
 
 /// Submit `ix` signed by `signers`; returns whether it succeeded.
@@ -203,6 +216,51 @@ impl RoshiFixture {
         let custody = set_ata(&mut ctx.svm, &sub_account, &base_mint, 0);
         let external_account = set_ata(&mut ctx.svm, &external_authority.pubkey(), &base_mint, 0);
 
+        // 4b. Authorize one Manager action: an SPL token transfer custody ->
+        //     external, authorized by the sub-account PDA. The ops pin the two
+        //     token accounts, the sub-account authority (with its promoted signer
+        //     flag), and the transfer discriminator byte — but deliberately leave
+        //     the amount free, so the fuzzer can drive variable-amount transfers
+        //     through one authorization. The recomputed hash at `manage` time
+        //     must match this, which is exactly the authz path under test.
+        let transfer_metas = vec![
+            AccountMeta::new(custody, false),
+            AccountMeta::new(external_account, false),
+            AccountMeta::new_readonly(sub_account, true),
+        ];
+        let transfer_ops = Ops::new([
+            Op::IngestAccount { index: 0 },
+            Op::IngestAccount { index: 1 },
+            Op::IngestAccount { index: 2 },
+            Op::IngestInstruction { offset: 0, len: 1 },
+        ])
+        .expect("ops within capacity");
+        // The hash ingests only ix_data[0..1] (the discriminator), so any amount
+        // appended after it satisfies the same authorization.
+        let action_hash = compute_action_hash_from_metas(
+            &support::TOKEN_PROGRAM_ID,
+            &transfer_ops,
+            &transfer_metas,
+            &[SPL_TRANSFER_TAG],
+        )
+        .expect("action hash");
+        let (manage_action, _) = Action::find_address(&vault, &action_hash);
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::authorize_action(
+                operator.pubkey(),
+                vault,
+                manage_action,
+                action_hash,
+                ActionScope::Manager,
+                transfer_ops,
+                0,
+            )
+            .unwrap(),
+            &[&operator],
+            "authorize_action",
+        );
+
         // 5. Users, each funded with base; share ATA starts empty.
         let mut users = Vec::with_capacity(NUM_USERS);
         let mut base_accounts = vec![custody, external_account, treasury];
@@ -233,10 +291,12 @@ impl RoshiFixture {
             sub_account,
             custody,
             external_account,
+            manage_action,
             users,
             base_accounts,
             initial_base,
             report_nonce: 0,
+            prev_high_watermark: 0,
         }
     }
 
@@ -447,6 +507,97 @@ impl RoshiFixture {
         submit(&mut self.ctx, ix, &[&op, &ext])
     }
 
+    /// Build a `manage` instruction that CPIs an SPL token transfer of `amount`
+    /// from custody to `destination`, signed by the sub-account PDA, against the
+    /// pre-authorized `manage_action`. With `destination == external_account`
+    /// the recomputed action hash matches and the transfer is authorized; any
+    /// other destination breaks the hash (account 1 is pinned) and must reject.
+    fn manage_transfer_ix(
+        &self,
+        destination: Pubkey,
+        amount: u64,
+    ) -> solana_instruction::Instruction {
+        let mut ix_data = vec![SPL_TRANSFER_TAG];
+        ix_data.extend_from_slice(&amount.to_le_bytes());
+        roshi_client::instruction::manage(
+            self.operator.pubkey(),
+            self.vault,
+            self.sub_account,
+            self.manage_action,
+            vec![
+                AccountMeta::new(self.custody, false),
+                AccountMeta::new(destination, false),
+                AccountMeta::new_readonly(self.sub_account, false),
+                AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+            ],
+            ManageArgs {
+                sub_account: 0,
+                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap()
+    }
+
+    /// Execute the authorized manager transfer (custody -> external) through the
+    /// CPI authorization machinery. Conservation still holds — this just reaches
+    /// the same custody/external move via `manage` rather than `invest_external`,
+    /// exercising `validate_authorized_cpi` + `invoke_signed` with the real PDA.
+    pub fn action_manage_transfer(&mut self, amount: u64) -> bool {
+        let available = token_balance(&self.ctx.svm, &self.custody);
+        if available == 0 {
+            return false;
+        }
+        let amount = amount % (available + 1);
+        let ix = self.manage_transfer_ix(self.external_account, amount);
+        submit(&mut self.ctx, ix, &[&self.operator.clone()])
+    }
+
+    /// Reuse the authorized action PDA but swap the CPI destination to a user
+    /// ATA the action never pinned. The recomputed hash must not match, so the
+    /// program must reject it: no funds may leave custody. Conservation alone
+    /// cannot see this (the user ATA is tracked), so assert it directly.
+    pub fn action_manage_tampered_destination(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        let available = token_balance(&self.ctx.svm, &self.custody);
+        if available == 0 {
+            return false;
+        }
+        let destination = self.users[user].base_ata;
+        let custody_before = token_balance(&self.ctx.svm, &self.custody);
+        // 1..=available: a real transfer attempt, so a successful (buggy) move
+        // would be observable rather than a no-op zero transfer.
+        let amount = (amount % available) + 1;
+        let ix = self.manage_transfer_ix(destination, amount);
+        let moved = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
+        let custody_after = token_balance(&self.ctx.svm, &self.custody);
+        fuzz_assert!(
+            !moved && custody_after == custody_before,
+            "unauthorized manage moved custody funds to an unpinned destination: \
+             custody {custody_before} -> {custody_after} (success={moved})"
+        );
+        moved
+    }
+
     /// Sweep accrued performance fees to the treasury.
     pub fn action_collect_fees(&mut self, amount: u64) -> bool {
         let available = token_balance(&self.ctx.svm, &self.custody);
@@ -547,6 +698,18 @@ fn invariant_core(fixture: &mut RoshiFixture) {
         vault.performance_fee_bps,
         vault.withdrawal_buffer_bps
     );
+
+    // 2b. High-watermark monotonicity. The performance fee only accrues above the
+    //     stored watermark, so a watermark that ever *decreased* would let the
+    //     same gains be charged twice. `report_nav` must only ever ratchet it up.
+    fuzz_assert_ge!(
+        vault.high_watermark,
+        fixture.prev_high_watermark,
+        "high_watermark regressed: {} < {}",
+        vault.high_watermark,
+        fixture.prev_high_watermark
+    );
+    fixture.prev_high_watermark = vault.high_watermark;
 
     // Note: `external_assets` (cost basis of invested base) and `total_assets`
     // (idle custody + the nav_authority's trusted mark) are independent — a
