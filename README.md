@@ -84,8 +84,11 @@ atomic-redeem entitlement/unwind-into-custody checks with share burn). Two
 negative invariants pin authorization: a tampered `manage` asserts an unpinned
 destination can never move custody funds, and `revoke_action` is exercised by
 revoking an action and asserting a `manage` against it then moves nothing. The
-engine is a fork pinned as the `vendor/crucible` submodule (litesvm
-0.12 / solana 4.x, so its instruction types match the program's).
+vault runs **private** over a real access merkle tree: members deposit with
+their proofs, `set_vault_access` toggles the access mode, and a non-whitelisted
+outsider asserts a private vault never admits a deposit. The engine is a fork
+pinned as the `vendor/crucible` submodule (litesvm 0.12 / solana 4.x, so its
+instruction types match the program's).
 
 One-time setup:
 
@@ -102,9 +105,9 @@ just fuzz-stateful    # stateful: single action over a live state pool (faster)
 just fuzz-cov         # LCOV + HTML coverage report (needs genhtml)
 ```
 
-This covers the core accounting loop plus the `manage`, `manage_batch`, `swap`,
-and `atomic_redeem` CPI paths. Remaining gaps — private-vault access control and
-multi-asset/oracle pricing — are tracked in #10.
+This covers the core accounting loop, the `manage`/`manage_batch`/`swap`/
+`atomic_redeem` CPI paths, and private-vault access control. The main remaining
+gap — multi-asset/oracle pricing — is tracked in #10.
 
 ## Design Docs
 

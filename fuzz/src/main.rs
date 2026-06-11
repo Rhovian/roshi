@@ -28,7 +28,11 @@ use roshi::{
     },
     ID,
 };
-use roshi_interface::{find_share_mint_address, math::assets_for_redeem};
+use roshi_interface::{
+    access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
+    find_share_mint_address,
+    math::assets_for_redeem,
+};
 use solana_instruction::AccountMeta;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -58,6 +62,10 @@ struct FuzzUser {
     kp: Rc<Keypair>,
     base_ata: Pubkey,
     share_ata: Pubkey,
+    /// Access proof for the members tree. Members carry a proof that verifies
+    /// against `members_root`; the outsider carries a stolen member proof that
+    /// must not verify for its own identity.
+    access_proof: Vec<[u8; 32]>,
 }
 
 #[derive(Clone)]
@@ -99,6 +107,13 @@ struct RoshiFixture {
     /// action can no longer move funds.
     revocable_action: Pubkey,
     revocable_action_hash: [u8; 32],
+    /// Access merkle root over all `users` (every user is whitelisted, so the
+    /// core deposit loop survives the vault being private). `set_vault_access`
+    /// toggles the vault between private+this-root and public+zero.
+    members_root: [u8; 32],
+    /// A wallet absent from `members_root`: its deposits must be rejected while
+    /// the vault is private, no matter what proof it submits.
+    outsider: FuzzUser,
     users: Vec<FuzzUser>,
     /// Every base-token account in the system, for the conservation sum.
     base_accounts: Vec<Pubkey>,
@@ -335,10 +350,50 @@ impl RoshiFixture {
                 kp,
                 base_ata,
                 share_ata,
+                access_proof: Vec::new(),
             });
         }
 
-        let initial_base = NUM_USERS as u128 * INITIAL_USER_BASE as u128 + VENUE_BASE as u128;
+        // 6. Whitelist every user in a real access tree and flip the vault
+        //    private. Members deposit with their proofs; the core loop survives.
+        let leaves: Vec<[u8; 32]> = users
+            .iter()
+            .map(|u| access_merkle_leaf(&u.kp.pubkey()))
+            .collect();
+        let (members_root, proofs) = build_access_tree(&leaves);
+        for (user, proof) in users.iter_mut().zip(proofs) {
+            // Fail loudly at setup if the builder and the program's verifier
+            // disagree, rather than silently breaking every member deposit.
+            assert!(
+                verify_access_merkle_proof(&user.kp.pubkey(), &members_root, &proof),
+                "access tree builder produced an invalid member proof"
+            );
+            user.access_proof = proof;
+        }
+
+        // An outsider absent from the tree, carrying a stolen member proof.
+        let outsider_kp = Rc::new(Keypair::new());
+        ctx.svm.airdrop(&outsider_kp.pubkey(), FUND_LAMPORTS).unwrap();
+        let outsider_base = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &base_mint, INITIAL_USER_BASE);
+        let outsider_share = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &share_mint, 0);
+        base_accounts.push(outsider_base);
+        let outsider = FuzzUser {
+            kp: outsider_kp,
+            base_ata: outsider_base,
+            share_ata: outsider_share,
+            access_proof: users[0].access_proof.clone(),
+        };
+
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::set_vault_access(operator.pubkey(), vault, true, members_root)
+                .unwrap(),
+            &[&operator],
+            "set_vault_access",
+        );
+
+        let initial_base =
+            (NUM_USERS + 1) as u128 * INITIAL_USER_BASE as u128 + VENUE_BASE as u128;
 
         Self {
             ctx,
@@ -360,6 +415,8 @@ impl RoshiFixture {
             atomic_action,
             revocable_action,
             revocable_action_hash,
+            members_root,
+            outsider,
             users,
             base_accounts,
             initial_base,
@@ -368,7 +425,8 @@ impl RoshiFixture {
         }
     }
 
-    /// Pull base into custody and mint shares (public vault: no access proof).
+    /// Pull base into custody and mint shares. The user is whitelisted, so its
+    /// access proof verifies whether the vault is private or public.
     pub fn action_deposit(&mut self, #[range(0..NUM_USERS)] user: usize, amount: u64) -> bool {
         let user = self.users[user].clone();
         let balance = token_balance(&self.ctx.svm, &user.base_ata);
@@ -389,11 +447,82 @@ impl RoshiFixture {
             self.base_mint,
             amount,
             0,
-            vec![],
+            user.access_proof.clone(),
             vec![],
         )
         .unwrap();
         submit(&mut self.ctx, ix, &[&user.kp])
+    }
+
+    /// Attempt a deposit from the non-whitelisted outsider (with a stolen member
+    /// proof). The access-control property: while the vault is private it must be
+    /// rejected and mint no shares; when public it deposits like anyone else.
+    /// Conservation can't see a leak here (the outsider's accounts are tracked),
+    /// so assert the private-state rejection directly.
+    pub fn action_deposit_outsider(&mut self, amount: u64) -> bool {
+        let outsider = self.outsider.clone();
+        let balance = token_balance(&self.ctx.svm, &outsider.base_ata);
+        if balance == 0 {
+            return false;
+        }
+        // 1..=balance: a real deposit attempt, so an erroneous accept is visible.
+        let amount = (amount % balance) + 1;
+        // The access check only runs when the vault is private AND deposits are
+        // enabled — `try_deposit` checks the pause gate first, so asserting
+        // rejection while paused would prove only the pause, not the ACL.
+        let vault = self.load_vault();
+        let assert_acl = vault.private().unwrap_or(false) && !vault.deposits_paused().unwrap_or(true);
+        let shares_before = token_balance(&self.ctx.svm, &outsider.share_ata);
+        let ix = roshi_client::instruction::deposit(
+            outsider.kp.pubkey(),
+            self.vault,
+            outsider.base_ata,
+            self.custody,
+            outsider.share_ata,
+            self.share_mint,
+            support::TOKEN_PROGRAM_ID,
+            self.base_mint,
+            amount,
+            0,
+            outsider.access_proof.clone(),
+            vec![],
+        )
+        .unwrap();
+        let ok = submit(&mut self.ctx, ix, &[&outsider.kp]);
+        let shares_after = token_balance(&self.ctx.svm, &outsider.share_ata);
+        if assert_acl {
+            fuzz_assert!(
+                !ok && shares_after == shares_before,
+                "non-whitelisted deposit admitted to a private vault: \
+                 shares {shares_before} -> {shares_after} (success={ok})"
+            );
+        }
+        ok
+    }
+
+    /// Toggle the vault's access mode. Private always uses `members_root` (so
+    /// member proofs stay valid and the core loop survives); public uses the
+    /// empty root. Drives `set_vault_access` and both `allows_depositor` branches.
+    pub fn action_set_vault_access(&mut self, make_private: bool) -> bool {
+        let root = if make_private {
+            self.members_root
+        } else {
+            [0; 32]
+        };
+        let ix = roshi_client::instruction::set_vault_access(
+            self.operator.pubkey(),
+            self.vault,
+            make_private,
+            root,
+        )
+        .unwrap();
+        submit(&mut self.ctx, ix, &[&self.operator.clone()])
+    }
+
+    /// Decode the current vault state from on-chain data.
+    fn load_vault(&self) -> Vault {
+        let account = self.ctx.get_account(&self.vault).expect("vault exists");
+        Vault::from_account_data(&account.data).expect("vault decodes")
     }
 
     /// Burn shares and queue a withdrawal ticket.
@@ -709,8 +838,15 @@ impl RoshiFixture {
         }
 
         // The action is closed now: a manage against it must reject before any
-        // transfer, leaving custody untouched.
+        // transfer, leaving custody untouched. The check is only non-vacuous when
+        // a *still-authorized* action could actually move funds — i.e. custody
+        // holds at least the 1 atom we try to transfer and manage isn't paused.
+        // Otherwise a broken revocation would be masked by insufficient-funds or
+        // the pause gate, so skip the assertion (the revoke itself still ran).
         let custody_before = token_balance(&self.ctx.svm, &self.custody);
+        if custody_before == 0 || self.load_vault().manage_paused().unwrap_or(true) {
+            return true;
+        }
         let ix = self.manage_transfer_ix(self.revocable_action, self.treasury, 1);
         let moved = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
         let custody_after = token_balance(&self.ctx.svm, &self.custody);
@@ -1034,10 +1170,53 @@ fn pad_tag(tag: &[u8]) -> [u8; 32] {
     out
 }
 
+/// Build a directionless access Merkle root over `leaves` plus each leaf's
+/// proof, using the program's own `access_merkle_node` (it sorts each pair, so
+/// proofs carry no direction bits). An odd node at any level is promoted
+/// unchanged to the next level. `proofs[i]` verifies the owner of `leaves[i]`
+/// against the returned root — folding the leaf through its proof reproduces it.
+fn build_access_tree(leaves: &[[u8; 32]]) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
+    let mut proofs = vec![Vec::new(); leaves.len()];
+    // Each entry is a subtree: its node hash and the original leaf indices under it.
+    let mut level: Vec<([u8; 32], Vec<usize>)> = leaves
+        .iter()
+        .enumerate()
+        .map(|(i, leaf)| (*leaf, vec![i]))
+        .collect();
+
+    while level.len() > 1 {
+        let mut next: Vec<([u8; 32], Vec<usize>)> = Vec::with_capacity(level.len().div_ceil(2));
+        let mut iter = level.into_iter();
+        while let Some((a_hash, a_leaves)) = iter.next() {
+            match iter.next() {
+                Some((b_hash, b_leaves)) => {
+                    // Each side gains the other's hash as its next proof sibling.
+                    for &i in &a_leaves {
+                        proofs[i].push(b_hash);
+                    }
+                    for &i in &b_leaves {
+                        proofs[i].push(a_hash);
+                    }
+                    let combined = access_merkle_node(&a_hash, &b_hash);
+                    let mut union = a_leaves;
+                    union.extend(b_leaves);
+                    next.push((combined, union));
+                }
+                None => next.push((a_hash, a_leaves)), // odd node: promote unchanged
+            }
+        }
+        level = next;
+    }
+
+    (level[0].0, proofs)
+}
+
 /// Authorize a transfer-only action (`Manager` or `Swap` scope) that moves base
-/// `input -> output` (both owned by `sub_account`), pinning the three accounts
-/// and the transfer discriminator — leaving only the amount free. Returns the
-/// Action PDA and its hash (the hash is needed to revoke it later).
+/// `input -> output`, where `input` is owned by `sub_account` (the transfer
+/// source, with `sub_account` as the signing authority; `output` may be any base
+/// token account — `swap` additionally requires it to be sub-account-owned).
+/// Pins the three accounts and the transfer discriminator, leaving only the
+/// amount free. Returns the Action PDA and its hash (needed to revoke it later).
 fn authorize_transfer_action(
     ctx: &mut TestContext,
     operator: &Keypair,
