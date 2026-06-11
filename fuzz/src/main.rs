@@ -662,6 +662,78 @@ impl RoshiFixture {
         moved
     }
 
+    /// Run two authorized custody -> external transfers in one `ManageBatch`.
+    /// Both legs reuse the single authorized manage action (same accounts and
+    /// discriminator hash to the same Action), so this exercises the batch
+    /// loader's per-action `(sub_account, action)` pair loop and the
+    /// per-action `accounts_start` slicing of the shared CPI account section.
+    /// The second leg is sized to what the first leaves, so the batch settles.
+    pub fn action_manage_batch(&mut self, amount_a: u64, amount_b: u64) -> bool {
+        let available = token_balance(&self.ctx.svm, &self.custody);
+        if available == 0 {
+            return false;
+        }
+        let amount1 = amount_a % (available + 1);
+        let remaining = available - amount1;
+        let amount2 = amount_b % (remaining + 1);
+
+        let mut ix_data_1 = vec![SPL_TRANSFER_TAG];
+        ix_data_1.extend_from_slice(&amount1.to_le_bytes());
+        let mut ix_data_2 = vec![SPL_TRANSFER_TAG];
+        ix_data_2.extend_from_slice(&amount2.to_le_bytes());
+
+        let pair = roshi_client::instruction::ManageBatchActionAccounts {
+            sub_account_pda: self.sub_account,
+            action: self.manage_action,
+        };
+        let transfer_flags = || {
+            vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ]
+        };
+        let leg = |start: u8, ix_data: Vec<u8>| ManageArgs {
+            sub_account: 0,
+            program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
+            accounts_start: start,
+            accounts_len: 3,
+            account_flags: transfer_flags(),
+            ix_data,
+        };
+        // Shared CPI section: each leg's 3 metas immediately followed by its CPI
+        // program account, so leg 0 selects [0,3) (program at 3) and leg 1
+        // selects [4,7) (program at 7).
+        let cpi_accounts = vec![
+            AccountMeta::new(self.custody, false),
+            AccountMeta::new(self.external_account, false),
+            AccountMeta::new_readonly(self.sub_account, false),
+            AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+            AccountMeta::new(self.custody, false),
+            AccountMeta::new(self.external_account, false),
+            AccountMeta::new_readonly(self.sub_account, false),
+            AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+        ];
+        let ix = roshi_client::instruction::manage_batch(
+            self.operator.pubkey(),
+            self.vault,
+            vec![pair, pair],
+            cpi_accounts,
+            vec![leg(0, ix_data_1), leg(4, ix_data_2)],
+        )
+        .unwrap();
+        submit(&mut self.ctx, ix, &[&self.operator.clone()])
+    }
+
     /// Execute an authorized base->base swap between the two sub-account
     /// custodies. Degenerate as a swap, but exercises all of `try_swap`: the
     /// realized input/output bounds, custody reverification, and the signed CPI.

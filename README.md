@@ -99,9 +99,9 @@ just fuzz-stateful    # stateful: single action over a live state pool (faster)
 just fuzz-cov         # LCOV + HTML coverage report (needs genhtml)
 ```
 
-This covers the core accounting loop plus the `manage`, `swap`, and
-`atomic_redeem` CPI paths. Remaining gaps — `manage_batch`, private-vault access
-control, and multi-asset/oracle pricing — are tracked in #10.
+This covers the core accounting loop plus the `manage`, `manage_batch`, `swap`,
+and `atomic_redeem` CPI paths. Remaining gaps — private-vault access control and
+multi-asset/oracle pricing — are tracked in #10.
 
 ## Design Docs
 
