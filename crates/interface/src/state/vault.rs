@@ -5,8 +5,12 @@ use solana_pubkey::Pubkey;
 use wincode::{deserialize, SchemaRead, SchemaWrite};
 
 use crate::{
-    access::verify_access_merkle_proof, error::RoshiError, math::validate_percentage_bps,
-    oracle::OracleConfig, state::VAULT_ACCOUNT_TAG, ID,
+    access::verify_access_merkle_proof,
+    error::RoshiError,
+    math::{validate_percentage_bps, SHARE_DECIMALS},
+    oracle::OracleConfig,
+    state::VAULT_ACCOUNT_TAG,
+    ID,
 };
 
 const FLAG_FALSE: u8 = 0;
@@ -101,6 +105,7 @@ impl Vault {
         Self::validate_config(
             base_mint,
             share_mint,
+            base_decimals,
             performance_fee_bps,
             withdrawal_buffer_bps,
         )?;
@@ -165,6 +170,7 @@ impl Vault {
     pub fn validate_config(
         base_mint: [u8; 32],
         share_mint: [u8; 32],
+        base_decimals: u8,
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
     ) -> ProgramResult {
@@ -173,6 +179,13 @@ impl Vault {
 
         if base_mint == share_mint {
             return Err(ProgramError::InvalidArgument);
+        }
+
+        // Deposit/redeem pricing offsets virtual shares by
+        // 10^(SHARE_DECIMALS - base_decimals); a base mint with more decimals
+        // than the share mint has no valid offset.
+        if base_decimals > SHARE_DECIMALS {
+            return Err(RoshiError::InvalidDecimals.into());
         }
 
         Ok(())
@@ -331,6 +344,7 @@ impl Vault {
         Self::validate_config(
             self.base_mint,
             self.share_mint,
+            self.base_decimals,
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
         )?;
@@ -517,7 +531,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_invalid_bps() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [2; 32], 10_001, 0),
+            Vault::validate_config([1; 32], [2; 32], 6, 10_001, 0),
             Err(error) if error == ProgramError::from(RoshiError::InvalidBps)
         ));
     }
@@ -525,8 +539,17 @@ mod tests {
     #[test]
     fn validate_config_rejects_matching_base_and_share_mints() {
         assert!(matches!(
-            Vault::validate_config([1; 32], [1; 32], 0, 0),
+            Vault::validate_config([1; 32], [1; 32], 6, 0, 0),
             Err(ProgramError::InvalidArgument)
+        ));
+    }
+
+    #[test]
+    fn validate_config_rejects_base_decimals_above_share_decimals() {
+        assert!(Vault::validate_config([1; 32], [2; 32], 9, 0, 0).is_ok());
+        assert!(matches!(
+            Vault::validate_config([1; 32], [2; 32], 10, 0, 0),
+            Err(error) if error == ProgramError::from(RoshiError::InvalidDecimals)
         ));
     }
 

@@ -100,6 +100,7 @@ fn strike_ticket(
         ticket.shares_burned,
         vault.total_assets,
         economic_share_supply,
+        vault.base_decimals,
     )?;
 
     vault.requested_withdrawal_shares = vault

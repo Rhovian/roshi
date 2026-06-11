@@ -127,10 +127,13 @@ Share decimals do not inherit the vault base mint decimals.
 Share price is derived from `total_assets` and the SPL share mint supply through
 checked integer math. It is not stored directly.
 
-When `share_mint.supply == 0`, the first depositor initializes the share base:
+Deposit and redeem pricing carries a virtual position of
+`10^(SHARE_DECIMALS - base_decimals)` shares against one virtual base atom (the
+ERC-4626 virtual-offset defense against donation share-price inflation). The
+first deposit needs no special case: an empty vault prices at exactly
 
 ```text
-initial_shares = floor(base_atoms * 10^SHARE_DECIMALS / 10^base_decimals)
+initial_shares = base_atoms * 10^SHARE_DECIMALS / 10^base_decimals
 ```
 
 For one whole base unit:
@@ -148,26 +151,27 @@ Deposits mint shares at the current share price after normalizing the deposit
 amount into base atoms.
 
 ```text
-shares_to_mint = floor(base_atoms * share_mint.supply / total_assets)
+shares_to_mint = floor(base_atoms * (economic_share_supply + virtual_shares) / (total_assets + 1))
 ```
 
-When unstruck withdrawal shares exist, deposits use
-`economic_share_supply = share_mint.supply + requested_withdrawal_shares` in the
-numerator. If the vault has no economic shares, deposits use the initial share
-formula above.
+where `economic_share_supply = share_mint.supply + requested_withdrawal_shares`
+(circulating shares plus shares burned for unstruck withdrawals) and
+`virtual_shares = 10^(SHARE_DECIMALS - base_decimals)`.
 
 The deposit flow:
 
 - reject deposits while deposits are paused,
 - if the vault is private, verify the depositor's access proof,
-- if `asset_mint == vault.base_mint`, transfer base assets into custody owned
-  by `vault.deposit_sub_account`,
-- otherwise load the `Asset` PDA, verify it is enabled, transfer the non-base
-  assets into its configured custody token account, and compute `base_atoms`
-  with the configured oracle,
+- price the deposit in base atoms: directly if
+  `asset_mint == vault.base_mint`, otherwise through the enabled `Asset` PDA's
+  configured oracle,
+- compute `shares_to_mint` and enforce `min_shares_out` — no funds move on a
+  slippage failure,
+- transfer the deposit into custody: base assets into custody owned by
+  `vault.deposit_sub_account`, non-base assets into the Asset's configured
+  custody token account,
 - mint shares to the user,
-- increase `total_assets` by `base_atoms`,
-- enforce `min_shares_out`.
+- increase `total_assets` by `base_atoms`.
 
 Deposits should not change share price except for integer rounding. Deposits
 that round to zero shares fail.
@@ -221,11 +225,12 @@ WithdrawalTicket {
 processes an eligible unstruck ticket, strike computes:
 
 ```text
-assets_owed = floor(shares_burned * total_assets / economic_share_supply)
+assets_owed = floor(shares_burned * (total_assets + 1) / (economic_share_supply + virtual_shares))
 ```
 
 where `economic_share_supply = share_mint.supply + requested_withdrawal_shares`
-immediately before that ticket is struck. The strike then:
+immediately before that ticket is struck and `virtual_shares` is the same
+virtual-offset position deposits price against. The strike then:
 
 - decrements `requested_withdrawal_shares`,
 - moves `assets_owed` from `total_assets` into `pending_withdrawal_assets`,

@@ -21,7 +21,7 @@ use crate::helpers::{
 
 /// One whole base unit at 6 decimals.
 const ONE_BASE: u64 = 1_000_000;
-/// `initial_shares_from_base_atoms(ONE_BASE, 6)` = ONE_BASE * 10^9 / 10^6.
+/// First deposit into an empty vault: ONE_BASE * 10^9 / 10^6.
 const ONE_BASE_SHARES: u64 = 1_000_000_000;
 
 /// Install a public vault with fresh base/share mints, the share mint owned by

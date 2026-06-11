@@ -84,9 +84,9 @@ bps_floor(amount, bps) -> Result<u64>
 bps_ceil(amount, bps) -> Result<u64>
 validate_percentage_bps(bps) -> Result<()>
 base_atoms_from_asset_atoms(asset_atoms, price_value, price_decimals) -> Result<u64>
-initial_shares_from_base_atoms(base_atoms, base_decimals) -> Result<u64>
-shares_for_deposit(base_atoms, total_assets, total_shares) -> Result<u64>
-assets_for_redeem(shares, total_assets, total_shares) -> Result<u64>
+virtual_share_offset(base_decimals) -> Result<u128>
+shares_for_deposit(base_atoms, total_assets, total_shares, base_decimals) -> Result<u64>
+assets_for_redeem(shares, total_assets, total_shares, base_decimals) -> Result<u64>
 share_price_from_assets(total_assets, total_shares) -> Result<u64>
 performance_fee_for_nav(gross_total_assets, total_shares, high_watermark, performance_fee_bps)
     -> Result<(fee_assets, net_total_assets, high_watermark)>
@@ -107,31 +107,45 @@ Normalize a non-base deposit into base atoms:
 base_atoms = floor(asset_atoms * price_value / 10^price_decimals)
 ```
 
-Mint initial shares when `total_shares == 0`:
+Deposits and redeems price against a virtual position — the ERC-4626
+virtual-offset defense against donation/first-deposit share-price inflation:
 
 ```text
-initial_shares = floor(base_atoms * 10^SHARE_DECIMALS / 10^base_decimals)
+virtual_shares = 10^(SHARE_DECIMALS - base_decimals)
 ```
 
-This makes the initial share scale situational to the vault base mint while
-keeping share decimals fixed at 9. For one whole base unit:
+This requires `base_decimals <= SHARE_DECIMALS`, enforced at vault
+initialization (a virtual-*asset* offset above 1 would let a full redeem price
+above `total_assets`).
+
+Mint shares:
+
+```text
+shares_to_mint = floor(base_atoms * (total_shares + virtual_shares) / (total_assets + 1))
+```
+
+The same formula covers the first deposit: with `total_shares == 0` and
+`total_assets == 0` it reduces to
+`base_atoms * 10^SHARE_DECIMALS / 10^base_decimals`, so the initial share scale
+is situational to the vault base mint while share decimals stay fixed at 9. For
+one whole base unit:
 
 ```text
 USDC base, 6 decimals: 1_000_000 base atoms -> 1_000_000_000 share atoms
 SOL base, 9 decimals: 1_000_000_000 base atoms -> 1_000_000_000 share atoms
 ```
 
-Mint shares into an existing vault:
-
-```text
-shares_to_mint = floor(base_atoms * total_shares / total_assets)
-```
-
 Redeem shares for base atoms:
 
 ```text
-assets_out = floor(shares * total_assets / total_shares)
+assets_out = floor(shares * (total_assets + 1) / (total_shares + virtual_shares))
 ```
+
+The virtual position makes donation griefing unprofitable: a donor inflating a
+later depositor's rounding loss eats ~`virtual_shares` times that loss, because
+the virtual position absorbs the donation pro rata. At par (supply/assets equal
+to the empty-vault ratio) the offset cancels and pricing is exact; off par it
+adds dust-level rounding in the vault's favour.
 
 Compute a withdrawal buffer minimum:
 
@@ -170,9 +184,9 @@ if gross_share_price > high_watermark:
 
 The implementation should explicitly handle:
 
-- `total_shares == 0` and `total_assets == 0` for first deposit,
-- `total_shares > 0` with `total_assets == 0` as an invalid accounting state
-  unless a deliberate recovery path exists,
+- `total_shares == 0` and `total_assets == 0` flowing through the same
+  virtual-offset formula as every later deposit (no first-deposit special case),
+- `base_decimals > SHARE_DECIMALS` rejected before any pricing math runs,
 - deposits that round to zero shares,
 - redeems that round to zero assets,
 - price scales that exceed supported powers of ten,
@@ -200,4 +214,5 @@ Property tests should cover broad generated input ranges for:
 - deposit share monotonicity,
 - redeem asset monotonicity,
 - deposit-then-redeem no-overpay behavior,
-- full redeem returning all assets.
+- redeems never paying more than `total_assets`,
+- exact pricing at par and full redeems returning all assets at or below par.

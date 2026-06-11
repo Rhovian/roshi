@@ -90,9 +90,13 @@ fn validate_redeem_entitlement(
 
     let share_supply = token::mint_supply(context.share_mint)?;
     let economic_share_supply = context.vault.economic_share_supply(share_supply)?;
-    let max_assets_owed =
-        assets_for_redeem(shares, context.vault.total_assets, economic_share_supply)
-            .map_err(ProgramError::from)?;
+    let max_assets_owed = assets_for_redeem(
+        shares,
+        context.vault.total_assets,
+        economic_share_supply,
+        context.vault.base_decimals,
+    )
+    .map_err(ProgramError::from)?;
 
     let withdrawal_amount = decode_withdrawal_amount(ix_data, &context.action)?;
     if withdrawal_amount > max_assets_owed {
