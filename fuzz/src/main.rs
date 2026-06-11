@@ -16,7 +16,7 @@ use std::rc::Rc;
 use roshi::{
     instructions::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
-        SwapArgs, UpdateVaultConfigArgs,
+        SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
     oracle::{OracleConfig, PythOracleConfig},
     state::{
@@ -33,8 +33,9 @@ use roshi::{
 use roshi_interface::{
     access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
     find_share_mint_address,
-    math::assets_for_redeem,
+    math::{assets_for_redeem, shares_for_deposit},
 };
+use solana_account::Account;
 use solana_instruction::AccountMeta;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -44,7 +45,11 @@ use solana_signer::Signer;
 const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
-use support::{mint_supply, set_ata, set_mint, set_pyth_price, set_token_account, token_balance};
+use support::{
+    mint_supply, pyth_price_data, set_ata, set_ata_with_program, set_extended_token_2022_mint,
+    set_mint, set_pyth_price, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, token_balance,
+};
 
 const NUM_USERS: usize = 3;
 const TICKETS_PER_USER: u8 = 3;
@@ -85,6 +90,9 @@ struct FuzzUser {
     share_ata: Pubkey,
     /// The user's account for the registered non-base asset (outsider: empty).
     asset_ata: Pubkey,
+    /// The user's account for the registered bare Token-2022 asset (outsider:
+    /// empty).
+    token_2022_asset_ata: Pubkey,
     /// Access proof for the members tree. Members carry a proof that verifies
     /// against `members_root`; the outsider carries a stolen member proof that
     /// must not verify for its own identity.
@@ -155,6 +163,18 @@ struct RoshiFixture {
     asset_accounts: Vec<Pubkey>,
     /// Total asset installed at setup; conserved for the run's lifetime.
     initial_asset: u128,
+    /// Registered bare Token-2022 asset, plus an extended Token-2022 mint whose
+    /// `initialize_asset` attempt must be rejected.
+    token_2022_asset_mint: Pubkey,
+    token_2022_asset_pda: Pubkey,
+    token_2022_asset_custody: Pubkey,
+    token_2022_swap_custody: Pubkey,
+    token_2022_swap_forward_action: Pubkey,
+    token_2022_swap_reverse_action: Pubkey,
+    extended_token_2022_mint: Pubkey,
+    extended_token_2022_asset_pda: Pubkey,
+    token_2022_asset_accounts: Vec<Pubkey>,
+    initial_token_2022_asset: u128,
     /// Monotonic source of unique report hashes (avoids replay rejection so NAV
     /// reports actually advance the epoch, which is what prices withdrawals).
     report_nonce: u64,
@@ -416,24 +436,115 @@ impl RoshiFixture {
             "initialize_asset",
         );
 
+        // 4g. Register a bare Token-2022 asset. Extended Token-2022 mints are
+        //     installed too but intentionally not registered; an action below
+        //     asserts `initialize_asset` rejects them before creating the PDA.
+        let token_2022_asset_mint = Pubkey::new_unique();
+        set_token_2022_mint(
+            &mut ctx.svm,
+            token_2022_asset_mint,
+            &operator.pubkey(),
+            ASSET_DECIMALS,
+        );
+        let token_2022_asset_custody = set_ata_with_program(
+            &mut ctx.svm,
+            &sub_account,
+            &token_2022_asset_mint,
+            0,
+            support::TOKEN_2022_PROGRAM_ID,
+        );
+        let token_2022_swap_custody = Pubkey::new_unique();
+        set_token_account_with_program(
+            &mut ctx.svm,
+            token_2022_swap_custody,
+            &token_2022_asset_mint,
+            &sub_account,
+            0,
+            support::TOKEN_2022_PROGRAM_ID,
+        );
+        let (token_2022_swap_forward_action, _) = authorize_transfer_action_with_program(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            token_2022_asset_custody,
+            token_2022_swap_custody,
+            ActionScope::Swap,
+            support::TOKEN_2022_PROGRAM_ID,
+        );
+        let (token_2022_swap_reverse_action, _) = authorize_transfer_action_with_program(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            token_2022_swap_custody,
+            token_2022_asset_custody,
+            ActionScope::Swap,
+            support::TOKEN_2022_PROGRAM_ID,
+        );
+        let (token_2022_asset_pda, _) = Asset::find_address(&vault, &token_2022_asset_mint);
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::initialize_asset(
+                operator.pubkey(),
+                vault,
+                token_2022_asset_mint,
+                token_2022_asset_pda,
+                InitializeAssetArgs {
+                    asset_mint: token_2022_asset_mint.to_bytes(),
+                    oracle: OracleConfig::pyth(PythOracleConfig::new(
+                        PYTH_FEED_ID,
+                        PYTH_PRICE_DECIMALS,
+                        PYTH_MAX_AGE_SECS,
+                        PYTH_MAX_CONF_BPS,
+                    )),
+                    asset_decimals: ASSET_DECIMALS,
+                    enabled: true,
+                },
+            )
+            .unwrap(),
+            &[&operator],
+            "initialize_asset(token_2022)",
+        );
+
+        let extended_token_2022_mint = Pubkey::new_unique();
+        set_extended_token_2022_mint(
+            &mut ctx.svm,
+            extended_token_2022_mint,
+            &operator.pubkey(),
+            ASSET_DECIMALS,
+        );
+        let (extended_token_2022_asset_pda, _) =
+            Asset::find_address(&vault, &extended_token_2022_mint);
+
         // 5. Users, each funded with base + the non-base asset; share ATA
         //    starts empty.
         let mut users = Vec::with_capacity(NUM_USERS);
         let mut base_accounts = vec![custody, swap_custody, atomic_venue, external_account, treasury];
         let mut asset_accounts = vec![asset_custody];
+        let mut token_2022_asset_accounts = vec![token_2022_asset_custody, token_2022_swap_custody];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
             ctx.svm.airdrop(&kp.pubkey(), FUND_LAMPORTS).unwrap();
             let base_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &base_mint, INITIAL_USER_BASE);
             let share_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &share_mint, 0);
             let asset_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &asset_mint, INITIAL_USER_ASSET);
+            let token_2022_asset_ata = set_ata_with_program(
+                &mut ctx.svm,
+                &kp.pubkey(),
+                &token_2022_asset_mint,
+                INITIAL_USER_ASSET,
+                support::TOKEN_2022_PROGRAM_ID,
+            );
             base_accounts.push(base_ata);
             asset_accounts.push(asset_ata);
+            token_2022_asset_accounts.push(token_2022_asset_ata);
             users.push(FuzzUser {
                 kp,
                 base_ata,
                 share_ata,
                 asset_ata,
+                token_2022_asset_ata,
                 access_proof: Vec::new(),
             });
         }
@@ -461,13 +572,22 @@ impl RoshiFixture {
         let outsider_base = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &base_mint, INITIAL_USER_BASE);
         let outsider_share = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &share_mint, 0);
         let outsider_asset = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &asset_mint, 0);
+        let outsider_token_2022_asset = set_ata_with_program(
+            &mut ctx.svm,
+            &outsider_kp.pubkey(),
+            &token_2022_asset_mint,
+            0,
+            support::TOKEN_2022_PROGRAM_ID,
+        );
         base_accounts.push(outsider_base);
         asset_accounts.push(outsider_asset);
+        token_2022_asset_accounts.push(outsider_token_2022_asset);
         let outsider = FuzzUser {
             kp: outsider_kp,
             base_ata: outsider_base,
             share_ata: outsider_share,
             asset_ata: outsider_asset,
+            token_2022_asset_ata: outsider_token_2022_asset,
             access_proof: users[0].access_proof.clone(),
         };
 
@@ -482,6 +602,7 @@ impl RoshiFixture {
         let initial_base =
             (NUM_USERS + 1) as u128 * INITIAL_USER_BASE as u128 + VENUE_BASE as u128;
         let initial_asset = NUM_USERS as u128 * INITIAL_USER_ASSET as u128;
+        let initial_token_2022_asset = NUM_USERS as u128 * INITIAL_USER_ASSET as u128;
 
         Self {
             ctx,
@@ -514,6 +635,16 @@ impl RoshiFixture {
             pyth_account,
             asset_accounts,
             initial_asset,
+            token_2022_asset_mint,
+            token_2022_asset_pda,
+            token_2022_asset_custody,
+            token_2022_swap_custody,
+            token_2022_swap_forward_action,
+            token_2022_swap_reverse_action,
+            extended_token_2022_mint,
+            extended_token_2022_asset_pda,
+            token_2022_asset_accounts,
+            initial_token_2022_asset,
             report_nonce: 0,
             prev_high_watermark: 0,
         }
@@ -574,6 +705,179 @@ impl RoshiFixture {
         .unwrap()
     }
 
+    fn deposit_token_2022_asset_ix(
+        &self,
+        user: &FuzzUser,
+        amount: u64,
+    ) -> solana_instruction::Instruction {
+        roshi_client::instruction::deposit(
+            user.kp.pubkey(),
+            self.vault,
+            user.token_2022_asset_ata,
+            self.token_2022_asset_custody,
+            user.share_ata,
+            self.share_mint,
+            support::TOKEN_2022_PROGRAM_ID,
+            self.token_2022_asset_mint,
+            amount,
+            0,
+            user.access_proof.clone(),
+            vec![
+                AccountMeta::new_readonly(self.token_2022_asset_pda, false),
+                AccountMeta::new_readonly(self.pyth_account, false),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn unix_timestamp(&self) -> i64 {
+        let clock: Clock = self.ctx.svm.get_sysvar();
+        clock.unix_timestamp
+    }
+
+    fn asset_enabled(&self) -> bool {
+        let account = self.ctx.get_account(&self.asset_pda).expect("asset exists");
+        match wincode::deserialize::<RoshiAccount>(&account.data) {
+            Ok(RoshiAccount::Asset(asset)) => asset.enabled().expect("asset flag decodes"),
+            Ok(_) => panic!("asset PDA is not an Asset account"),
+            Err(_) => panic!("asset PDA failed to deserialize"),
+        }
+    }
+
+    fn fresh_asset_deposit_can_reach_transfer(&self, vault: &Vault, amount: u64) -> bool {
+        let Ok(economic_share_supply) =
+            vault.economic_share_supply(mint_supply(&self.ctx.svm, &self.share_mint))
+        else {
+            return false;
+        };
+        let Some(base_atoms) = amount.checked_mul(2) else {
+            return false;
+        };
+        shares_for_deposit(
+            base_atoms,
+            vault.total_assets,
+            economic_share_supply,
+            BASE_DECIMALS,
+        )
+        .is_ok()
+    }
+
+    /// Rewrite the Pyth account through `TestContext::write_account`, so
+    /// Crucible's per-iteration snapshot/dirty-account machinery observes the
+    /// mutation. Direct `svm.set_account` is setup-only.
+    fn write_pyth_price(&mut self, conf: u64, publish_time: i64) {
+        let data = pyth_price_data(
+            PYTH_FEED_ID,
+            PYTH_BASE_PRICE,
+            conf,
+            PYTH_EXPONENT,
+            publish_time,
+        );
+        let lamports = self
+            .ctx
+            .get_account(&self.pyth_account)
+            .map(|a| a.lamports)
+            .unwrap_or_else(|_| self.ctx.svm.minimum_balance_for_rent_exemption(data.len()));
+        self.ctx
+            .write_account(
+                &self.pyth_account,
+                Account {
+                    lamports,
+                    data,
+                    owner: support::PYTH_RECEIVER_ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .expect("write pyth account");
+    }
+
+    /// Refresh the price to the current clock timestamp and prove a real
+    /// non-base deposit can pass the oracle path when deposits and the asset are
+    /// enabled.
+    pub fn action_deposit_asset_fresh_price(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        self.write_pyth_price(0, self.unix_timestamp());
+        let user = self.users[user].clone();
+        let balance = token_balance(&self.ctx.svm, &user.asset_ata);
+        if balance == 0 {
+            return false;
+        }
+        let amount = (amount % balance) + 1;
+        let vault = self.load_vault();
+        let assert_oracle_ok = !vault.deposits_paused().unwrap_or(true)
+            && self.asset_enabled()
+            && vault.total_assets == 0
+            && mint_supply(&self.ctx.svm, &self.share_mint) == 0;
+        let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
+        let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
+        let ix = self.deposit_asset_ix(&user, amount);
+        let ok = submit(&mut self.ctx, ix, &[&user.kp]);
+        let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
+        let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
+        if assert_oracle_ok {
+            fuzz_assert!(
+                ok && source_after == source_before - amount
+                    && custody_after == custody_before + amount,
+                "fresh Pyth price rejected or moved wrong asset amount: \
+                 ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
+            );
+        }
+        ok
+    }
+
+    /// Install a stale Pyth update and assert a positive asset deposit rejects
+    /// without moving tokens whenever execution reaches the oracle gate.
+    pub fn action_deposit_asset_stale_price(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        self.write_pyth_price(0, self.unix_timestamp() - PYTH_MAX_AGE_SECS as i64 - 1);
+        self.assert_asset_deposit_rejects(user, amount, "stale Pyth price")
+    }
+
+    /// Install an over-wide confidence interval and assert the configured
+    /// `max_confidence_bps` guard rejects the deposit without moving tokens.
+    pub fn action_deposit_asset_wide_confidence(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        self.write_pyth_price(PYTH_BASE_PRICE as u64, self.unix_timestamp());
+        self.assert_asset_deposit_rejects(user, amount, "wide Pyth confidence")
+    }
+
+    fn assert_asset_deposit_rejects(&mut self, user: usize, amount: u64, reason: &str) -> bool {
+        let user = self.users[user].clone();
+        let balance = token_balance(&self.ctx.svm, &user.asset_ata);
+        if balance == 0 {
+            return false;
+        }
+        let amount = (amount % balance) + 1;
+        let vault = self.load_vault();
+        let assert_reject = !vault.deposits_paused().unwrap_or(true)
+            && self.asset_enabled()
+            && self.fresh_asset_deposit_can_reach_transfer(&vault, amount);
+        let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
+        let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
+        let ix = self.deposit_asset_ix(&user, amount);
+        let ok = submit(&mut self.ctx, ix, &[&user.kp]);
+        let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
+        let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
+        if assert_reject {
+            fuzz_assert!(
+                !ok && source_after == source_before && custody_after == custody_before,
+                "asset deposit admitted despite {reason}: \
+                 ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
+            );
+        }
+        ok
+    }
+
     /// Deposit the registered non-base asset. The program prices asset atoms
     /// into base terms via the Pyth oracle (staleness + confidence checked),
     /// credits `total_assets`, and the asset tokens land in the asset custody.
@@ -587,6 +891,138 @@ impl RoshiFixture {
         let amount = amount % (balance + 1);
         let ix = self.deposit_asset_ix(&user, amount);
         submit(&mut self.ctx, ix, &[&user.kp])
+    }
+
+    /// Deposit the registered bare Token-2022 asset through the Token-2022
+    /// program id. In a clean first-deposit state, assert that a fresh oracle
+    /// lets real Token-2022 atoms move into custody; elsewhere the action still
+    /// explores the path without over-claiming every later NAV state must admit
+    /// the deposit.
+    pub fn action_deposit_token_2022_asset(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        self.write_pyth_price(0, self.unix_timestamp());
+        let user = self.users[user].clone();
+        let balance = token_balance(&self.ctx.svm, &user.token_2022_asset_ata);
+        if balance == 0 {
+            return false;
+        }
+        let amount = (amount % balance) + 1;
+        let vault = self.load_vault();
+        let assert_token_2022_ok = !vault.deposits_paused().unwrap_or(true)
+            && vault.total_assets == 0
+            && mint_supply(&self.ctx.svm, &self.share_mint) == 0;
+        let source_before = token_balance(&self.ctx.svm, &user.token_2022_asset_ata);
+        let custody_before = token_balance(&self.ctx.svm, &self.token_2022_asset_custody);
+        let ix = self.deposit_token_2022_asset_ix(&user, amount);
+        let ok = submit(&mut self.ctx, ix, &[&user.kp]);
+        let source_after = token_balance(&self.ctx.svm, &user.token_2022_asset_ata);
+        let custody_after = token_balance(&self.ctx.svm, &self.token_2022_asset_custody);
+        if assert_token_2022_ok {
+            fuzz_assert!(
+                ok && source_after == source_before - amount
+                    && custody_after == custody_before + amount,
+                "Token-2022 asset deposit rejected or moved wrong amount: \
+                 ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
+            );
+        }
+        ok
+    }
+
+    /// Extended Token-2022 mints must be rejected by `initialize_asset` before
+    /// the Asset PDA is created. Bare 82-byte Token-2022 mints are covered by
+    /// setup and `action_deposit_token_2022_asset`; this pins the opposite edge.
+    pub fn action_initialize_extended_token_2022_asset_rejects(&mut self) -> bool {
+        let ix = roshi_client::instruction::initialize_asset(
+            self.operator.pubkey(),
+            self.vault,
+            self.extended_token_2022_mint,
+            self.extended_token_2022_asset_pda,
+            InitializeAssetArgs {
+                asset_mint: self.extended_token_2022_mint.to_bytes(),
+                oracle: OracleConfig::pyth(PythOracleConfig::new(
+                    PYTH_FEED_ID,
+                    PYTH_PRICE_DECIMALS,
+                    PYTH_MAX_AGE_SECS,
+                    PYTH_MAX_CONF_BPS,
+                )),
+                asset_decimals: ASSET_DECIMALS,
+                enabled: true,
+            },
+        )
+        .unwrap();
+        let ok = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
+        let created = self
+            .ctx
+            .get_account(&self.extended_token_2022_asset_pda)
+            .is_ok();
+        fuzz_assert!(
+            !ok && !created,
+            "extended Token-2022 mint initialized as asset: success={ok}, created={created}"
+        );
+        ok
+    }
+
+    /// Drive `update_asset`: disable the registered asset, assert a positive
+    /// deposit is blocked without token movement, then re-enable it so later
+    /// asset/oracle paths remain reachable in the same sequence.
+    pub fn action_update_asset_disable_rejects(
+        &mut self,
+        #[range(0..NUM_USERS)] user: usize,
+        amount: u64,
+    ) -> bool {
+        let oracle = OracleConfig::pyth(PythOracleConfig::new(
+            PYTH_FEED_ID,
+            PYTH_PRICE_DECIMALS,
+            PYTH_MAX_AGE_SECS,
+            PYTH_MAX_CONF_BPS,
+        ));
+        let disable = roshi_client::instruction::update_asset(
+            self.operator.pubkey(),
+            self.vault,
+            self.asset_pda,
+            UpdateAssetArgs {
+                oracle,
+                enabled: false,
+            },
+        )
+        .unwrap();
+        if !submit(&mut self.ctx, disable, &[&self.operator.clone()]) {
+            return false;
+        }
+
+        self.write_pyth_price(0, self.unix_timestamp());
+        let user = self.users[user].clone();
+        let balance = token_balance(&self.ctx.svm, &user.asset_ata);
+        let vault = self.load_vault();
+        if balance > 0 && !vault.deposits_paused().unwrap_or(true) {
+            let amount = (amount % balance) + 1;
+            let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
+            let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
+            let ix = self.deposit_asset_ix(&user, amount);
+            let ok = submit(&mut self.ctx, ix, &[&user.kp]);
+            let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
+            let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
+            fuzz_assert!(
+                !ok && source_after == source_before && custody_after == custody_before,
+                "disabled asset accepted deposit: \
+                 ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
+            );
+        }
+
+        let enable = roshi_client::instruction::update_asset(
+            self.operator.pubkey(),
+            self.vault,
+            self.asset_pda,
+            UpdateAssetArgs {
+                oracle,
+                enabled: true,
+            },
+        )
+        .unwrap();
+        submit(&mut self.ctx, enable, &[&self.operator.clone()])
     }
 
     /// Attempt a deposit from the non-whitelisted outsider (with a stolen member
@@ -1125,6 +1561,86 @@ impl RoshiFixture {
         submit(&mut self.ctx, ix, &[&self.operator.clone()])
     }
 
+    /// Execute an authorized Token-2022 swap between two sub-account-owned
+    /// custodies for the registered bare Token-2022 asset. This mirrors
+    /// `action_swap`, but pins the CPI to the Token-2022 program id and asserts
+    /// exact Token-2022 atom movement when managing is enabled.
+    pub fn action_swap_token_2022_asset(&mut self, reverse: bool, amount: u64) -> bool {
+        let (input, output, action) = if reverse {
+            (
+                self.token_2022_swap_custody,
+                self.token_2022_asset_custody,
+                self.token_2022_swap_reverse_action,
+            )
+        } else {
+            (
+                self.token_2022_asset_custody,
+                self.token_2022_swap_custody,
+                self.token_2022_swap_forward_action,
+            )
+        };
+        let available = token_balance(&self.ctx.svm, &input);
+        if available == 0 {
+            return false;
+        }
+        let amount = (amount % available) + 1;
+        let mut ix_data = vec![SPL_TRANSFER_TAG];
+        ix_data.extend_from_slice(&amount.to_le_bytes());
+        let input_before = token_balance(&self.ctx.svm, &input);
+        let output_before = token_balance(&self.ctx.svm, &output);
+        let should_succeed = !self.load_vault().manage_paused().unwrap_or(true);
+        let ix = roshi_client::instruction::swap(
+            self.operator.pubkey(),
+            self.vault,
+            self.sub_account,
+            input,
+            output,
+            action,
+            vec![
+                AccountMeta::new(input, false),
+                AccountMeta::new(output, false),
+                AccountMeta::new_readonly(self.sub_account, false),
+                AccountMeta::new_readonly(support::TOKEN_2022_PROGRAM_ID, false),
+            ],
+            SwapArgs {
+                min_out: amount,
+                max_in: amount,
+                sub_account: 0,
+                program_id: support::TOKEN_2022_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap();
+        let ok = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
+        let input_after = token_balance(&self.ctx.svm, &input);
+        let output_after = token_balance(&self.ctx.svm, &output);
+        if should_succeed {
+            fuzz_assert!(
+                ok && input_after == input_before - amount
+                    && output_after == output_before + amount,
+                "Token-2022 swap rejected or moved wrong amount: \
+                 ok={ok}, input {input_before}->{input_after}, output {output_before}->{output_after}, amount={amount}"
+            );
+        }
+        ok
+    }
+
     /// Redeem shares synchronously through the authorized unwind CPI: pull base
     /// from the venue into custody, pay the owner's recipient, and burn the
     /// shares. Exercises all of `try_atomic_redeem` — the share-balance and
@@ -1370,6 +1886,28 @@ fn authorize_transfer_action(
     output: Pubkey,
     scope: ActionScope,
 ) -> (Pubkey, [u8; 32]) {
+    authorize_transfer_action_with_program(
+        ctx,
+        operator,
+        vault,
+        sub_account,
+        input,
+        output,
+        scope,
+        support::TOKEN_PROGRAM_ID,
+    )
+}
+
+fn authorize_transfer_action_with_program(
+    ctx: &mut TestContext,
+    operator: &Keypair,
+    vault: Pubkey,
+    sub_account: Pubkey,
+    input: Pubkey,
+    output: Pubkey,
+    scope: ActionScope,
+    token_program: Pubkey,
+) -> (Pubkey, [u8; 32]) {
     let ops = Ops::new([
         Op::IngestAccount { index: 0 },
         Op::IngestAccount { index: 1 },
@@ -1385,7 +1923,7 @@ fn authorize_transfer_action(
     // Ops ingest the three accounts and ix_data[0..1] (the transfer
     // discriminator), so only the amount appended after it is free.
     let action_hash =
-        compute_action_hash_from_metas(&support::TOKEN_PROGRAM_ID, &ops, &metas, &[SPL_TRANSFER_TAG])
+        compute_action_hash_from_metas(&token_program, &ops, &metas, &[SPL_TRANSFER_TAG])
             .expect("action hash");
     let (action, _) = Action::find_address(&vault, &action_hash);
     submit_ok(
@@ -1437,6 +1975,21 @@ fn invariant_core(fixture: &mut RoshiFixture) {
         "asset tokens not conserved: {} present vs {} installed",
         total_asset,
         fixture.initial_asset
+    );
+
+    // 1c. Token-2022 asset conservation. Same economic pricing path as the
+    // classic registered asset, but a distinct mint/program/account set.
+    let total_token_2022_asset: u128 = fixture
+        .token_2022_asset_accounts
+        .iter()
+        .map(|a| token_balance(&fixture.ctx.svm, a) as u128)
+        .sum();
+    fuzz_assert_eq!(
+        total_token_2022_asset,
+        fixture.initial_token_2022_asset,
+        "Token-2022 asset tokens not conserved: {} present vs {} installed",
+        total_token_2022_asset,
+        fixture.initial_token_2022_asset
     );
 
     // 2. Vault structural invariants on the deserialized state.

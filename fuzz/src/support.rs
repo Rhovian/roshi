@@ -11,6 +11,9 @@ use solana_pubkey::Pubkey;
 /// SPL Token program id (classic).
 pub const TOKEN_PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Token-2022 program id.
+pub const TOKEN_2022_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// Associated Token Account program id.
 pub const ATA_PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
@@ -18,8 +21,18 @@ pub const ATA_PROGRAM_ID: Pubkey =
 /// Derive the associated token account address for `(wallet, mint)` under the
 /// classic SPL Token program.
 pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+    associated_token_address_with_program(wallet, mint, &TOKEN_PROGRAM_ID)
+}
+
+/// Derive the associated token account address for `(wallet, mint)` under the
+/// supplied SPL Token program.
+pub fn associated_token_address_with_program(
+    wallet: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Pubkey {
     Pubkey::find_program_address(
-        &[wallet.as_ref(), TOKEN_PROGRAM_ID.as_ref(), mint.as_ref()],
+        &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &ATA_PROGRAM_ID,
     )
     .0
@@ -27,18 +40,57 @@ pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
 
 /// Install an initialized SPL mint with `authority` as the mint authority.
 pub fn set_mint(svm: &mut LiteSVM, mint: Pubkey, authority: &Pubkey, decimals: u8) {
+    set_mint_with_program(svm, mint, authority, decimals, TOKEN_PROGRAM_ID);
+}
+
+/// Install an initialized bare Token-2022 mint with no extensions. The program
+/// deliberately accepts this 82-byte shape and rejects extended mints.
+pub fn set_token_2022_mint(svm: &mut LiteSVM, mint: Pubkey, authority: &Pubkey, decimals: u8) {
+    set_mint_with_program(svm, mint, authority, decimals, TOKEN_2022_PROGRAM_ID);
+}
+
+/// Install an initialized extended Token-2022 mint that must be rejected by
+/// mint verification.
+pub fn set_extended_token_2022_mint(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    authority: &Pubkey,
+    decimals: u8,
+) {
+    set_mint_with_len(svm, mint, authority, decimals, TOKEN_2022_PROGRAM_ID, 200);
+}
+
+fn set_mint_with_program(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    authority: &Pubkey,
+    decimals: u8,
+    token_program: Pubkey,
+) {
+    set_mint_with_len(svm, mint, authority, decimals, token_program, 82);
+}
+
+fn set_mint_with_len(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    authority: &Pubkey,
+    decimals: u8,
+    token_program: Pubkey,
+    len: usize,
+) {
     let mut data = vec![0u8; 82];
+    data.resize(len, 0);
     data[0..4].copy_from_slice(&1u32.to_le_bytes()); // mint_authority COption::Some
     data[4..36].copy_from_slice(authority.as_ref());
     data[44] = decimals;
     data[45] = 1; // is_initialized
-    let lamports = svm.minimum_balance_for_rent_exemption(82);
+    let lamports = svm.minimum_balance_for_rent_exemption(len);
     svm.set_account(
         mint,
         Account {
             lamports,
             data,
-            owner: TOKEN_PROGRAM_ID,
+            owner: token_program,
             executable: false,
             rent_epoch: 0,
         },
@@ -54,6 +106,19 @@ pub fn set_token_account(
     owner: &Pubkey,
     amount: u64,
 ) {
+    set_token_account_with_program(svm, address, mint, owner, amount, TOKEN_PROGRAM_ID);
+}
+
+/// Install an initialized token account holding `amount` of `mint` and owned by
+/// the supplied SPL Token program.
+pub fn set_token_account_with_program(
+    svm: &mut LiteSVM,
+    address: Pubkey,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+    token_program: Pubkey,
+) {
     let mut data = vec![0u8; 165];
     data[0..32].copy_from_slice(mint.as_ref());
     data[32..64].copy_from_slice(owner.as_ref());
@@ -65,7 +130,7 @@ pub fn set_token_account(
         Account {
             lamports,
             data,
-            owner: TOKEN_PROGRAM_ID,
+            owner: token_program,
             executable: false,
             rent_epoch: 0,
         },
@@ -77,6 +142,19 @@ pub fn set_token_account(
 pub fn set_ata(svm: &mut LiteSVM, owner: &Pubkey, mint: &Pubkey, amount: u64) -> Pubkey {
     let address = associated_token_address(owner, mint);
     set_token_account(svm, address, mint, owner, amount);
+    address
+}
+
+/// Install + fund the ATA for `(owner, mint)` under the supplied token program.
+pub fn set_ata_with_program(
+    svm: &mut LiteSVM,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    amount: u64,
+    token_program: Pubkey,
+) -> Pubkey {
+    let address = associated_token_address_with_program(owner, mint, &token_program);
+    set_token_account_with_program(svm, address, mint, owner, amount, token_program);
     address
 }
 
