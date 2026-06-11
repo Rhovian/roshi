@@ -54,6 +54,11 @@ decimal scale, and max quote age in slots. State-changing handlers should use
 the verified reader so queue, slot-hash, instruction-sysvar, and max-age checks
 run before a value is accepted.
 
+The verified reader also pins the depositor-supplied slot-hashes and
+instructions sysvars to their canonical ids at the Roshi boundary, before
+anything is handed to Switchboard's `QuoteVerifier` — the library validates
+them internally today, but Roshi's account contract does not depend on that.
+
 ### Pyth Pull Oracle
 
 Pyth configs pin the feed id, output decimal scale, max update age in seconds,
