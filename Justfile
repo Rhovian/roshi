@@ -36,3 +36,36 @@ fuzz-stateful test='invariant_core' secs='60' cores='8': build
 fuzz-cov test='invariant_core' secs='60': build
     crucible run roshi {{test}} -C fuzz --release --coverage --corpus-in fuzz/corpus --timeout {{secs}} --lcov-out fuzz/coverage/lcov.info
     genhtml fuzz/coverage/lcov.info -o fuzz/coverage/html
+
+# List recorded crashes for a harness.
+fuzz-crashes test='invariant_core':
+    crucible show roshi -C fuzz --crashes-dir fuzz/crashes/{{test}}
+
+# Inspect one recorded crash. Pass the crash filename or path.
+fuzz-show crash test='invariant_core':
+    crucible show roshi {{crash}} -C fuzz --crashes-dir fuzz/crashes/{{test}}
+
+# Replay one input file. Use this for raw crashes or committed regressions.
+fuzz-replay input test='invariant_core': build
+    crucible run roshi {{test}} -C fuzz --release --replay {{input}}
+
+# Minimize one recorded crash in place; pass the filename under fuzz/crashes/{{test}}.
+fuzz-tmin crash test='invariant_core': build
+    crucible tmin roshi {{test}} {{crash}} -C fuzz --release
+
+# Minimize all recorded crashes for a harness in place.
+fuzz-tmin-all test='invariant_core': build
+    crucible tmin roshi {{test}} --all -C fuzz --release
+
+# Replay committed regression inputs. A fixed regression should not reproduce.
+fuzz-regressions test='invariant_core': build
+    #!/usr/bin/env zsh
+    set -e
+    files=(fuzz/regressions/{{test}}/*(.N))
+    if (( $#files == 0 )); then
+        echo "no fuzz regressions for {{test}}"
+        exit 0
+    fi
+    for file in $files; do
+        crucible run roshi {{test}} -C fuzz --release --replay "$file"
+    done

@@ -86,9 +86,13 @@ destination can never move custody funds, and `revoke_action` is exercised by
 revoking an action and asserting a `manage` against it then moves nothing. The
 vault runs **private** over a real access merkle tree: members deposit with
 their proofs, `set_vault_access` toggles the access mode, and a non-whitelisted
-outsider asserts a private vault never admits a deposit. The engine is a fork
-pinned as the `vendor/crucible` submodule (litesvm 0.12 / solana 4.x, so its
-instruction types match the program's).
+outsider asserts a private vault never admits a deposit. The harness also covers
+Pyth-priced non-base assets, Token-2022 registered assets, extended Token-2022
+mint rejection, split custody, role rotation, config updates, fee correctness,
+and flat-NAV no-overpay. A minimized seed corpus is committed in `fuzz/corpus`
+and loaded by default. The engine is a fork pinned as the `vendor/crucible`
+submodule (litesvm 0.12 / solana 4.x, so its instruction types match the
+program's).
 
 One-time setup:
 
@@ -105,9 +109,20 @@ just fuzz-stateful    # stateful: single action over a live state pool (faster)
 just fuzz-cov         # LCOV + HTML coverage report (needs genhtml)
 ```
 
-This covers the core accounting loop, the `manage`/`manage_batch`/`swap`/
-`atomic_redeem` CPI paths, and private-vault access control. The main remaining
-gap — multi-asset/oracle pricing — is tracked in #10.
+Crash triage and regression replay:
+
+```bash
+just fuzz-crashes                         # list recorded crashes
+just fuzz-show <crash-file-or-path>       # inspect one recorded crash
+just fuzz-replay <input-path>             # replay a raw crash or regression input
+just fuzz-tmin <crash-filename>           # minimize one crash in place
+just fuzz-tmin-all                        # minimize all recorded crashes
+just fuzz-regressions                     # replay committed regression inputs
+```
+
+When a crash is worth keeping, minimize it, fix the bug, then commit the
+minimized input under `fuzz/regressions/invariant_core/`. A fixed regression
+should no longer reproduce when `just fuzz-regressions` replays it.
 
 ## Design Docs
 
