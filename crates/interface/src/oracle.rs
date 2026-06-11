@@ -73,6 +73,10 @@ impl SwitchboardOracleConfig {
 /// `price_decimals = 8` is returned as `123456789`.
 ///
 /// `max_confidence_bps = 0` disables the confidence-width guardrail.
+///
+/// `price_update_account` optionally pins the price update account by address;
+/// all-zeros (the default) accepts any Pyth-verified update account carrying
+/// `feed_id`, which is the intended pull-oracle posture.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
 )]
@@ -80,6 +84,7 @@ impl SwitchboardOracleConfig {
 #[repr(C)]
 pub struct PythOracleConfig {
     pub feed_id: [u8; 32],
+    pub price_update_account: [u8; 32],
     pub max_age_seconds: u64,
     pub max_confidence_bps: u16,
     pub price_decimals: u8,
@@ -95,11 +100,30 @@ impl PythOracleConfig {
     ) -> Self {
         Self {
             feed_id,
+            price_update_account: [0; 32],
             max_age_seconds,
             max_confidence_bps,
             price_decimals,
             _padding: [0; 5],
         }
+    }
+
+    /// Pin pricing to one specific price update account (e.g. a sponsored
+    /// Pyth feed account) instead of accepting any verified update for
+    /// `feed_id`.
+    pub const fn pin_price_update_account(mut self, price_update_account: [u8; 32]) -> Self {
+        self.price_update_account = price_update_account;
+        self
+    }
+
+    /// The pinned price update account, or `None` when any verified update
+    /// for `feed_id` is accepted (`price_update_account` all-zeros).
+    pub fn pinned_price_update_account(&self) -> Option<[u8; 32]> {
+        if self.price_update_account == [0; 32] {
+            return None;
+        }
+
+        Some(self.price_update_account)
     }
 }
 
@@ -142,6 +166,7 @@ impl OracleConfig {
             switchboard: config,
             pyth: PythOracleConfig {
                 feed_id: [0; 32],
+                price_update_account: [0; 32],
                 max_age_seconds: 0,
                 max_confidence_bps: 0,
                 price_decimals: 0,
@@ -247,12 +272,21 @@ mod tests {
         assert_zero_copy::<PythOracleConfig>();
         assert_zero_copy::<OracleConfig>();
         assert_eq!(core::mem::size_of::<SwitchboardOracleConfig>(), 112);
-        assert_eq!(core::mem::size_of::<PythOracleConfig>(), 48);
-        assert_eq!(core::mem::size_of::<OracleConfig>(), 168);
+        assert_eq!(core::mem::size_of::<PythOracleConfig>(), 80);
+        assert_eq!(core::mem::size_of::<OracleConfig>(), 200);
         assert_eq!(
             serialize(&OracleConfig::default()).unwrap().len(),
             core::mem::size_of::<OracleConfig>()
         );
+    }
+
+    #[test]
+    fn pyth_price_update_pin_defaults_off_and_round_trips() {
+        let unpinned = PythOracleConfig::new([4; 32], 8, 30, 250);
+        assert_eq!(unpinned.pinned_price_update_account(), None);
+
+        let pinned = unpinned.pin_price_update_account([5; 32]);
+        assert_eq!(pinned.pinned_price_update_account(), Some([5; 32]));
     }
 
     #[test]

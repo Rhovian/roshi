@@ -65,6 +65,13 @@ Roshi. For ephemeral price-update accounts, clients fetch updates from Hermes,
 post them with the Pyth Solana Receiver, then pass the resulting update account
 to the Roshi instruction that consumes the oracle value.
 
+The config may additionally pin one specific price update account by address
+(`pin_price_update_account`), restricting pricing to e.g. a sponsored feed
+account. Unpinned (the default), the depositor chooses which verified in-range
+update for the configured feed to submit — intentional for the pull-oracle
+model, with staleness and spread bounded by `max_age_seconds` and
+`max_confidence_bps`.
+
 Roshi requires the configured feed id, full Pyth verification, a positive price,
 freshness within `max_age_seconds`, and confidence within
 `max_confidence_bps` when that guardrail is nonzero. Pyth's exponent is scaled

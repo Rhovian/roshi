@@ -13,10 +13,11 @@ use solana_instruction::AccountMeta;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_roshi_error, associated_token_address, associated_token_address_with_program, fund,
-    mint_supply, send, send_ok, set_ata, set_ata_with_program, set_mint, set_pyth_price,
-    set_token_2022_mint, set_token_account_with_program, setup_program, token_balance,
-    VaultBuilder, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    assert_instruction_error, assert_roshi_error, associated_token_address,
+    associated_token_address_with_program, fund, mint_supply, send, send_ok, set_ata,
+    set_ata_with_program, set_mint, set_pyth_price, set_token_2022_mint,
+    set_token_account_with_program, setup_program, token_balance, VaultBuilder,
+    TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
 
 /// One whole base unit at 6 decimals.
@@ -434,6 +435,95 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, base_atoms);
     assert_eq!(mint_supply(&svm, &share_mint), shares);
+}
+
+#[test]
+fn test_deposit_pyth_pinned_price_account_rejects_substitutes() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let vault = VaultBuilder::new().base_mint(base_mint).install(&mut svm);
+    let share_mint = vault.share_mint;
+    set_mint(&mut svm, share_mint, &vault.address, 9);
+
+    // Register a non-base asset whose oracle config pins one specific Pyth
+    // price update account.
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let feed_id = [5u8; 32];
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+    let pinned_pyth = solana_pubkey::Pubkey::new_unique();
+
+    fund(&mut svm, &vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                oracle: OracleConfig::pyth(
+                    PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)
+                        .pin_price_update_account(pinned_pyth.to_bytes()),
+                ),
+                asset_decimals: 9,
+                enabled: true,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    // Two equally valid Pyth updates for the configured feed.
+    set_pyth_price(&mut svm, pinned_pyth, feed_id, 200_000_000, -8, 0);
+    let substitute_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, substitute_pyth, feed_id, 200_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000u64;
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let deposit_via = |price_account: solana_pubkey::Pubkey| {
+        roshi_client::instruction::deposit(
+            depositor.pubkey(),
+            vault.address,
+            source,
+            custody,
+            share_dest,
+            share_mint,
+            TOKEN_PROGRAM_ID,
+            asset_mint,
+            amount,
+            0,
+            vec![],
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(price_account, false),
+            ],
+        )
+        .unwrap()
+    };
+
+    // A verified update for the right feed under a different address fails...
+    assert_instruction_error(
+        send(&mut svm, deposit_via(substitute_pyth), &depositor),
+        solana_instruction::error::InstructionError::InvalidAccountData,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+
+    // ...and the pinned account prices normally.
+    send_ok(&mut svm, deposit_via(pinned_pyth), &depositor);
+    assert_eq!(token_balance(&svm, &source), 0);
+    assert_eq!(token_balance(&svm, &share_dest), amount * 2 * 1_000);
 }
 
 #[test]

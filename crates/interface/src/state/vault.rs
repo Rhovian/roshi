@@ -470,8 +470,8 @@ mod tests {
     #[test]
     fn vault_is_zero_copy_with_explicit_padding() {
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 600);
-        assert_eq!(Vault::SPACE, 601);
+        assert_eq!(core::mem::size_of::<Vault>(), 632);
+        assert_eq!(Vault::SPACE, 633);
         let vault = new_test_vault(false, [0; 32]);
         assert_eq!(
             serialize(&vault).unwrap().len(),

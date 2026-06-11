@@ -11,10 +11,12 @@ const SOLANA_RECEIVER_PROGRAM_ID: Pubkey =
 
 /// Pyth pull-oracle reader.
 ///
-/// The config stores the feed id, desired output scale, max update age, and
-/// optional confidence-width guardrail. Callers may pass either a fixed price
-/// feed account or an ephemeral price update account, as long as it is owned by
-/// the Pyth Solana Receiver program and contains the configured feed id.
+/// The config stores the feed id, desired output scale, max update age,
+/// optional confidence-width guardrail, and an optional pinned price update
+/// account. Unpinned, callers may pass either a fixed price feed account or an
+/// ephemeral price update account, as long as it is owned by the Pyth Solana
+/// Receiver program and contains the configured feed id; pinned, only that
+/// exact account is accepted.
 pub struct PythOracle {
     pub config: PythOracleConfig,
 }
@@ -37,14 +39,21 @@ impl PythOracle {
 
     /// Read a fully verified Pyth price update account.
     ///
-    /// This checks Pyth receiver ownership, parses the `PriceUpdateV2`
-    /// account, validates the configured feed id and max age, and returns a
-    /// positive fixed-point price at `price_decimals`.
+    /// This checks the configured account pin (when set), Pyth receiver
+    /// ownership, parses the `PriceUpdateV2` account, validates the configured
+    /// feed id and max age, and returns a positive fixed-point price at
+    /// `price_decimals`.
     pub fn read_verified_price(
         &self,
         price_update_account: &AccountInfo,
         unix_timestamp: i64,
     ) -> Result<OraclePrice, ProgramError> {
+        if let Some(pinned) = self.config.pinned_price_update_account() {
+            if price_update_account.key.to_bytes() != pinned {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+
         if price_update_account.owner != &SOLANA_RECEIVER_PROGRAM_ID {
             return Err(ProgramError::IllegalOwner);
         }
@@ -400,6 +409,61 @@ mod tests {
         assert_eq!(
             oracle.read_verified_price(&account, 1_000),
             Err(ProgramError::IllegalOwner)
+        );
+    }
+
+    #[test]
+    fn read_verified_price_enforces_account_pin() {
+        let pinned_key = Pubkey::new_unique();
+        let oracle = PythOracle::new(
+            PythOracleConfig::new(FEED_ID, 8, 30, 0)
+                .pin_price_update_account(pinned_key.to_bytes()),
+        );
+        let owner = SOLANA_RECEIVER_PROGRAM_ID;
+
+        let mut data = serialize_price_update(
+            FEED_ID,
+            VerificationLevel::Full,
+            123_456_789,
+            1_000,
+            -8,
+            1_000,
+        );
+        let mut lamports = 1;
+        let account = AccountInfo::new(
+            &pinned_key,
+            false,
+            false,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+        );
+        assert!(oracle.read_verified_price(&account, 1_000).is_ok());
+
+        // The same verified update under any other address must be rejected.
+        let other_key = Pubkey::new_unique();
+        let mut data = serialize_price_update(
+            FEED_ID,
+            VerificationLevel::Full,
+            123_456_789,
+            1_000,
+            -8,
+            1_000,
+        );
+        let mut lamports = 1;
+        let account = AccountInfo::new(
+            &other_key,
+            false,
+            false,
+            &mut lamports,
+            &mut data,
+            &owner,
+            false,
+        );
+        assert_eq!(
+            oracle.read_verified_price(&account, 1_000),
+            Err(ProgramError::InvalidAccountData)
         );
     }
 

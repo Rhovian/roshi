@@ -125,8 +125,8 @@ mod tests {
         let asset = test_asset(true);
 
         assert_zero_copy::<Asset>();
-        assert_eq!(core::mem::size_of::<Asset>(), 240);
-        assert_eq!(Asset::SPACE, 241);
+        assert_eq!(core::mem::size_of::<Asset>(), 272);
+        assert_eq!(Asset::SPACE, 273);
         assert_eq!(
             serialize(&asset).unwrap().len(),
             core::mem::size_of::<Asset>()
