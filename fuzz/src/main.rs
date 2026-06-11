@@ -548,6 +548,47 @@ impl RoshiFixture {
         submit(&mut self.ctx, ix, &[&user.kp])
     }
 
+    /// Build a deposit of the registered non-base asset: source is the user's
+    /// asset ATA, custody is the asset custody, and the asset PDA + Pyth price
+    /// account ride as extra metas so the program prices asset -> base atoms
+    /// through the oracle. Shared by the organic action and the oracle
+    /// negatives, which differ only in the installed price.
+    fn deposit_asset_ix(&self, user: &FuzzUser, amount: u64) -> solana_instruction::Instruction {
+        roshi_client::instruction::deposit(
+            user.kp.pubkey(),
+            self.vault,
+            user.asset_ata,
+            self.asset_custody,
+            user.share_ata,
+            self.share_mint,
+            support::TOKEN_PROGRAM_ID,
+            self.asset_mint,
+            amount,
+            0,
+            user.access_proof.clone(),
+            vec![
+                AccountMeta::new_readonly(self.asset_pda, false),
+                AccountMeta::new_readonly(self.pyth_account, false),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// Deposit the registered non-base asset. The program prices asset atoms
+    /// into base terms via the Pyth oracle (staleness + confidence checked),
+    /// credits `total_assets`, and the asset tokens land in the asset custody.
+    pub fn action_deposit_asset(&mut self, #[range(0..NUM_USERS)] user: usize, amount: u64) -> bool {
+        let user = self.users[user].clone();
+        let balance = token_balance(&self.ctx.svm, &user.asset_ata);
+        if balance == 0 {
+            return false;
+        }
+        // [0, balance]: mostly valid, still hits zero-amount and full-drain.
+        let amount = amount % (balance + 1);
+        let ix = self.deposit_asset_ix(&user, amount);
+        submit(&mut self.ctx, ix, &[&user.kp])
+    }
+
     /// Attempt a deposit from the non-whitelisted outsider (with a stolen member
     /// proof). The access-control property: while the vault is private it must be
     /// rejected and mint no shares; when public it deposits like anyone else.
@@ -1379,6 +1420,23 @@ fn invariant_core(fixture: &mut RoshiFixture) {
         "base tokens not conserved: {} present vs {} installed",
         total_base,
         fixture.initial_base
+    );
+
+    // 1b. Asset-token conservation: the registered non-base asset is its own
+    //     conserved quantity. Non-base deposits move asset atoms (this sum) and
+    //     credit `total_assets` in priced base terms (invisible here), so the
+    //     two sums stay independent.
+    let total_asset: u128 = fixture
+        .asset_accounts
+        .iter()
+        .map(|a| token_balance(&fixture.ctx.svm, a) as u128)
+        .sum();
+    fuzz_assert_eq!(
+        total_asset,
+        fixture.initial_asset,
+        "asset tokens not conserved: {} present vs {} installed",
+        total_asset,
+        fixture.initial_asset
     );
 
     // 2. Vault structural invariants on the deserialized state.
