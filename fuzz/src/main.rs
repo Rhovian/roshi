@@ -13,7 +13,10 @@ use crucible_fuzzer::*;
 use std::rc::Rc;
 
 use roshi::{
-    instructions::{AccountFlags, InitializeVaultArgs, ManageArgs, SwapArgs, UpdateVaultConfigArgs},
+    instructions::{
+        AccountFlags, AtomicRedeemArgs, InitializeVaultArgs, ManageArgs, SwapArgs,
+        UpdateVaultConfigArgs,
+    },
     oracle::OracleConfig,
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
@@ -25,7 +28,7 @@ use roshi::{
     },
     ID,
 };
-use roshi_interface::find_share_mint_address;
+use roshi_interface::{find_share_mint_address, math::assets_for_redeem};
 use solana_instruction::AccountMeta;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -35,13 +38,16 @@ use solana_signer::Signer;
 const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
-use support::{set_ata, set_mint, set_token_account, token_balance};
+use support::{mint_supply, set_ata, set_mint, set_token_account, token_balance};
 
 const NUM_USERS: usize = 3;
 const TICKETS_PER_USER: u8 = 3;
 const BASE_DECIMALS: u8 = 6;
 /// Base each user starts with (1000 units at 6 decimals).
 const INITIAL_USER_BASE: u64 = 1_000_000_000;
+/// Deployed venue capital the `atomic_redeem` unwind can pull from. Generous so
+/// the payout path stays reachable for the whole run.
+const VENUE_BASE: u64 = 3_000_000_000;
 const PERF_FEE_BPS: u16 = 100;
 const WITHDRAWAL_BUFFER_BPS: u16 = 250;
 const MAX_BPS: u16 = 10_000;
@@ -82,6 +88,12 @@ struct RoshiFixture {
     /// all of `try_swap` (input/output bounds, custody reverify, the CPI).
     swap_forward_action: Pubkey,
     swap_reverse_action: Pubkey,
+    /// Sub-account-owned base account standing in for deployed venue capital,
+    /// the source the `atomic_redeem` unwind CPI pulls into custody.
+    atomic_venue: Pubkey,
+    /// Authorized AtomicRedeem action (empty ops: bounded by the on-chain
+    /// entitlement and the custody-increase check, not the action hash).
+    atomic_action: Pubkey,
     users: Vec<FuzzUser>,
     /// Every base-token account in the system, for the conservation sum.
     base_accounts: Vec<Pubkey>,
@@ -279,9 +291,38 @@ impl RoshiFixture {
         let swap_reverse_action =
             authorize_swap_action(&mut ctx, &operator, vault, sub_account, swap_custody, custody);
 
+        // 4d. AtomicRedeem: a sub-account-owned venue account pre-funded with
+        //     deployed capital, plus an AtomicRedeem action whose unwind CPI
+        //     pulls base venue -> custody. Empty ops authorize any CPI to the
+        //     token program; the redeem is bounded by the on-chain share
+        //     entitlement and the requirement that custody only ever increases
+        //     across the CPI. `redeem_amount_offset = 1` is where the transfer
+        //     amount sits in the token-transfer ix data ([tag, amount_le]).
+        let atomic_venue = Pubkey::new_unique();
+        set_token_account(&mut ctx.svm, atomic_venue, &base_mint, &sub_account, VENUE_BASE);
+        let atomic_action_hash =
+            compute_action_hash_from_metas(&support::TOKEN_PROGRAM_ID, &Ops::empty(), &[], &[])
+                .expect("action hash");
+        let (atomic_action, _) = Action::find_address(&vault, &atomic_action_hash);
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::authorize_action(
+                operator.pubkey(),
+                vault,
+                atomic_action,
+                atomic_action_hash,
+                ActionScope::AtomicRedeem,
+                Ops::empty(),
+                1,
+            )
+            .unwrap(),
+            &[&operator],
+            "authorize_action(atomic_redeem)",
+        );
+
         // 5. Users, each funded with base; share ATA starts empty.
         let mut users = Vec::with_capacity(NUM_USERS);
-        let mut base_accounts = vec![custody, swap_custody, external_account, treasury];
+        let mut base_accounts = vec![custody, swap_custody, atomic_venue, external_account, treasury];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
             ctx.svm.airdrop(&kp.pubkey(), FUND_LAMPORTS).unwrap();
@@ -295,7 +336,7 @@ impl RoshiFixture {
             });
         }
 
-        let initial_base = NUM_USERS as u128 * INITIAL_USER_BASE as u128;
+        let initial_base = NUM_USERS as u128 * INITIAL_USER_BASE as u128 + VENUE_BASE as u128;
 
         Self {
             ctx,
@@ -313,6 +354,8 @@ impl RoshiFixture {
             swap_custody,
             swap_forward_action,
             swap_reverse_action,
+            atomic_venue,
+            atomic_action,
             users,
             base_accounts,
             initial_base,
@@ -677,6 +720,84 @@ impl RoshiFixture {
         )
         .unwrap();
         submit(&mut self.ctx, ix, &[&self.operator.clone()])
+    }
+
+    /// Redeem shares synchronously through the authorized unwind CPI: pull base
+    /// from the venue into custody, pay the owner's recipient, and burn the
+    /// shares. Exercises all of `try_atomic_redeem` — the share-balance and
+    /// entitlement bounds, the unwind-into-custody check, payout, and burn. The
+    /// unwind amount is sized to the on-chain entitlement (recomputed here with
+    /// the same `assets_for_redeem`) and capped by the venue balance, so the
+    /// redeem clears its own bounds.
+    pub fn action_atomic_redeem(&mut self, #[range(0..NUM_USERS)] user: usize, shares: u64) -> bool {
+        let user = self.users[user].clone();
+        let share_balance = token_balance(&self.ctx.svm, &user.share_ata);
+        if share_balance == 0 {
+            return false;
+        }
+        let shares = (shares % share_balance) + 1;
+
+        // Entitlement at the current NAV, recomputed exactly as the program does.
+        let account = self.ctx.get_account(&self.vault).expect("vault exists");
+        let vault = Vault::from_account_data(&account.data).expect("vault decodes");
+        let supply = mint_supply(&self.ctx.svm, &self.share_mint);
+        let Some(economic) = supply.checked_add(vault.requested_withdrawal_shares) else {
+            return false;
+        };
+        let Ok(max_owed) = assets_for_redeem(shares, vault.total_assets, economic, BASE_DECIMALS)
+        else {
+            // Zero/invalid entitlement (e.g. nothing deposited yet): nothing to do.
+            return false;
+        };
+        let unwind = max_owed.min(token_balance(&self.ctx.svm, &self.atomic_venue));
+        if unwind == 0 {
+            return false;
+        }
+
+        let mut ix_data = vec![SPL_TRANSFER_TAG];
+        ix_data.extend_from_slice(&unwind.to_le_bytes());
+        let ix = roshi_client::instruction::atomic_redeem(
+            user.kp.pubkey(),
+            self.vault,
+            user.share_ata,
+            self.share_mint,
+            user.base_ata,
+            self.custody,
+            support::TOKEN_PROGRAM_ID,
+            self.sub_account,
+            self.atomic_action,
+            vec![
+                AccountMeta::new(self.atomic_venue, false),
+                AccountMeta::new(self.custody, false),
+                AccountMeta::new_readonly(self.sub_account, false),
+                AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+            ],
+            AtomicRedeemArgs {
+                shares,
+                min_output: 0,
+                sub_account: 0,
+                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap();
+        submit(&mut self.ctx, ix, &[&user.kp])
     }
 
     /// Sweep accrued performance fees to the treasury.
