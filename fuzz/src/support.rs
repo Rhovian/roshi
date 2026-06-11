@@ -80,6 +80,65 @@ pub fn set_ata(svm: &mut LiteSVM, owner: &Pubkey, mint: &Pubkey, amount: u64) ->
     address
 }
 
+/// Pyth Solana Receiver program id (owner of `PriceUpdateV2` accounts).
+pub const PYTH_RECEIVER_ID: Pubkey =
+    solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+
+/// Build a mock fully-verified Pyth `PriceUpdateV2` payload, matching the
+/// 133-byte layout the program parses. Ported from
+/// `roshi-tests/src/helpers/oracle.rs::set_pyth_price`, generalized with a
+/// `conf` parameter so the fuzzer can drive the confidence-width check.
+pub fn pyth_price_data(
+    feed_id: [u8; 32],
+    price: i64,
+    conf: u64,
+    exponent: i32,
+    publish_time: i64,
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(133);
+    data.extend_from_slice(&[0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd]); // discriminator
+    data.extend_from_slice(&[0u8; 32]); // write_authority
+    data.push(1); // VerificationLevel::Full
+    data.extend_from_slice(&feed_id);
+    data.extend_from_slice(&price.to_le_bytes());
+    data.extend_from_slice(&conf.to_le_bytes());
+    data.extend_from_slice(&exponent.to_le_bytes());
+    data.extend_from_slice(&publish_time.to_le_bytes());
+    data.extend_from_slice(&publish_time.to_le_bytes()); // prev_publish_time
+    data.extend_from_slice(&0i64.to_le_bytes()); // ema_price
+    data.extend_from_slice(&0u64.to_le_bytes()); // ema_conf
+    data.extend_from_slice(&0u64.to_le_bytes()); // posted_slot
+    data
+}
+
+/// Install a mock Pyth `PriceUpdateV2` account owned by the Pyth receiver
+/// program (the owner check is on the receiver, not the token program).
+/// Setup-time only: mid-action installs must go through `ctx.write_account`
+/// so the per-iteration snapshot restore sees the mutation.
+pub fn set_pyth_price(
+    svm: &mut LiteSVM,
+    address: Pubkey,
+    feed_id: [u8; 32],
+    price: i64,
+    conf: u64,
+    exponent: i32,
+    publish_time: i64,
+) {
+    let data = pyth_price_data(feed_id, price, conf, exponent, publish_time);
+    let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+    svm.set_account(
+        address,
+        Account {
+            lamports,
+            data,
+            owner: PYTH_RECEIVER_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
 /// Read the `amount` field of an SPL token account. Every account the harness
 /// reads is installed in `setup()`, so a missing/short account is a harness bug,
 /// not a 0 balance — fail loudly rather than silently masking it.

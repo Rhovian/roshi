@@ -15,12 +15,13 @@ use std::rc::Rc;
 
 use roshi::{
     instructions::{
-        AccountFlags, AtomicRedeemArgs, InitializeVaultArgs, ManageArgs, SwapArgs,
-        UpdateVaultConfigArgs,
+        AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
+        SwapArgs, UpdateVaultConfigArgs,
     },
-    oracle::OracleConfig,
+    oracle::{OracleConfig, PythOracleConfig},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
+        asset::Asset,
         program_config::ProgramConfig,
         sub_account::VaultSubAccount,
         vault::Vault,
@@ -43,7 +44,7 @@ use solana_signer::Signer;
 const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
-use support::{mint_supply, set_ata, set_mint, set_token_account, token_balance};
+use support::{mint_supply, set_ata, set_mint, set_pyth_price, set_token_account, token_balance};
 
 const NUM_USERS: usize = 3;
 const TICKETS_PER_USER: u8 = 3;
@@ -61,11 +62,29 @@ const FUND_LAMPORTS: u64 = 100_000_000_000;
 /// `unix_timestamp`-based, so slots alone don't age a price).
 const SECONDS_PER_SLOT: i64 = 1;
 
+// Registered non-base asset, priced through a mock Pyth feed.
+const ASSET_DECIMALS: u8 = 6;
+/// Asset each user starts with (1000 units at 6 decimals).
+const INITIAL_USER_ASSET: u64 = 1_000_000_000;
+const PYTH_FEED_ID: [u8; 32] = [7u8; 32];
+/// 2.0 base per asset unit at exponent -8 / output decimals 8.
+const PYTH_BASE_PRICE: i64 = 200_000_000;
+const PYTH_EXPONENT: i32 = -8;
+const PYTH_PRICE_DECIMALS: u8 = 8;
+/// Generous enough that fresh-price deposits dominate, small enough that a few
+/// `advance_slots` calls within one sequence age the price into staleness.
+const PYTH_MAX_AGE_SECS: u64 = 64;
+/// Confidence ceiling: 5% of price. The setup price has conf 0 (passes); the
+/// wide-conf negative installs conf == price (10_000 bps, fails).
+const PYTH_MAX_CONF_BPS: u16 = 500;
+
 #[derive(Clone)]
 struct FuzzUser {
     kp: Rc<Keypair>,
     base_ata: Pubkey,
     share_ata: Pubkey,
+    /// The user's account for the registered non-base asset (outsider: empty).
+    asset_ata: Pubkey,
     /// Access proof for the members tree. Members carry a proof that verifies
     /// against `members_root`; the outsider carries a stolen member proof that
     /// must not verify for its own identity.
@@ -123,6 +142,19 @@ struct RoshiFixture {
     base_accounts: Vec<Pubkey>,
     /// Total base installed at setup; conserved for the run's lifetime.
     initial_base: u128,
+    /// Registered non-base asset priced through the mock Pyth feed: its mint,
+    /// Asset PDA, sub-account custody (ATA), and the `PriceUpdateV2` account.
+    asset_mint: Pubkey,
+    asset_pda: Pubkey,
+    asset_custody: Pubkey,
+    pyth_account: Pubkey,
+    /// Every asset-mint token account, for the asset conservation sum. A
+    /// separate conserved quantity from base: non-base deposits move asset
+    /// tokens here and credit `total_assets` in *priced base terms*, so asset
+    /// atoms must never be folded into the base sum.
+    asset_accounts: Vec<Pubkey>,
+    /// Total asset installed at setup; conserved for the run's lifetime.
+    initial_asset: u128,
     /// Monotonic source of unique report hashes (avoids replay rejection so NAV
     /// reports actually advance the epoch, which is what prices withdrawals).
     report_nonce: u64,
@@ -341,19 +373,67 @@ impl RoshiFixture {
             ActionScope::Manager,
         );
 
-        // 5. Users, each funded with base; share ATA starts empty.
+        // 4f. Register a non-base asset priced through a mock Pyth feed. The
+        //     custody is the sub-account's ATA for the asset mint; the price
+        //     account is installed fresh (publish_time == now == 0) so deposits
+        //     price through `oracle.rs` from the first action. This exercises
+        //     `initialize_asset` for real (admin-signed, PDA-funded).
+        let asset_mint = Pubkey::new_unique();
+        set_mint(&mut ctx.svm, asset_mint, &operator.pubkey(), ASSET_DECIMALS);
+        let asset_custody = set_ata(&mut ctx.svm, &sub_account, &asset_mint, 0);
+        let pyth_account = Pubkey::new_unique();
+        set_pyth_price(
+            &mut ctx.svm,
+            pyth_account,
+            PYTH_FEED_ID,
+            PYTH_BASE_PRICE,
+            0,
+            PYTH_EXPONENT,
+            0,
+        );
+        let (asset_pda, _) = Asset::find_address(&vault, &asset_mint);
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::initialize_asset(
+                operator.pubkey(),
+                vault,
+                asset_mint,
+                asset_pda,
+                InitializeAssetArgs {
+                    asset_mint: asset_mint.to_bytes(),
+                    oracle: OracleConfig::pyth(PythOracleConfig::new(
+                        PYTH_FEED_ID,
+                        PYTH_PRICE_DECIMALS,
+                        PYTH_MAX_AGE_SECS,
+                        PYTH_MAX_CONF_BPS,
+                    )),
+                    asset_decimals: ASSET_DECIMALS,
+                    enabled: true,
+                },
+            )
+            .unwrap(),
+            &[&operator],
+            "initialize_asset",
+        );
+
+        // 5. Users, each funded with base + the non-base asset; share ATA
+        //    starts empty.
         let mut users = Vec::with_capacity(NUM_USERS);
         let mut base_accounts = vec![custody, swap_custody, atomic_venue, external_account, treasury];
+        let mut asset_accounts = vec![asset_custody];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
             ctx.svm.airdrop(&kp.pubkey(), FUND_LAMPORTS).unwrap();
             let base_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &base_mint, INITIAL_USER_BASE);
             let share_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &share_mint, 0);
+            let asset_ata = set_ata(&mut ctx.svm, &kp.pubkey(), &asset_mint, INITIAL_USER_ASSET);
             base_accounts.push(base_ata);
+            asset_accounts.push(asset_ata);
             users.push(FuzzUser {
                 kp,
                 base_ata,
                 share_ata,
+                asset_ata,
                 access_proof: Vec::new(),
             });
         }
@@ -380,11 +460,14 @@ impl RoshiFixture {
         ctx.svm.airdrop(&outsider_kp.pubkey(), FUND_LAMPORTS).unwrap();
         let outsider_base = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &base_mint, INITIAL_USER_BASE);
         let outsider_share = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &share_mint, 0);
+        let outsider_asset = set_ata(&mut ctx.svm, &outsider_kp.pubkey(), &asset_mint, 0);
         base_accounts.push(outsider_base);
+        asset_accounts.push(outsider_asset);
         let outsider = FuzzUser {
             kp: outsider_kp,
             base_ata: outsider_base,
             share_ata: outsider_share,
+            asset_ata: outsider_asset,
             access_proof: users[0].access_proof.clone(),
         };
 
@@ -398,6 +481,7 @@ impl RoshiFixture {
 
         let initial_base =
             (NUM_USERS + 1) as u128 * INITIAL_USER_BASE as u128 + VENUE_BASE as u128;
+        let initial_asset = NUM_USERS as u128 * INITIAL_USER_ASSET as u128;
 
         Self {
             ctx,
@@ -424,6 +508,12 @@ impl RoshiFixture {
             users,
             base_accounts,
             initial_base,
+            asset_mint,
+            asset_pda,
+            asset_custody,
+            pyth_account,
+            asset_accounts,
+            initial_asset,
             report_nonce: 0,
             prev_high_watermark: 0,
         }
