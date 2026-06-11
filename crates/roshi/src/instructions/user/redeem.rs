@@ -6,7 +6,7 @@ use crate::{
     instructions::{accounts::RedeemContext, token, RedeemArgs},
     state::withdrawal_ticket::WithdrawalTicket,
 };
-use roshi_interface::error::RoshiError;
+use roshi_interface::{error::RoshiError, math::assets_for_redeem};
 
 /// Implements [`crate::instructions::RoshiInstruction::Redeem`].
 ///
@@ -27,9 +27,10 @@ use roshi_interface::error::RoshiError;
 /// ticket. The burned shares remain in the vault's economic denominator until
 /// the withdrawal authority strikes the ticket after the epoch delay.
 ///
-/// Rejects redemptions while withdrawals are paused, computes the owed base
-/// burns the shares, stores the deferred slippage bound on the ticket, and
-/// tracks the burned-but-unstruck shares on the vault.
+/// Rejects redemptions while withdrawals are paused and redemptions whose
+/// entitlement rounds to zero at the current NAV, burns the shares, and
+/// tracks the burned-but-unstruck shares on the vault. The ticket PDA is
+/// seeded by the owner, so each owner has their own ticket-index namespace.
 pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
     let context = RedeemContext::load(accounts, &args)?;
     let vault = &context.vault;
@@ -45,6 +46,18 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
     if args.shares > share_supply {
         return Err(RoshiError::InvalidVaultState.into());
     }
+
+    // Fail fast on dust: reject a redeem whose entitlement already rounds to
+    // zero at the current NAV. Pricing happens later at strike (where zero is
+    // tolerated, since NAV can move); this guard just refuses to burn shares
+    // into a ticket that is worthless today.
+    let economic_share_supply = vault.economic_share_supply(share_supply)?;
+    assets_for_redeem(
+        args.shares,
+        vault.total_assets,
+        economic_share_supply,
+        vault.base_decimals,
+    )?;
 
     // Burn the shares up front; the signer authorizes the burn as token-account
     // owner or delegate.

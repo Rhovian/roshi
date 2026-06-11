@@ -190,6 +190,7 @@ The redeem flow:
 
 - reject new redeems while withdrawals are paused,
 - not require private-vault allowlist membership,
+- reject redeems whose entitlement rounds to zero at the current NAV,
 - burn the user's shares,
 - create an unpriced withdrawal ticket for later settlement,
 - increase `requested_withdrawal_shares`.
@@ -198,12 +199,15 @@ The burn removes the shares from the SPL mint supply, but the vault tracks them
 as `requested_withdrawal_shares` so the redeemer remains exposed to NAV changes
 until the ticket is struck.
 
-Withdrawal ticket PDAs are bounded by vault, recipient token account, and ticket
-index:
+Withdrawal ticket PDAs are bounded by vault, share owner, and ticket index:
 
 ```text
-[b"ticket", vault, recipient_token_account, ticket_index]
+[b"ticket", vault, owner, ticket_index]
 ```
+
+Seeding by owner (not by recipient token account) gives every owner a private
+ticket-index namespace: redeeming toward someone else's recipient account can
+never occupy that user's slots.
 
 Each ticket records:
 
@@ -236,9 +240,13 @@ virtual-offset position deposits price against. The strike then:
 - moves `assets_owed` from `total_assets` into `pending_withdrawal_assets`,
 - fixes `ticket.assets_owed`.
 
-A recipient token account may have up to 256 open queued tickets per vault.
-Reusing a slot requires the withdrawal authority to process and clear the
-existing ticket first.
+A strike that floors to zero is valid: the ticket settles as a zero payout in
+the same `ProcessWithdrawals` call and is closed, so dust claims cannot wedge
+the queue (they cannot be cancelled once strike-eligible).
+
+An owner may have up to 256 open queued tickets per vault. Reusing a slot
+requires the withdrawal authority to process and clear the existing ticket
+first (or the owner to cancel it before it becomes strike-eligible).
 
 Tickets are vault-scoped user liabilities, not subaccount-scoped liabilities.
 `vault.withdraw_sub_account` only selects the default custody source used when

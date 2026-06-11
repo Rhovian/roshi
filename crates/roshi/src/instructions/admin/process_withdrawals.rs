@@ -9,7 +9,7 @@ use crate::{
     state::{sub_account::VaultSubAccount, vault::Vault, withdrawal_ticket::WithdrawalTicket},
 };
 use roshi_interface::error::RoshiError;
-use roshi_interface::math::assets_for_redeem;
+use roshi_interface::math::assets_for_shares;
 
 /// Implements [`crate::instructions::RoshiInstruction::ProcessWithdrawals`].
 ///
@@ -27,7 +27,9 @@ use roshi_interface::math::assets_for_redeem;
 /// Verifies the withdrawal authority, validates each supplied ticket, transfers
 /// owed base assets from withdraw-subaccount custody to the recorded recipient,
 /// closes settled tickets back to their owners, and reduces pending assets.
-/// Unpriced tickets are struck first if enough NAV report epochs have elapsed.
+/// Unpriced tickets are struck first if enough NAV report epochs have elapsed;
+/// a ticket whose entitlement floors to zero settles as a zero payout and is
+/// closed like any other, so dust can never wedge the queue.
 pub fn try_process_withdrawals(
     accounts: &[AccountInfo],
     _args: ProcessWithdrawalsArgs,
@@ -95,8 +97,11 @@ fn strike_ticket(
         return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
     }
 
+    // Zero is a valid strike: a dust ticket whose entitlement floors to
+    // nothing settles as a zero payout and closes in this same call, instead
+    // of wedging forever (it cannot be cancelled once strike-eligible).
     let economic_share_supply = vault.economic_share_supply(active_share_supply)?;
-    let assets_owed = assets_for_redeem(
+    let assets_owed = assets_for_shares(
         ticket.shares_burned,
         vault.total_assets,
         economic_share_supply,

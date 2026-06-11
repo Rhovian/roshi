@@ -1,6 +1,5 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
-use solana_pubkey::Pubkey;
 use wincode::serialize;
 
 use super::shared::{close_account, next_account, require_writable, require_writable_signer};
@@ -60,9 +59,8 @@ impl<'a, 'info> CancelRedeemContext<'a, 'info> {
         if ticket.vault != vault_account.key.to_bytes() || ticket.owner != owner.key.to_bytes() {
             return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
         }
-        let recipient = Pubkey::from(ticket.recipient_token_account);
         let (expected_ticket, expected_bump) =
-            WithdrawalTicket::find_address(vault_account.key, &recipient, ticket.ticket_index);
+            WithdrawalTicket::find_address(vault_account.key, owner.key, ticket.ticket_index);
         if ticket_account.key != &expected_ticket || ticket.bump != expected_bump {
             return Err(ProgramError::InvalidSeeds);
         }

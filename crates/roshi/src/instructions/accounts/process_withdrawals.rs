@@ -90,9 +90,8 @@ impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
                 return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
             }
 
-            let recipient = Pubkey::from(ticket.recipient_token_account);
             let (expected_ticket, expected_bump) =
-                WithdrawalTicket::find_address(vault_account.key, &recipient, ticket.ticket_index);
+                WithdrawalTicket::find_address(vault_account.key, owner.key, ticket.ticket_index);
             if ticket_account.key != &expected_ticket || ticket.bump != expected_bump {
                 return Err(ProgramError::InvalidSeeds);
             }

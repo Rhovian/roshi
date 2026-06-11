@@ -113,7 +113,11 @@ pub fn shares_for_deposit(
     checked_nonzero_u64(shares)
 }
 
-pub fn assets_for_redeem(
+/// Floor-rounded base value of `shares`. Zero is a valid result: a dust
+/// position can be worth less than one base atom, and withdrawal-ticket
+/// strikes must price it (to nothing) rather than wedge. Immediate redemption
+/// paths that must pay out should use [`assets_for_redeem`].
+pub fn assets_for_shares(
     shares: u64,
     total_assets: u64,
     total_shares: u64,
@@ -129,7 +133,21 @@ pub fn assets_for_redeem(
         u128::from(total_assets) + 1,
         u128::from(total_shares) + virtual_shares,
     )?;
-    checked_nonzero_u64(assets)
+    checked_u64(assets)
+}
+
+pub fn assets_for_redeem(
+    shares: u64,
+    total_assets: u64,
+    total_shares: u64,
+    base_decimals: u8,
+) -> MathResult<u64> {
+    let assets = assets_for_shares(shares, total_assets, total_shares, base_decimals)?;
+    if assets == 0 {
+        return Err(RoshiError::ZeroOutput);
+    }
+
+    Ok(assets)
 }
 
 pub fn share_price_from_assets(total_assets: u64, total_shares: u64) -> MathResult<u64> {
@@ -334,6 +352,23 @@ mod tests {
         let victim_loss = 1_000_000 - victim_claim;
         assert!(victim_loss < 500_000);
         assert!(attacker_cost >= 999 * victim_loss);
+    }
+
+    #[test]
+    fn assets_for_shares_prices_dust_to_zero_without_error() {
+        // Same dust input that makes assets_for_redeem fail: 1 share of a
+        // 1000-share pot worth 100 atoms floors to zero.
+        assert_eq!(assets_for_shares(1, 100, 1_000, 9), Ok(0));
+        assert_eq!(
+            assets_for_redeem(1, 100, 1_000, 9),
+            Err(RoshiError::ZeroOutput)
+        );
+        // The guards stay identical otherwise.
+        assert_eq!(assets_for_shares(100_000, 1_000, 1_000_000, 6), Ok(100));
+        assert_eq!(
+            assets_for_shares(101, 100, 100, 9),
+            Err(RoshiError::InvalidVaultState)
+        );
     }
 
     #[test]

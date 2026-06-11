@@ -91,7 +91,7 @@ fn redeem_half_shares(
     let ticket_index = 0;
     let ticket = roshi::state::withdrawal_ticket::WithdrawalTicket::find_address(
         &vault.address,
-        &recipient,
+        &owner.pubkey(),
         ticket_index,
     )
     .0;

@@ -51,18 +51,12 @@ impl WithdrawalTicket {
         }
     }
 
-    pub fn find_address(
-        vault: &Pubkey,
-        recipient_token_account: &Pubkey,
-        ticket_index: u8,
-    ) -> (Pubkey, u8) {
+    /// Tickets are seeded by the share *owner*, not the payout destination, so
+    /// one user can never occupy another user's ticket-index namespace by
+    /// redeeming toward their recipient token account.
+    pub fn find_address(vault: &Pubkey, owner: &Pubkey, ticket_index: u8) -> (Pubkey, u8) {
         Pubkey::find_program_address(
-            &[
-                Self::SEED,
-                vault.as_ref(),
-                recipient_token_account.as_ref(),
-                &[ticket_index],
-            ],
+            &[Self::SEED, vault.as_ref(), owner.as_ref(), &[ticket_index]],
             &crate::ID,
         )
     }

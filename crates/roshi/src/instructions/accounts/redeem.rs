@@ -78,11 +78,8 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
         }
         token::verify_token_account_mint(recipient_token_account, &base_mint)?;
 
-        let (expected_ticket, ticket_bump) = WithdrawalTicket::find_address(
-            vault_account.key,
-            recipient_token_account.key,
-            args.ticket_index,
-        );
+        let (expected_ticket, ticket_bump) =
+            WithdrawalTicket::find_address(vault_account.key, owner.key, args.ticket_index);
         if ticket.key != &expected_ticket {
             return Err(ProgramError::InvalidSeeds);
         }
@@ -126,7 +123,7 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
             &[&[
                 WithdrawalTicket::SEED,
                 self.vault_account.key.as_ref(),
-                self.recipient_token_account.key.as_ref(),
+                self.owner.key.as_ref(),
                 &[self.ticket_index],
                 &bump,
             ]],

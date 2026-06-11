@@ -281,7 +281,8 @@ impl RoshiFixture {
             return false;
         }
         let shares = shares % (balance + 1);
-        let ticket = WithdrawalTicket::find_address(&self.vault, &user.base_ata, ticket_index).0;
+        let ticket =
+            WithdrawalTicket::find_address(&self.vault, &user.kp.pubkey(), ticket_index).0;
         let ix = roshi_client::instruction::redeem(
             user.kp.pubkey(),
             self.vault,
@@ -303,7 +304,8 @@ impl RoshiFixture {
         #[range(0..TICKETS_PER_USER)] ticket_index: u8,
     ) -> bool {
         let user = self.users[user].clone();
-        let ticket = WithdrawalTicket::find_address(&self.vault, &user.base_ata, ticket_index).0;
+        let ticket =
+            WithdrawalTicket::find_address(&self.vault, &user.kp.pubkey(), ticket_index).0;
         let ix = roshi_client::instruction::cancel_redeem(
             user.kp.pubkey(),
             self.vault,
@@ -362,7 +364,7 @@ impl RoshiFixture {
         for u in &self.users {
             let (owner, dest) = (u.kp.pubkey(), u.base_ata);
             for ti in 0..TICKETS_PER_USER {
-                let ticket = WithdrawalTicket::find_address(&self.vault, &dest, ti).0;
+                let ticket = WithdrawalTicket::find_address(&self.vault, &owner, ti).0;
                 let Ok(account) = self.ctx.get_account(&ticket) else {
                     continue; // closed / never opened
                 };

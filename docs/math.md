@@ -86,6 +86,7 @@ validate_percentage_bps(bps) -> Result<()>
 base_atoms_from_asset_atoms(asset_atoms, price_value, price_decimals) -> Result<u64>
 virtual_share_offset(base_decimals) -> Result<u128>
 shares_for_deposit(base_atoms, total_assets, total_shares, base_decimals) -> Result<u64>
+assets_for_shares(shares, total_assets, total_shares, base_decimals) -> Result<u64>
 assets_for_redeem(shares, total_assets, total_shares, base_decimals) -> Result<u64>
 share_price_from_assets(total_assets, total_shares) -> Result<u64>
 performance_fee_for_nav(gross_total_assets, total_shares, high_watermark, performance_fee_bps)
@@ -140,6 +141,11 @@ Redeem shares for base atoms:
 ```text
 assets_out = floor(shares * (total_assets + 1) / (total_shares + virtual_shares))
 ```
+
+`assets_for_shares` is the raw conversion and may return zero (a dust position
+can be worth less than one base atom — withdrawal-ticket strikes price it to
+nothing rather than wedge); `assets_for_redeem` is the same conversion with
+zero rejected, for immediate-payout paths.
 
 The virtual position makes donation griefing unprofitable: a donor inflating a
 later depositor's rounding loss eats ~`virtual_shares` times that loss, because

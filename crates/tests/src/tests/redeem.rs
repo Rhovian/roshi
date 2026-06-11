@@ -85,12 +85,15 @@ fn setup_redeem(svm: &mut LiteSVM) -> RedeemFixture {
     }
 }
 
-/// Build a redeem instruction against the ticket PDA for `(vault,
-/// recipient_token_account, ticket_index)`, returning the ticket address
-/// alongside it.
+/// Build a redeem instruction against the ticket PDA for `(vault, owner,
+/// ticket_index)`, returning the ticket address alongside it.
 fn redeem_ix(fixture: &RedeemFixture, ticket_index: u8, shares: u64) -> (Pubkey, Instruction) {
-    let ticket =
-        WithdrawalTicket::find_address(&fixture.vault.address, &fixture.recipient, ticket_index).0;
+    let ticket = WithdrawalTicket::find_address(
+        &fixture.vault.address,
+        &fixture.owner.pubkey(),
+        ticket_index,
+    )
+    .0;
     let ix = roshi_client::instruction::redeem(
         fixture.owner.pubkey(),
         fixture.vault.address,
@@ -239,6 +242,135 @@ fn test_redeem_burns_shares_and_queues_ticket() {
 }
 
 #[test]
+fn test_redeem_rejects_dust_that_rounds_to_zero() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    // 100 shares of a 10^9-share pot worth 10^6 atoms floors to zero base.
+    let (_, ix) = redeem_ix(&fixture, 0, 100);
+    assert_roshi_error(send(&mut svm, ix, &fixture.owner), RoshiError::ZeroOutput);
+
+    // Nothing burned, nothing queued.
+    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
+    assert_eq!(fixture.vault.load(&svm).requested_withdrawal_shares, 0);
+}
+
+#[test]
+fn test_process_withdrawals_closes_zero_entitlement_ticket_without_payout() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
+
+    // 1000 shares are worth exactly 1 atom at par, so the redeem-time dust
+    // guard passes and the ticket queues.
+    let shares = 1_000;
+    let (ticket, redeem) = redeem_ix(&fixture, 0, shares);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    // A NAV markdown lands before the strike; the entitlement now floors to
+    // zero. The ticket can no longer be cancelled (strike-eligible), so the
+    // strike must settle it as a zero payout instead of wedging.
+    let mut state = fixture.vault.load(&svm);
+    state.report_epoch = 1;
+    state.total_assets = 100;
+    write_vault_state(&mut svm, &fixture, state);
+
+    let custody = setup_withdraw_custody(&mut svm, &fixture, 0);
+    let ix = process_withdrawals_ix(
+        &fixture,
+        custody,
+        vec![(ticket, fixture.owner.pubkey(), fixture.recipient)],
+    );
+    send_ok(&mut svm, ix, &fixture.vault.roles.withdrawal_authority);
+
+    assert_eq!(token_balance(&svm, &fixture.recipient), 0);
+    assert!(svm.get_account(&ticket).is_none());
+
+    let state = fixture.vault.load(&svm);
+    assert_eq!(state.requested_withdrawal_shares, 0);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+    assert_eq!(state.total_assets, 100);
+}
+
+#[test]
+fn test_redeem_same_ticket_index_different_owners_does_not_collide() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    // A second owner deposits into the same vault...
+    let second_owner = Keypair::new();
+    fund(&mut svm, &second_owner);
+    let sub_account = VaultSubAccount::find_address(&fixture.vault.address, 0).0;
+    let custody = crate::helpers::associated_token_address(&sub_account, &fixture.vault.base_mint);
+    let source = set_ata(
+        &mut svm,
+        &second_owner.pubkey(),
+        &fixture.vault.base_mint,
+        ONE_BASE,
+    );
+    let second_shares = set_ata(&mut svm, &second_owner.pubkey(), &fixture.share_mint, 0);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::deposit(
+            second_owner.pubkey(),
+            fixture.vault.address,
+            source,
+            custody,
+            second_shares,
+            fixture.share_mint,
+            crate::helpers::TOKEN_PROGRAM_ID,
+            fixture.vault.base_mint,
+            ONE_BASE,
+            0,
+            vec![],
+            vec![],
+        )
+        .unwrap(),
+        &second_owner,
+    );
+    svm.expire_blockhash();
+
+    // ...and both owners redeem ticket index 0 toward the SAME recipient
+    // token account. Owner-seeded ticket PDAs give each owner a private
+    // index namespace, so neither call can squat the other's slot.
+    let (first_ticket, first_redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
+    send_ok(&mut svm, first_redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    let second_ticket =
+        WithdrawalTicket::find_address(&fixture.vault.address, &second_owner.pubkey(), 0).0;
+    assert_ne!(first_ticket, second_ticket);
+    let second_redeem = roshi_client::instruction::redeem(
+        second_owner.pubkey(),
+        fixture.vault.address,
+        second_shares,
+        fixture.share_mint,
+        fixture.recipient,
+        second_ticket,
+        0,
+        ONE_BASE_SHARES / 2,
+    )
+    .unwrap();
+    send_ok(&mut svm, second_redeem, &second_owner);
+
+    assert_eq!(
+        load_ticket(&svm, first_ticket).owner,
+        fixture.owner.pubkey().to_bytes()
+    );
+    assert_eq!(
+        load_ticket(&svm, second_ticket).owner,
+        second_owner.pubkey().to_bytes()
+    );
+}
+
+#[test]
 fn test_process_withdrawals_pays_recipient_and_closes_ticket() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
@@ -322,7 +454,7 @@ fn test_process_withdrawals_can_partially_settle_batch() {
         0,
     );
     let second_ticket =
-        WithdrawalTicket::find_address(&fixture.vault.address, &second_recipient, 1).0;
+        WithdrawalTicket::find_address(&fixture.vault.address, &fixture.owner.pubkey(), 1).0;
     let second_redeem = roshi_client::instruction::redeem(
         fixture.owner.pubkey(),
         fixture.vault.address,
@@ -1006,7 +1138,8 @@ fn test_redeem_rejects_wrong_share_mint() {
     // A valid mint that is not the vault's share mint.
     let other_mint = Pubkey::new_unique();
     set_mint(&mut svm, other_mint, &fixture.vault.address, 9);
-    let ticket = WithdrawalTicket::find_address(&fixture.vault.address, &fixture.recipient, 0).0;
+    let ticket =
+        WithdrawalTicket::find_address(&fixture.vault.address, &fixture.owner.pubkey(), 0).0;
     let ix = roshi_client::instruction::redeem(
         fixture.owner.pubkey(),
         fixture.vault.address,
@@ -1034,7 +1167,8 @@ fn test_redeem_rejects_recipient_for_wrong_mint() {
     let wrong_mint = Pubkey::new_unique();
     set_mint(&mut svm, wrong_mint, &fixture.vault.address, 9);
     let wrong_recipient = set_ata(&mut svm, &fixture.owner.pubkey(), &wrong_mint, 0);
-    let ticket = WithdrawalTicket::find_address(&fixture.vault.address, &wrong_recipient, 0).0;
+    let ticket =
+        WithdrawalTicket::find_address(&fixture.vault.address, &fixture.owner.pubkey(), 0).0;
     let ix = roshi_client::instruction::redeem(
         fixture.owner.pubkey(),
         fixture.vault.address,
