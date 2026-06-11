@@ -26,13 +26,13 @@ check:
 
 # Stateless fuzz: full mutated sequence per iteration.
 fuzz test='invariant_core' secs='60': build
-    crucible run roshi {{test}} -C fuzz --release --timeout {{secs}}
+    crucible run roshi {{test}} -C fuzz --release --corpus-in fuzz/corpus --timeout {{secs}}
 
 # Stateful fuzz: one action per iteration over a live state pool (higher throughput).
 fuzz-stateful test='invariant_core' secs='60' cores='8': build
-    crucible run roshi {{test}} -C fuzz --release --stateful --cores {{cores}} --timeout {{secs}}
+    crucible run roshi {{test}} -C fuzz --release --stateful --cores {{cores}} --corpus-in fuzz/corpus --timeout {{secs}}
 
 # Source-level coverage (LCOV + HTML; needs `genhtml` from lcov).
 fuzz-cov test='invariant_core' secs='60': build
-    crucible run roshi {{test}} -C fuzz --release --coverage --timeout {{secs}} --lcov-out fuzz/coverage/lcov.info
+    crucible run roshi {{test}} -C fuzz --release --coverage --corpus-in fuzz/corpus --timeout {{secs}} --lcov-out fuzz/coverage/lcov.info
     genhtml fuzz/coverage/lcov.info -o fuzz/coverage/html

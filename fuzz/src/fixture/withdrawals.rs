@@ -4,17 +4,6 @@
         Vault::from_account_data(&account.data).expect("vault decodes")
     }
 
-    /// Pick a high ticket index for composed one-shot withdrawal probes. Organic
-    /// redeem fuzzing owns `0..TICKETS_PER_USER`; this scans the remaining
-    /// namespace so a failed composed sequence cannot collide on a later attempt.
-    fn unused_sufficiency_ticket_index(&self, owner: &Pubkey) -> Option<u8> {
-        (TICKETS_PER_USER..=u8::MAX)
-            .find(|index| {
-                let ticket = WithdrawalTicket::find_address(&self.vault, owner, *index).0;
-                self.ctx.get_account(&ticket).is_err()
-            })
-    }
-
     /// Burn shares and queue a withdrawal ticket.
     pub fn action_redeem(
         &mut self,
@@ -65,12 +54,11 @@
         submit(&mut self.ctx, ix, &[&user.kp])
     }
 
-    /// Flat-NAV round-trip sufficiency: a user who deposits base, immediately
-    /// redeems exactly the shares minted by that deposit, and has the ticket
-    /// priced under an unchanged NAV mark must not be owed more base than they
-    /// put in. Settlement is covered by the withdrawal-queue invariants; this
-    /// action pins the share-pricing sufficiency in isolation from unrelated NAV
-    /// moves.
+    /// Flat-NAV round-trip sufficiency: a user who deposits base and immediately
+    /// atomically redeems exactly the shares minted by that deposit must not
+    /// finish with more base than they started with. This uses the already
+    /// authorized unwind CPI, so the probe has no async withdrawal-ticket side
+    /// effects and stays isolated from unrelated NAV moves.
     pub fn action_deposit_redeem_flat_nav_no_overpay(
         &mut self,
         #[range(0..NUM_USERS)] user: usize,
@@ -82,10 +70,6 @@
         }
 
         let user = self.users[user].clone();
-        let Some(ticket_index) = self.unused_sufficiency_ticket_index(&user.kp.pubkey()) else {
-            return false;
-        };
-
         let base_before = token_balance(&self.ctx.svm, &user.base_ata);
         let shares_before = token_balance(&self.ctx.svm, &user.share_ata);
         if base_before == 0 {
@@ -116,88 +100,87 @@
         let shares_after_deposit = token_balance(&self.ctx.svm, &user.share_ata);
         let Some(minted_shares) = shares_after_deposit.checked_sub(shares_before) else {
             fuzz_assert!(false, "deposit reduced the depositor's shares");
-            return false;
+            return true;
         };
         if minted_shares == 0 {
-            return false;
+            fuzz_assert!(false, "successful deposit minted zero shares");
+            return true;
         }
 
-        let ticket = WithdrawalTicket::find_address(&self.vault, &user.kp.pubkey(), ticket_index).0;
-        let redeem_ix = roshi_client::instruction::redeem(
+        let after_deposit = self.load_vault();
+        let share_supply = mint_supply(&self.ctx.svm, &self.share_mint);
+        let Ok(economic_share_supply) = after_deposit.economic_share_supply(share_supply) else {
+            fuzz_assert!(false, "economic share supply overflow after flat NAV deposit");
+            return true;
+        };
+        let Ok(max_owed) = assets_for_redeem(
+            minted_shares,
+            after_deposit.total_assets,
+            economic_share_supply,
+            BASE_DECIMALS,
+        ) else {
+            return true;
+        };
+        let unwind = max_owed.min(token_balance(&self.ctx.svm, &self.atomic_venue));
+        if unwind == 0 {
+            return true;
+        }
+
+        let mut ix_data = vec![SPL_TRANSFER_TAG];
+        ix_data.extend_from_slice(&unwind.to_le_bytes());
+        let atomic_ix = roshi_client::instruction::atomic_redeem(
             user.kp.pubkey(),
             self.vault,
             user.share_ata,
             self.share_mint,
             user.base_ata,
-            ticket,
-            ticket_index,
-            minted_shares,
-        )
-        .unwrap();
-        let redeem_ok = submit(&mut self.ctx, redeem_ix, &[&user.kp]);
-        if !redeem_ok {
-            return false;
-        }
-
-        let after_redeem = self.load_vault();
-        let deposit_idle = token_balance(&self.ctx.svm, &self.custody);
-        let withdraw_idle = token_balance(&self.ctx.svm, &self.withdraw_custody);
-        let target_gross = after_redeem.total_assets as u128
-            + after_redeem.fees_payable as u128
-            + after_redeem.pending_withdrawal_assets as u128;
-        let idle = deposit_idle as u128 + withdraw_idle as u128;
-        let Some(external_value) = target_gross.checked_sub(idle).and_then(|v| u64::try_from(v).ok())
-        else {
-            return false;
-        };
-
-        self.report_nonce += 1;
-        let mut hash = [0u8; 32];
-        hash[..8].copy_from_slice(&self.report_nonce.to_le_bytes());
-        let report_ix = roshi_client::instruction::report_nav(
-            self.nav_authority.pubkey(),
-            self.vault,
-            self.share_mint,
-            self.base_mint,
             self.custody,
-            self.withdraw_custody,
-            external_value,
-            hash,
+            support::TOKEN_PROGRAM_ID,
+            self.sub_account,
+            self.atomic_action,
+            vec![
+                AccountMeta::new(self.atomic_venue, false),
+                AccountMeta::new(self.custody, false),
+                AccountMeta::new_readonly(self.sub_account, false),
+                AccountMeta::new_readonly(support::TOKEN_PROGRAM_ID, false),
+            ],
+            AtomicRedeemArgs {
+                shares: minted_shares,
+                min_output: 0,
+                sub_account: 0,
+                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
         )
         .unwrap();
-        let report_ok = submit(&mut self.ctx, report_ix, &[&self.nav_authority.clone()]);
-        if !report_ok {
-            return false;
-        }
-
-        let after_report = self.load_vault();
-        let share_supply = mint_supply(&self.ctx.svm, &self.share_mint);
-        let Ok(economic_share_supply) = after_report.economic_share_supply(share_supply) else {
-            fuzz_assert!(false, "economic share supply overflow after flat NAV report");
-            return false;
-        };
-        let Ok(expected_owed) = assets_for_shares(
-            minted_shares,
-            after_report.total_assets,
-            economic_share_supply,
-            BASE_DECIMALS,
-        ) else {
-            fuzz_assert!(false, "flat-NAV ticket could not be priced for settlement");
-            return false;
-        };
-        if expected_owed == 0 {
-            return false;
+        let atomic_ok = submit(&mut self.ctx, atomic_ix, &[&user.kp]);
+        if !atomic_ok {
+            return true;
         }
 
         let base_after = token_balance(&self.ctx.svm, &user.base_ata);
         let shares_after = token_balance(&self.ctx.svm, &user.share_ata);
         fuzz_assert!(
-            shares_after == shares_before
-                && base_after == base_before - amount
-                && expected_owed <= amount,
-            "flat-NAV deposit/redeem overpay entitlement: \
+            shares_after == shares_before && base_after <= base_before && unwind <= amount,
+            "flat-NAV deposit/atomic-redeem overpaid: \
              base {base_before}->{base_after}, shares {shares_before}->{shares_after}, \
-             deposited={amount}, expected_owed={expected_owed}"
+             deposited={amount}, unwind={unwind}, max_owed={max_owed}"
         );
         true
     }

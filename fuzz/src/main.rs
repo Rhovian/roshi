@@ -33,7 +33,7 @@ use roshi::{
 use roshi_interface::{
     access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
     find_share_mint_address,
-    math::{assets_for_redeem, assets_for_shares, performance_fee_for_nav, shares_for_deposit},
+    math::{assets_for_redeem, performance_fee_for_nav, shares_for_deposit},
 };
 use solana_account::Account;
 use solana_instruction::AccountMeta;
