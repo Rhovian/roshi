@@ -12,6 +12,7 @@
             self.sub_account,
             self.custody,
             self.external_account,
+            self.external_destination,
             amount,
         )
         .unwrap();
@@ -320,6 +321,7 @@
             input,
             output,
             action,
+            vec![],
             vec![
                 AccountMeta::new(input, false),
                 AccountMeta::new(output, false),
@@ -405,6 +407,7 @@
             input,
             output,
             action,
+            vec![],
             vec![
                 AccountMeta::new(input, false),
                 AccountMeta::new(output, false),

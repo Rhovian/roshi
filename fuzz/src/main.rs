@@ -22,6 +22,7 @@ use roshi::{
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         asset::Asset,
+        external_destination::ExternalDestination,
         program_config::ProgramConfig,
         sub_account::VaultSubAccount,
         vault::{Vault, VaultControls},
@@ -46,9 +47,9 @@ const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
 use support::{
-    mint_supply, pyth_price_data, set_ata, set_ata_with_program, set_extended_token_2022_mint,
-    set_mint, set_pyth_price, set_token_2022_mint, set_token_account,
-    set_token_account_with_program, token_balance,
+    mint_supply, pyth_price_data, set_ata, set_ata_with_program, set_mint, set_pyth_price,
+    set_token_2022_mint, set_token_account, set_token_account_with_program,
+    set_transfer_fee_token_2022_mint, token_balance,
 };
 
 const NUM_USERS: usize = 3;
@@ -132,6 +133,7 @@ struct RoshiFixture {
     withdraw_sub_account: Pubkey,
     withdraw_custody: Pubkey,
     external_account: Pubkey,
+    external_destination: Pubkey,
     /// Pre-authorized Manager action: an SPL token transfer custody -> external
     /// signed by the sub-account PDA, with the amount left free. Drives the
     /// arbitrary-CPI authorization machinery (`manage`, `validate_authorized_cpi`,
@@ -192,8 +194,8 @@ struct RoshiFixture {
     token_2022_swap_custody: Pubkey,
     token_2022_swap_forward_action: Pubkey,
     token_2022_swap_reverse_action: Pubkey,
-    extended_token_2022_mint: Pubkey,
-    extended_token_2022_asset_pda: Pubkey,
+    transfer_fee_token_2022_mint: Pubkey,
+    transfer_fee_token_2022_asset_pda: Pubkey,
     token_2022_asset_accounts: Vec<Pubkey>,
     initial_token_2022_asset: u128,
     /// Monotonic source of unique report hashes (avoids replay rejection so NAV

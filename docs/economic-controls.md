@@ -195,14 +195,78 @@ from a deeper insolvency is operational: pause deposits, unwind manually.
 `invest_external`'s destination was the one strategist power not admin-pinned:
 a free-form destination is a custody-exfiltration path on strategist key
 compromise (fact 4). The registry mirrors the Asset/action-hash philosophy —
-**the admin authorizes venues; the strategist will only move funds between
+**the admin authorizes venues; the strategist only moves funds between
 custody and authorized venues.** Registrations are per-vault PDAs over the
 destination token account (validated against the base mint, since
-`invest_external` only moves base out); revocation closes the PDA.
-`return_external` is inbound and stays unrestricted. The registry
-instructions exist today; `invest_external` does not yet require a
-registered destination — that enforcement ships with the remaining hardening
-work (see Status).
+`invest_external` only moves base out); revocation closes the PDA, and
+`invest_external` rejects unregistered or revoked destinations.
+`return_external` is inbound and stays unrestricted.
+
+## Withdrawal Liveness Escape
+
+`cancel_grace_slots` re-opens cancellation for a strike-eligible but still
+*unstruck* ticket once the grace elapses (fact 4: a dead withdrawal authority
+must not trap users). The redeemer re-enters the pool with their original
+shares. Chosen as a vault config rather than a program constant (decided
+2026-06-12) — the admin tunes it to the vault's operational cadence; 0
+disables the escape.
+
+Deliberately deferred: a *struck* ticket (payout already fixed) can still be
+trapped by a dead key. Permissionless settlement after a grace was considered
+and deferred — documented as an accepted risk below.
+
+## Oracle-Bounded Swap Slippage
+
+`max_swap_slippage_bps` requires every swap's realized output value to cover
+its realized input value minus the tolerance, both valued through the same
+oracle path deposits use. The caller's `max_in`/`min_out` bound *amounts*; a
+compromised swap authority sets them loose. The value bound is the control
+that survives key compromise: an authorized route that leaks NAV (output
+worth less than input) rejects regardless of what the authority claims.
+
+The vault base-oracle leg is read **once per swap** and shared by both
+endpoint valuations: a pull-oracle feed can have several verified updates
+inside its freshness window, and letting each side submit its own copy would
+let one comparison price the same feed two different ways (low for the
+output, high for the input), widening the bound by the feed's intra-window
+drift.
+
+Settled posture (2026-06-12): **endpoints must price.** Both endpoint custody
+mints must be the base mint or a registered Asset (routed legs included), or
+the swap rejects (`UnpriceableSwapLeg`). Whatever happens inside the single
+authorized CPI — aggregator multi-hop through arbitrary intermediates — stays
+opaque; route competitiveness comes from the venue, not from weakening the
+bound. A deposit-disabled Asset still prices (the `enabled` flag gates
+deposits, not valuation).
+
+## Token-2022 Extension Allowlist
+
+Mint verification walks the Token-2022 extension TLV and allows exactly two
+extension types: `MetadataPointer` and `TokenMetadata` (display only).
+Everything else — transfer fees, transfer hooks, permanent delegates, close
+authorities, confidential transfers, interest, pausability, unknown future
+types — is rejected. Allowlist, not blocklist: an extension Roshi has never
+heard of is treated as hostile until proven benign, because fee-on-transfer
+alone silently breaks `total_assets` accounting (amount sent != amount
+received).
+
+Registration-time checking is sound: every dangerous mint extension must be
+initialized before `InitializeMint`, so a mint that passes at registration
+cannot grow one later. The one post-creation growth case is `TokenMetadata`
+(a realloc) — benign, allowed, and the reason no code path may assume a fixed
+mint account length.
+
+## Share-Mint Metadata
+
+Share mints carry Metaplex Token Metadata set by the admin-gated
+`SetShareMetadata` (bare mints render as "Unknown Token" — bad UX and a
+phishing surface). Metaplex over a Token-2022 migration because share tokens
+must stay maximally composable classic SPL — integrators treat Token-2022
+with the same extension suspicion Roshi itself applies — and Metaplex costs
+one instruction instead of touching every share flow. The vault PDA is the
+metadata update authority, so renames go through the same admin instruction
+and nothing outside the program can mutate it. Display only: no economic
+invariant may depend on metadata.
 
 ## Trust Posture and Accepted Risks
 
@@ -221,6 +285,9 @@ Accepted risks, documented rather than mitigated:
 - **Donations accrue performance fee.** The virtual offset bounds the related
   share-price attack; donated value itself is treated as profit.
 - **Insolvency beyond the fee cushion wedges by design** (see Writedown).
+- **Struck-but-unsettled tickets can be trapped by a dead withdrawal
+  authority.** Permissionless settlement was considered and deferred; the
+  cancel grace covers unstruck tickets only.
 - **Routed-leg quote consistency is operator config.** Two oracle legs must
   share a quote currency; the program cannot verify they do. Using X/USD legs
   on a stable base assumes the USD≈stable peg.
@@ -239,11 +306,9 @@ on-chain-measurable-profit system does not need.
 
 ## Status
 
-Enforced today: profit unlock, staleness gate (atomic redeem), NAV gain bound,
-report rate limit, atomic-redeem exit fee, per-asset deposit caps, mandatory
-Pyth confidence bound, fee writedown, destination registry instructions.
-
-Config fields present but not yet enforced (mechanisms land with their plan
-sections): `max_swap_slippage_bps` (oracle-bounded swap slippage on priceable
-endpoints), `cancel_grace_slots` (withdrawal-authority liveness escape), and
-`invest_external` does not yet require a registered destination.
+Every control in this document is enforced: profit unlock, staleness gate
+(atomic redeem), NAV gain bound, report rate limit, atomic-redeem exit fee,
+per-asset deposit caps, mandatory Pyth confidence bound, fee writedown,
+destination registry (including `invest_external` gating), cancel grace,
+oracle-bounded swap slippage, the Token-2022 extension allowlist, and
+share-mint metadata.

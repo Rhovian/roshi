@@ -221,6 +221,17 @@ pub struct SetWithdrawalAuthorityArgs {
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct SetShareMetadataArgs {
+    /// Display metadata for the share mint, stored via Metaplex Token
+    /// Metadata (length limits are enforced by the Metaplex program: name
+    /// <= 32, symbol <= 10, uri <= 200). Display only — no economic
+    /// invariant may depend on it.
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct WriteDownFeesArgs {
     /// Fee liability to forgive: `0 < amount <= fees_payable`. No tokens
     /// move; gross NAV is unchanged and liabilities shrink.

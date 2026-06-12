@@ -6,6 +6,11 @@ build:
 test:
     cargo test
 
+# One-time fetch of the Metaplex Token Metadata binary used by the
+# share-metadata integration tests (they skip when it is absent).
+fetch-mpl:
+    solana program dump metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s crates/tests/fixtures/mpl_token_metadata.so --url https://api.mainnet-beta.solana.com
+
 test-sbf: build
     cargo test -p roshi-tests
 

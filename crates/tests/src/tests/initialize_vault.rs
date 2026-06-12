@@ -4,8 +4,9 @@ use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, fund, send, send_ok,
-    set_extended_token_2022_mint, set_mint, set_token_2022_mint, set_token_account,
-    set_token_account_with_program, setup_program, VaultBuilder, TOKEN_2022_PROGRAM_ID,
+    set_metadata_pointer_token_2022_mint, set_mint, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, set_transfer_fee_token_2022_mint, setup_program, VaultBuilder,
+    TOKEN_2022_PROGRAM_ID,
 };
 
 #[test]
@@ -274,7 +275,7 @@ fn test_initialize_vault_accepts_bare_token_2022_base_mint() {
 }
 
 #[test]
-fn test_initialize_vault_rejects_extended_token_2022_base_mint() {
+fn test_initialize_vault_accepts_metadata_extended_token_2022_base_mint() {
     let Some((mut svm, authority, config_pda)) = setup_program() else {
         return;
     };
@@ -283,7 +284,35 @@ fn test_initialize_vault_rejects_extended_token_2022_base_mint() {
     let treasury = solana_pubkey::Pubkey::new_unique();
     let builder = VaultBuilder::new().base_mint(base_mint).treasury(treasury);
     let vault_pda = builder.address().0;
-    set_extended_token_2022_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_metadata_pointer_token_2022_mint(&mut svm, base_mint, &vault_pda, 6);
+    set_token_account_with_program(
+        &mut svm,
+        treasury,
+        &base_mint,
+        &solana_pubkey::Pubkey::new_unique(),
+        0,
+        TOKEN_2022_PROGRAM_ID,
+    );
+
+    send_ok(
+        &mut svm,
+        builder.instruction(authority.pubkey(), config_pda),
+        &authority,
+    );
+    assert!(svm.get_account(&vault_pda).is_some());
+}
+
+#[test]
+fn test_initialize_vault_rejects_transfer_fee_token_2022_base_mint() {
+    let Some((mut svm, authority, config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let treasury = solana_pubkey::Pubkey::new_unique();
+    let builder = VaultBuilder::new().base_mint(base_mint).treasury(treasury);
+    let vault_pda = builder.address().0;
+    set_transfer_fee_token_2022_mint(&mut svm, base_mint, &vault_pda, 6);
     set_token_account_with_program(
         &mut svm,
         treasury,

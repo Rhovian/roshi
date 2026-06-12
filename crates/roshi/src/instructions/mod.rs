@@ -1,4 +1,5 @@
 pub(crate) mod accounts;
+pub(crate) mod metaplex;
 pub(crate) mod token;
 
 pub mod admin;
@@ -11,7 +12,7 @@ pub use roshi_interface::instructions::{
     InvestExternalArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs, RedeemArgs,
     RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs, RevokeActionArgs,
     RevokeExternalDestinationArgs, RoshiInstruction, SetNavAuthorityArgs, SetPauseFlagsArgs,
-    SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-    SwapArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
-    UpdateVaultConfigArgs, WriteDownFeesArgs,
+    SetShareMetadataArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
+    SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs,
+    UpdateAssetArgs, UpdateVaultConfigArgs, WriteDownFeesArgs,
 };

@@ -127,6 +127,7 @@ impl SwapFixture {
             self.input_custody,
             self.output_custody,
             self.action_pda,
+            vec![],
             vec![
                 AccountMeta::new(self.input_custody, false),
                 AccountMeta::new(self.output_custody, false),
@@ -376,4 +377,648 @@ fn install_delegate(svm: &mut LiteSVM, address: Pubkey) {
     account.data[72..76].copy_from_slice(&1u32.to_le_bytes());
     account.data[76..108].copy_from_slice(Pubkey::new_unique().as_ref());
     svm.set_account(address, account).unwrap();
+}
+
+// --- Oracle-bounded swap slippage (`max_swap_slippage_bps`) ---
+
+fn set_swap_slippage(svm: &mut LiteSVM, fixture_vault: &crate::helpers::TestVault, bps: u16) {
+    let mut state = fixture_vault.load(svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 0, bps);
+    svm.set_account(
+        fixture_vault.address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
+            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
+/// Install a registered Asset directly (9 decimals, enabled, uncapped).
+fn install_asset(
+    svm: &mut LiteSVM,
+    vault: &crate::helpers::TestVault,
+    mint: Pubkey,
+    oracle: roshi::oracle::OracleConfig,
+    routed: bool,
+) -> Pubkey {
+    let (pda, bump) = roshi::state::asset::Asset::find_address(&vault.address, &mint);
+    let asset = roshi::state::asset::Asset::new(
+        vault.address.to_bytes(),
+        mint.to_bytes(),
+        oracle,
+        9,
+        true,
+        routed,
+        u64::MAX,
+        bump,
+    )
+    .unwrap();
+    svm.set_account(
+        pda,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::asset::Asset::SPACE),
+            data: serialize(&RoshiAccount::Asset(asset)).unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+    pda
+}
+
+/// Install a Swap-scope action for one SPL transfer `(from -> to)` signed by
+/// the fixture sub-account, returning the action PDA.
+fn install_transfer_action(
+    svm: &mut LiteSVM,
+    fixture: &SwapFixture,
+    from: Pubkey,
+    to: Pubkey,
+) -> Pubkey {
+    let metas = token_transfer_metas(from, to, fixture.sub_account);
+    let hash = compute_action_hash_from_metas(
+        &fixture.token_program,
+        &fixture.ops,
+        &metas,
+        &fixture.ix_data,
+    )
+    .unwrap();
+    let (pda, bump) = Action::find_address(&fixture.vault.address, &hash);
+    svm.set_account(
+        pda,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: hash,
+                ops: fixture.ops,
+                scope: ActionScope::Swap,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+    pda
+}
+
+/// Swap instruction with explicit custodies, CPI transfer target, and
+/// valuation accounts.
+#[allow(clippy::too_many_arguments)]
+fn swap_ix_with_valuation(
+    fixture: &SwapFixture,
+    input_custody: Pubkey,
+    output_custody: Pubkey,
+    action: Pubkey,
+    cpi_from: Pubkey,
+    cpi_to: Pubkey,
+    valuation: Vec<AccountMeta>,
+    ix_data: Vec<u8>,
+) -> Instruction {
+    roshi_client::instruction::swap(
+        fixture.vault.roles.swap_authority.pubkey(),
+        fixture.vault.address,
+        fixture.sub_account,
+        input_custody,
+        output_custody,
+        action,
+        valuation,
+        vec![
+            AccountMeta::new(cpi_from, false),
+            AccountMeta::new(cpi_to, false),
+            AccountMeta::new_readonly(fixture.sub_account, false),
+            AccountMeta::new_readonly(fixture.token_program, false),
+        ],
+        SwapArgs {
+            min_out: 0,
+            max_in: u64::MAX,
+            sub_account: fixture.sub_account_index,
+            program_id: fixture.token_program.to_bytes(),
+            accounts_start: 0,
+            accounts_len: 3,
+            account_flags: vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            ix_data,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn test_swap_value_bound_accepts_symmetric_base_swap() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fixture.install_action(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    // Both endpoints are the base mint: equal value in and out, no oracle
+    // accounts needed.
+    send_ok(
+        &mut svm,
+        fixture.ix(fixture.vault.roles.swap_authority.pubkey(), 0, SWAP_AMOUNT),
+        &fixture.vault.roles.swap_authority,
+    );
+    assert_eq!(
+        token_balance(&svm, &fixture.output_custody),
+        OUTPUT_BALANCE + SWAP_AMOUNT
+    );
+}
+
+#[test]
+fn test_swap_value_bound_blocks_value_leak() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    // An authorized route that pays custody value to an outside account: the
+    // output custody never receives anything.
+    let leak = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        leak,
+        &fixture.vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+    );
+    let action = install_transfer_action(&mut svm, &fixture, fixture.input_custody, leak);
+    let leak_ix = |valuation: Vec<AccountMeta>| {
+        swap_ix_with_valuation(
+            &fixture,
+            fixture.input_custody,
+            fixture.output_custody,
+            action,
+            fixture.input_custody,
+            leak,
+            valuation,
+            fixture.ix_data.clone(),
+        )
+    };
+
+    // Bound off: only the caller-supplied amount bounds apply, and the swap
+    // authority chose not to set them. The leak goes through.
+    send_ok(
+        &mut svm,
+        leak_ix(vec![]),
+        &fixture.vault.roles.swap_authority,
+    );
+    assert_eq!(token_balance(&svm, &leak), SWAP_AMOUNT);
+
+    // Bound on: zero received value against positive spent value rejects.
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+    svm.expire_blockhash();
+    assert_roshi_error(
+        send(
+            &mut svm,
+            leak_ix(vec![]),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::SlippageExceeded,
+    );
+    assert_eq!(token_balance(&svm, &leak), SWAP_AMOUNT);
+}
+
+#[test]
+fn test_swap_rejects_unpriceable_endpoint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    // Output custody holds a mint that is neither the base mint nor a
+    // registered Asset: the endpoint cannot be valued, so the swap rejects
+    // regardless of amounts.
+    let stray_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, stray_mint, &Pubkey::new_unique(), 9);
+    let stray_output = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, stray_output, &stray_mint, &fixture.sub_account, 0);
+    let action = install_transfer_action(&mut svm, &fixture, fixture.input_custody, stray_output);
+    let (unregistered_asset_pda, _) =
+        roshi::state::asset::Asset::find_address(&fixture.vault.address, &stray_mint);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            swap_ix_with_valuation(
+                &fixture,
+                fixture.input_custody,
+                stray_output,
+                action,
+                fixture.input_custody,
+                stray_output,
+                vec![AccountMeta::new_readonly(unregistered_asset_pda, false)],
+                fixture.ix_data.clone(),
+            ),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::UnpriceableSwapLeg,
+    );
+}
+
+#[test]
+fn test_swap_value_bound_prices_asset_input_through_oracle() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    // Registered asset (9 decimals) priced 2.0 base per whole token via Pyth.
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let feed_id = [7u8; 32];
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture.vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            feed_id,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+        false,
+    );
+    let pyth = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth, feed_id, 200_000_000, -8, 0);
+
+    let asset_input = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        asset_input,
+        &asset_mint,
+        &fixture.sub_account,
+        1_000_000_000,
+    );
+    let leak = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, leak, &asset_mint, &Pubkey::new_unique(), 0);
+
+    // Spend 0.5 whole asset tokens (worth 1_000_000 base atoms) for nothing.
+    let amount = 500_000_000u64;
+    let ix_data = token_transfer_data(amount);
+    let metas = token_transfer_metas(asset_input, leak, fixture.sub_account);
+    let hash =
+        compute_action_hash_from_metas(&fixture.token_program, &fixture.ops, &metas, &ix_data)
+            .unwrap();
+    let (action, bump) = Action::find_address(&fixture.vault.address, &hash);
+    svm.set_account(
+        action,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: hash,
+                ops: fixture.ops,
+                scope: ActionScope::Swap,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            swap_ix_with_valuation(
+                &fixture,
+                asset_input,
+                fixture.output_custody,
+                action,
+                asset_input,
+                leak,
+                vec![
+                    AccountMeta::new_readonly(asset_pda, false),
+                    AccountMeta::new_readonly(pyth, false),
+                ],
+                ix_data,
+            ),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::SlippageExceeded,
+    );
+}
+
+#[test]
+fn test_swap_value_bound_prices_routed_asset_output() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // Vault base oracle: Pyth 1.0 in the shared quote currency.
+    let base_feed = [8u8; 32];
+    let builder = VaultBuilder::new().base_oracle(roshi::oracle::OracleConfig::pyth(
+        roshi::oracle::PythOracleConfig::new(base_feed, 8, i64::MAX as u64, 250),
+    ));
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+
+    let sub_account_index = 0;
+    let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
+    let input_custody = Pubkey::new_unique();
+    set_token_account_with_program(
+        &mut svm,
+        input_custody,
+        &vault.base_mint,
+        &sub_account,
+        INPUT_BALANCE,
+        TOKEN_PROGRAM_ID,
+    );
+
+    // Routed asset: ASSET/QUOTE 2.0 over BASE/QUOTE 1.0.
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let asset_feed = [9u8; 32];
+    let fixture_vault = crate::helpers::TestVault {
+        address: vault.address,
+        bump: vault.bump,
+        tag: vault.tag.clone(),
+        base_mint: vault.base_mint,
+        share_mint: vault.share_mint,
+        treasury: vault.treasury,
+        roles: crate::helpers::VaultRoles {
+            admin: vault.roles.admin.insecure_clone(),
+            strategist: vault.roles.strategist.insecure_clone(),
+            swap_authority: vault.roles.swap_authority.insecure_clone(),
+            nav_authority: vault.roles.nav_authority.insecure_clone(),
+            withdrawal_authority: vault.roles.withdrawal_authority.insecure_clone(),
+        },
+    };
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture_vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            asset_feed,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+        true,
+    );
+    let pyth_asset = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth_asset, asset_feed, 200_000_000, -8, 0);
+    let pyth_base = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth_base, base_feed, 100_000_000, -8, 0);
+
+    let asset_output = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, asset_output, &asset_mint, &sub_account, 0);
+    let venue = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, venue, &asset_mint, &sub_account, 1_000_000_000);
+
+    set_swap_slippage(&mut svm, &fixture_vault, 100);
+    fund(&mut svm, &fixture_vault.roles.swap_authority);
+
+    let amount = 500_000_000u64;
+    let ix_data = token_transfer_data(amount);
+    let ops = Ops::new([
+        Op::IngestAccount { index: 0 },
+        Op::IngestAccount { index: 1 },
+    ])
+    .unwrap();
+    let metas = token_transfer_metas(venue, asset_output, sub_account);
+    let hash = compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data).unwrap();
+    let (action, bump) = Action::find_address(&vault.address, &hash);
+    svm.set_account(
+        action,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: vault.address.to_bytes(),
+                action_hash: hash,
+                ops,
+                scope: ActionScope::Swap,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Input is base (no accounts); output leg consumes Asset PDA + asset
+    // oracle + routed base oracle. Nothing is spent, so the bound passes —
+    // this pins the routed valuation account layout end-to-end.
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::swap(
+            fixture_vault.roles.swap_authority.pubkey(),
+            vault.address,
+            sub_account,
+            input_custody,
+            asset_output,
+            action,
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(pyth_asset, false),
+                AccountMeta::new_readonly(pyth_base, false),
+            ],
+            vec![
+                AccountMeta::new(venue, false),
+                AccountMeta::new(asset_output, false),
+                AccountMeta::new_readonly(sub_account, false),
+                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            ],
+            SwapArgs {
+                min_out: 0,
+                max_in: u64::MAX,
+                sub_account: sub_account_index,
+                program_id: TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap(),
+        &fixture_vault.roles.swap_authority,
+    );
+    assert_eq!(token_balance(&svm, &asset_output), amount);
+}
+
+#[test]
+fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // Vault base oracle: Pyth 1.0 in the shared quote currency.
+    let base_feed = [10u8; 32];
+    let builder = VaultBuilder::new().base_oracle(roshi::oracle::OracleConfig::pyth(
+        roshi::oracle::PythOracleConfig::new(base_feed, 8, i64::MAX as u64, 250),
+    ));
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+    set_swap_slippage(&mut svm, &vault, 100);
+    fund(&mut svm, &vault.roles.swap_authority);
+
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+
+    // Two routed assets: the input worth 2.0 quote, the output worth 4.0.
+    let mut routed_asset = |feed_id: [u8; 32], price: i64| {
+        let mint = Pubkey::new_unique();
+        crate::helpers::set_mint(&mut svm, mint, &Pubkey::new_unique(), 9);
+        let pda = install_asset(
+            &mut svm,
+            &vault,
+            mint,
+            roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+                feed_id,
+                8,
+                i64::MAX as u64,
+                250,
+            )),
+            true,
+        );
+        let pyth = Pubkey::new_unique();
+        crate::helpers::set_pyth_price(&mut svm, pyth, feed_id, price, -8, 0);
+        (mint, pda, pyth)
+    };
+    let (mint_a, pda_a, pyth_a) = routed_asset([11u8; 32], 200_000_000);
+    let (mint_b, pda_b, pyth_b) = routed_asset([12u8; 32], 400_000_000);
+    let pyth_base = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth_base, base_feed, 100_000_000, -8, 0);
+
+    let input_a = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, input_a, &mint_a, &sub_account, 1_000_000_000);
+    let output_b = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, output_b, &mint_b, &sub_account, 0);
+    let leak = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, leak, &mint_a, &Pubkey::new_unique(), 0);
+
+    // The CPI pays asset A out and credits nothing: with both endpoints
+    // routed, the single shared base account values both sides — there is no
+    // second base slot to feed an inconsistent price into.
+    let amount = 500_000_000u64;
+    let ix_data = token_transfer_data(amount);
+    let ops = Ops::new([
+        Op::IngestAccount { index: 0 },
+        Op::IngestAccount { index: 1 },
+    ])
+    .unwrap();
+    let metas = token_transfer_metas(input_a, leak, sub_account);
+    let hash = compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data).unwrap();
+    let (action, bump) = Action::find_address(&vault.address, &hash);
+    svm.set_account(
+        action,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: vault.address.to_bytes(),
+                action_hash: hash,
+                ops,
+                scope: ActionScope::Swap,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    let ix = roshi_client::instruction::swap(
+        vault.roles.swap_authority.pubkey(),
+        vault.address,
+        sub_account,
+        input_a,
+        output_b,
+        action,
+        vec![
+            AccountMeta::new_readonly(pda_a, false),
+            AccountMeta::new_readonly(pyth_a, false),
+            AccountMeta::new_readonly(pda_b, false),
+            AccountMeta::new_readonly(pyth_b, false),
+            AccountMeta::new_readonly(pyth_base, false),
+        ],
+        vec![
+            AccountMeta::new(input_a, false),
+            AccountMeta::new(leak, false),
+            AccountMeta::new_readonly(sub_account, false),
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        ],
+        SwapArgs {
+            min_out: 0,
+            max_in: u64::MAX,
+            sub_account: 0,
+            program_id: TOKEN_PROGRAM_ID.to_bytes(),
+            accounts_start: 0,
+            accounts_len: 3,
+            account_flags: vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            ix_data,
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &vault.roles.swap_authority),
+        RoshiError::SlippageExceeded,
+    );
+    assert_eq!(token_balance(&svm, &leak), 0);
 }

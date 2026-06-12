@@ -68,13 +68,74 @@ pub fn set_token_2022_mint(svm: &mut LiteSVM, mint: Pubkey, authority: &Pubkey, 
 }
 
 /// Install an initialized extended Token-2022 mint that must be rejected.
-pub fn set_extended_token_2022_mint(
+const EXTENSION_TRANSFER_FEE_CONFIG: u16 = 1;
+const EXTENSION_METADATA_POINTER: u16 = 18;
+
+/// Token-2022 mint carrying only the allowlisted metadata-pointer extension.
+pub fn set_metadata_pointer_token_2022_mint(
     svm: &mut LiteSVM,
     mint: Pubkey,
     authority: &Pubkey,
     decimals: u8,
 ) {
-    set_mint_with_len(svm, mint, authority, decimals, TOKEN_2022_PROGRAM_ID, 200);
+    set_token_2022_mint_with_extension(
+        svm,
+        mint,
+        authority,
+        decimals,
+        EXTENSION_METADATA_POINTER,
+        64,
+    );
+}
+
+/// Token-2022 mint carrying a transfer-fee extension — outside the allowlist.
+pub fn set_transfer_fee_token_2022_mint(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    authority: &Pubkey,
+    decimals: u8,
+) {
+    set_token_2022_mint_with_extension(
+        svm,
+        mint,
+        authority,
+        decimals,
+        EXTENSION_TRANSFER_FEE_CONFIG,
+        108,
+    );
+}
+
+/// Base mint layout padded to the token-account length, the mint
+/// account-type byte, then one `(type, len, zeroed value)` TLV entry.
+fn set_token_2022_mint_with_extension(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    authority: &Pubkey,
+    decimals: u8,
+    extension_type: u16,
+    extension_len: usize,
+) {
+    let len = 166 + 4 + extension_len;
+    let mut data = vec![0u8; len];
+    data[0..4].copy_from_slice(&1u32.to_le_bytes());
+    data[4..36].copy_from_slice(authority.as_ref());
+    data[44] = decimals;
+    data[45] = 1;
+    data[165] = 1; // AccountType::Mint
+    data[166..168].copy_from_slice(&extension_type.to_le_bytes());
+    data[168..170].copy_from_slice(&(extension_len as u16).to_le_bytes());
+    let lamports = svm.minimum_balance_for_rent_exemption(len);
+    svm.set_account(
+        mint,
+        Account {
+            lamports,
+            data,
+            owner: TOKEN_2022_PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
 }
 
 fn set_mint_with_len(

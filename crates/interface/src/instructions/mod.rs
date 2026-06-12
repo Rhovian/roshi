@@ -39,6 +39,7 @@ pub mod tags {
     pub const WRITE_DOWN_FEES: u8 = 27;
     pub const REGISTER_EXTERNAL_DESTINATION: u8 = 28;
     pub const REVOKE_EXTERNAL_DESTINATION: u8 = 29;
+    pub const SET_SHARE_METADATA: u8 = 30;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -190,6 +191,7 @@ pub enum RoshiInstruction {
     #[codama(account(name = "sub_account"))]
     #[codama(account(name = "custody", writable))]
     #[codama(account(name = "external_account", writable))]
+    #[codama(account(name = "external_destination"))]
     #[codama(account(name = "token_program", default_value = program("token")))]
     InvestExternal(#[codama(name = "args")] InvestExternalArgs) = 22,
 
@@ -241,6 +243,14 @@ pub enum RoshiInstruction {
     #[codama(account(name = "vault"))]
     #[codama(account(name = "external_destination", writable))]
     RevokeExternalDestination = 29,
+
+    #[codama(account(name = "admin", signer, writable))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "share_mint"))]
+    #[codama(account(name = "metadata", writable))]
+    #[codama(account(name = "token_metadata_program"))]
+    #[codama(account(name = "system_program", default_value = program("system")))]
+    SetShareMetadata(#[codama(name = "args")] SetShareMetadataArgs) = 30,
 }
 
 impl RoshiInstruction {
@@ -276,6 +286,7 @@ impl RoshiInstruction {
             Self::WriteDownFees(_) => tags::WRITE_DOWN_FEES,
             Self::RegisterExternalDestination => tags::REGISTER_EXTERNAL_DESTINATION,
             Self::RevokeExternalDestination => tags::REVOKE_EXTERNAL_DESTINATION,
+            Self::SetShareMetadata(_) => tags::SET_SHARE_METADATA,
         }
     }
 
@@ -329,6 +340,7 @@ impl RoshiInstruction {
                 let RevokeExternalDestinationArgs = decode_payload(payload)?;
                 Ok(Self::RevokeExternalDestination)
             }
+            tags::SET_SHARE_METADATA => Ok(Self::SetShareMetadata(decode_payload(payload)?)),
             _ => Err(()),
         }
     }
@@ -373,6 +385,7 @@ impl RoshiInstruction {
             Self::RevokeExternalDestination => {
                 wincode::serialize_into(&mut data, &RevokeExternalDestinationArgs)?
             }
+            Self::SetShareMetadata(args) => wincode::serialize_into(&mut data, args)?,
         }
 
         Ok(data)
@@ -434,6 +447,7 @@ impl_instruction_args! {
     WriteDownFeesArgs = tags::WRITE_DOWN_FEES,
     RegisterExternalDestinationArgs = tags::REGISTER_EXTERNAL_DESTINATION,
     RevokeExternalDestinationArgs = tags::REVOKE_EXTERNAL_DESTINATION,
+    SetShareMetadataArgs = tags::SET_SHARE_METADATA,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -459,7 +473,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29
+                23, 24, 25, 26, 27, 28, 29, 30
             ]
         );
         assert_eq!(
@@ -608,5 +622,6 @@ mod tests {
             "revokeExternalDestination",
             tags::REVOKE_EXTERNAL_DESTINATION,
         ),
+        ("setShareMetadata", tags::SET_SHARE_METADATA),
     ];
 }

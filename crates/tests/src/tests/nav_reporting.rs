@@ -580,6 +580,125 @@ fn test_collect_fees_pays_treasury_without_changing_total_assets() {
     assert_eq!(token_balance(&svm, &treasury), 10_000);
 }
 
+/// Flip on external investing through the real config instruction (the
+/// builder installs vaults with it disabled).
+fn enable_external(svm: &mut litesvm::LiteSVM, vault: &TestVault) {
+    let state = vault.load(svm);
+    set_token_account(
+        svm,
+        Pubkey::from(state.treasury),
+        &vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+    );
+    let ix = roshi_client::instruction::update_vault_config(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        UpdateVaultConfigArgs {
+            treasury: state.treasury,
+            deposit_sub_account: state.deposit_sub_account,
+            withdraw_sub_account: state.withdraw_sub_account,
+            base_oracle: state.base_oracle,
+            performance_fee_bps: state.performance_fee_bps,
+            withdrawal_buffer_bps: state.withdrawal_buffer_bps,
+            controls: state.controls,
+            external_enabled: true,
+        },
+    )
+    .unwrap();
+    send_ok(svm, ix, &vault.roles.admin);
+}
+
+#[test]
+fn test_invest_external_rejects_unregistered_destination() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let builder = VaultBuilder::new();
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+
+    let owner = Keypair::new();
+    fund(&mut svm, &owner);
+    fund(&mut svm, &vault.roles.admin);
+    fund(&mut svm, &vault.roles.strategist);
+
+    let share_account = set_ata(&mut svm, &owner.pubkey(), &vault.share_mint, 0);
+    deposit_one_base(&mut svm, &vault, &owner, share_account);
+
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &vault.base_mint);
+    let external_account = Pubkey::new_unique();
+    set_token_account(
+        &mut svm,
+        external_account,
+        &vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+    );
+    enable_external(&mut svm, &vault);
+
+    let (external_destination, _) =
+        roshi::state::external_destination::ExternalDestination::find_address(
+            &vault.address,
+            &external_account,
+        );
+    let invest = || {
+        roshi_client::instruction::invest_external(
+            vault.roles.strategist.pubkey(),
+            vault.address,
+            0,
+            sub_account,
+            custody,
+            external_account,
+            external_destination,
+            400_000,
+        )
+        .unwrap()
+    };
+
+    // Unregistered destination: the strategist cannot move custody out.
+    assert_roshi_error(
+        send(&mut svm, invest(), &vault.roles.strategist),
+        RoshiError::ExternalDestinationNotRegistered,
+    );
+    assert_eq!(token_balance(&svm, &external_account), 0);
+
+    // Registered: the same instruction goes through.
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::register_external_destination(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            external_account,
+            external_destination,
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+    send_ok(&mut svm, invest(), &vault.roles.strategist);
+    assert_eq!(token_balance(&svm, &external_account), 400_000);
+
+    // Revoked: closed registration blocks further investment.
+    svm.expire_blockhash();
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::revoke_external_destination(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            external_destination,
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+    assert_roshi_error(
+        send(&mut svm, invest(), &vault.roles.strategist),
+        RoshiError::ExternalDestinationNotRegistered,
+    );
+    assert_eq!(token_balance(&svm, &external_account), 400_000);
+}
+
 #[test]
 fn test_invest_external_moves_cash_without_changing_total_assets() {
     let Some((mut svm, ..)) = setup_program() else {
@@ -629,6 +748,23 @@ fn test_invest_external_moves_cash_without_changing_total_assets() {
     .unwrap();
     send_ok(&mut svm, ix, &vault.roles.admin);
 
+    let (external_destination, _) =
+        roshi::state::external_destination::ExternalDestination::find_address(
+            &vault.address,
+            &external_account,
+        );
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::register_external_destination(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            external_account,
+            external_destination,
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
     let ix = roshi_client::instruction::invest_external(
         vault.roles.strategist.pubkey(),
         vault.address,
@@ -636,6 +772,7 @@ fn test_invest_external_moves_cash_without_changing_total_assets() {
         sub_account,
         custody,
         external_account,
+        external_destination,
         400_000,
     )
     .unwrap();
@@ -804,6 +941,7 @@ fn test_invest_external_rejects_non_idle_sub_account() {
         stray_index,
         stray_sub_account,
         custody,
+        Pubkey::new_unique(),
         Pubkey::new_unique(),
         1,
     )

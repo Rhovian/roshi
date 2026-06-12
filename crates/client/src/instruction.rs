@@ -298,6 +298,7 @@ mod tests {
             input_custody,
             output_custody,
             action,
+            vec![],
             vec![
                 AccountMeta::new(cpi_account, false),
                 AccountMeta::new_readonly(cpi_program, false),
@@ -686,6 +687,7 @@ mod tests {
         let sub_account = Pubkey::new_unique();
         let custody = Pubkey::new_unique();
         let external_account = Pubkey::new_unique();
+        let external_destination = Pubkey::new_unique();
 
         let ix = invest_external(
             strategist,
@@ -694,12 +696,13 @@ mod tests {
             sub_account,
             custody,
             external_account,
+            external_destination,
             42,
         )
         .unwrap();
 
         assert_eq!(ix.program_id, ID);
-        assert_eq!(ix.accounts.len(), 6);
+        assert_eq!(ix.accounts.len(), 7);
         assert_eq!(ix.accounts[0], AccountMeta::new_readonly(strategist, true));
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         assert_eq!(
@@ -710,6 +713,10 @@ mod tests {
         assert_eq!(ix.accounts[4], AccountMeta::new(external_account, false));
         assert_eq!(
             ix.accounts[5],
+            AccountMeta::new_readonly(external_destination, false)
+        );
+        assert_eq!(
+            ix.accounts[6],
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false)
         );
 

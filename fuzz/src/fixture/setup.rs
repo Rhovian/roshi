@@ -122,6 +122,23 @@
         let withdraw_custody = set_ata(&mut ctx.svm, &withdraw_sub_account, &base_mint, 0);
         let external_account = set_ata(&mut ctx.svm, &external_authority.pubkey(), &base_mint, 0);
 
+        // 4a. Register the external venue: `invest_external` only moves
+        //     custody to admin-authorized destinations.
+        let (external_destination, _) =
+            ExternalDestination::find_address(&vault, &external_account);
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::register_external_destination(
+                operator.pubkey(),
+                vault,
+                external_account,
+                external_destination,
+            )
+            .unwrap(),
+            &[&operator],
+            "register_external_destination",
+        );
+
         // 4b. Authorize one Manager action: an SPL token transfer custody ->
         //     external, signed by the sub-account PDA, amount free. The
         //     recomputed hash at `manage` time must match this — the authz path
@@ -330,15 +347,15 @@
             "initialize_asset(token_2022)",
         );
 
-        let extended_token_2022_mint = Pubkey::new_unique();
-        set_extended_token_2022_mint(
+        let transfer_fee_token_2022_mint = Pubkey::new_unique();
+        set_transfer_fee_token_2022_mint(
             &mut ctx.svm,
-            extended_token_2022_mint,
+            transfer_fee_token_2022_mint,
             &operator.pubkey(),
             ASSET_DECIMALS,
         );
-        let (extended_token_2022_asset_pda, _) =
-            Asset::find_address(&vault, &extended_token_2022_mint);
+        let (transfer_fee_token_2022_asset_pda, _) =
+            Asset::find_address(&vault, &transfer_fee_token_2022_mint);
 
         // 5. Users, each funded with base + the non-base asset; share ATA
         //    starts empty.
@@ -459,6 +476,7 @@
             withdraw_sub_account,
             withdraw_custody,
             external_account,
+            external_destination,
             manage_action,
             rebalance_to_withdraw_action,
             swap_custody,
@@ -485,8 +503,8 @@
             token_2022_swap_custody,
             token_2022_swap_forward_action,
             token_2022_swap_reverse_action,
-            extended_token_2022_mint,
-            extended_token_2022_asset_pda,
+            transfer_fee_token_2022_mint,
+            transfer_fee_token_2022_asset_pda,
             token_2022_asset_accounts,
             initial_token_2022_asset,
             report_nonce: 0,

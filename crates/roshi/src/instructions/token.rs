@@ -64,7 +64,9 @@ pub(crate) fn verify_mint(
     }
 
     let data = account.try_borrow_data()?;
-    if account.owner == &TOKEN_2022_PROGRAM_ID && data.len() != MINT_LEN {
+    if account.owner == &TOKEN_2022_PROGRAM_ID {
+        verify_token_2022_mint_extensions(&data)?;
+    } else if data.len() != MINT_LEN {
         return Err(RoshiError::InvalidMintAccount.into());
     }
     if data.len() < MINT_LEN || data[MINT_IS_INITIALIZED] != 1 || data[MINT_DECIMALS] != decimals {
@@ -85,6 +87,78 @@ pub(crate) fn verify_mint(
     }
 
     Ok(())
+}
+
+/// Extended Token-2022 mints pad the base mint layout to the token-account
+/// length, store one account-type byte, then TLV entries of
+/// `(type: u16 LE, len: u16 LE, value)`.
+const MINT_ACCOUNT_TYPE_OFFSET: usize = TOKEN_ACCOUNT_LEN;
+const ACCOUNT_TYPE_MINT: u8 = 1;
+const EXTENSION_UNINITIALIZED: u16 = 0;
+const EXTENSION_METADATA_POINTER: u16 = 18;
+const EXTENSION_TOKEN_METADATA: u16 = 19;
+
+/// Allowlist Token-2022 mint extensions: display metadata only.
+///
+/// `MetadataPointer` and `TokenMetadata` are benign and display-only;
+/// everything else — explicitly including transfer fees, transfer hooks,
+/// permanent delegates, close authorities, confidential transfers, interest,
+/// pausability, and any unknown future type — is rejected (allowlist, not
+/// blocklist). Checking at registration time is sound: every dangerous mint
+/// extension must be initialized before `InitializeMint`, so a mint that
+/// passes here cannot grow one later. The one post-creation growth case is
+/// `TokenMetadata` (a realloc), which is why no caller may assume a fixed
+/// mint account length.
+fn verify_token_2022_mint_extensions(data: &[u8]) -> ProgramResult {
+    if data.len() == MINT_LEN {
+        return Ok(());
+    }
+
+    if data.len() <= MINT_ACCOUNT_TYPE_OFFSET || data[MINT_ACCOUNT_TYPE_OFFSET] != ACCOUNT_TYPE_MINT
+    {
+        return Err(RoshiError::InvalidMintAccount.into());
+    }
+
+    let mut offset = MINT_ACCOUNT_TYPE_OFFSET + 1;
+    while offset < data.len() {
+        let header_end = offset
+            .checked_add(4)
+            .ok_or(ProgramError::from(RoshiError::InvalidMintAccount))?;
+        if data.len() < header_end {
+            return Err(RoshiError::InvalidMintAccount.into());
+        }
+
+        let extension_type = u16::from_le_bytes([data[offset], data[offset + 1]]);
+        if extension_type == EXTENSION_UNINITIALIZED {
+            // End marker; the remainder is allocation padding.
+            return Ok(());
+        }
+        if extension_type != EXTENSION_METADATA_POINTER
+            && extension_type != EXTENSION_TOKEN_METADATA
+        {
+            return Err(RoshiError::InvalidMintAccount.into());
+        }
+
+        let length = usize::from(u16::from_le_bytes([data[offset + 2], data[offset + 3]]));
+        offset = header_end
+            .checked_add(length)
+            .ok_or(ProgramError::from(RoshiError::InvalidMintAccount))?;
+        if offset > data.len() {
+            return Err(RoshiError::InvalidMintAccount.into());
+        }
+    }
+
+    Ok(())
+}
+
+/// Mint of an initialized SPL token account.
+pub(crate) fn token_account_mint(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+    Pubkey::try_from(&data[TOKEN_ACCOUNT_MINT..TOKEN_ACCOUNT_MINT + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))
 }
 
 /// Verify `account` is an accepted SPL Token program.

@@ -24,7 +24,10 @@ use roshi_interface::error::RoshiError;
 ///
 /// Cancelling an unstruck withdrawal ticket is a liveness escape for a missing
 /// NAV report. It restores the originally burned shares after a slot delay, but
-/// only before the ticket becomes eligible to be struck.
+/// only before the ticket becomes eligible to be struck — unless the
+/// configured cancel grace has elapsed, in which case a strike-eligible (but
+/// still unstruck) ticket re-opens: a dead withdrawal authority must not trap
+/// the redeemer's funds.
 pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> ProgramResult {
     let context = CancelRedeemContext::load(accounts)?;
     let vault = &context.vault;
@@ -43,7 +46,16 @@ pub fn try_cancel_redeem(accounts: &[AccountInfo], args: CancelRedeemArgs) -> Pr
         .request_slot
         .checked_add(REDEEM_CANCEL_DELAY_SLOTS)
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
-    if vault.report_epoch >= earliest_strike_epoch || clock.slot < cancel_slot {
+
+    let strike_eligible = vault.report_epoch >= earliest_strike_epoch;
+    let grace = u64::from(vault.controls.cancel_grace_slots);
+    let grace_elapsed = grace > 0
+        && clock.slot
+            >= ticket
+                .request_slot
+                .checked_add(grace)
+                .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    if (strike_eligible && !grace_elapsed) || clock.slot < cancel_slot {
         return Err(RoshiError::InvalidWithdrawalTicketAccount.into());
     }
 

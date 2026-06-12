@@ -10,3 +10,4 @@
 AGENTS.md
 CLAUDE.md
 plan.md
+crates/tests/fixtures/*.so

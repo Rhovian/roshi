@@ -14,6 +14,7 @@ mod nav_reporting;
 mod program;
 mod redeem;
 mod role_authorities;
+mod share_metadata;
 mod swap;
 mod vault_config;
 mod write_down_fees;

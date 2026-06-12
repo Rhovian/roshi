@@ -35,6 +35,8 @@ pub enum RoshiError {
     NavGainExceedsBound = 29,
     ReportTooFrequent = 30,
     DepositCapExceeded = 31,
+    ExternalDestinationNotRegistered = 32,
+    UnpriceableSwapLeg = 33,
 }
 
 impl From<RoshiError> for ProgramError {

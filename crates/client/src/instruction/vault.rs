@@ -1,8 +1,8 @@
 use roshi_interface::instructions::{
     CollectFeesArgs, InitializeVaultArgs, InvestExternalArgs, ProcessWithdrawalsArgs,
     RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
-    RevokeExternalDestinationArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
-    SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    RevokeExternalDestinationArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetShareMetadataArgs,
+    SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
     WriteDownFeesArgs,
 };
@@ -200,6 +200,30 @@ pub fn report_nav(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn set_share_metadata(
+    admin: Pubkey,
+    vault: Pubkey,
+    share_mint: Pubkey,
+    metadata: Pubkey,
+    token_metadata_program: Pubkey,
+    name: String,
+    symbol: String,
+    uri: String,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new_readonly(share_mint, false),
+            AccountMeta::new(metadata, false),
+            AccountMeta::new_readonly(token_metadata_program, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        &SetShareMetadataArgs { name, symbol, uri },
+    )
+}
+
 pub fn write_down_fees(admin: Pubkey, vault: Pubkey, amount: u64) -> Result<Instruction> {
     new(
         vault_admin_accounts(admin, vault),
@@ -265,6 +289,7 @@ pub fn collect_fees(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn invest_external(
     strategist: Pubkey,
     vault: Pubkey,
@@ -272,6 +297,7 @@ pub fn invest_external(
     sub_account: Pubkey,
     custody: Pubkey,
     external_account: Pubkey,
+    external_destination: Pubkey,
     amount: u64,
 ) -> Result<Instruction> {
     new(
@@ -281,6 +307,7 @@ pub fn invest_external(
             AccountMeta::new_readonly(sub_account, false),
             AccountMeta::new(custody, false),
             AccountMeta::new(external_account, false),
+            AccountMeta::new_readonly(external_destination, false),
             AccountMeta::new_readonly(super::TOKEN_PROGRAM_ID, false),
         ],
         &InvestExternalArgs {

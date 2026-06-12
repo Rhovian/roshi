@@ -9,6 +9,7 @@ use crate::{
         token, InvestExternalArgs,
     },
     state::{
+        external_destination::ExternalDestination,
         sub_account::VaultSubAccount,
         vault::{self, Role},
         Account,
@@ -26,7 +27,9 @@ use roshi_interface::error::RoshiError;
 ///    current deposit or withdraw sub-account).
 /// 3. `[writable]` Vault subaccount base custody token account.
 /// 4. `[writable]` External base token account receiving the investment cash.
-/// 5. `[]` SPL Token program.
+/// 5. `[]` ExternalDestination PDA for `(vault, external_account)` — the
+///    destination must be admin-registered.
+/// 6. `[]` SPL Token program.
 ///
 /// Moves base assets out to an external investment account without changing
 /// `total_assets`: the vault still owns the economic asset, only its custody
@@ -62,6 +65,19 @@ pub fn try_invest_external(accounts: &[AccountInfo], args: InvestExternalArgs) -
     let external_account = next_account(accounts_iter)?;
     require_writable(external_account)?;
     token::verify_token_account_mint(external_account, &base_mint)?;
+
+    // The admin authorizes venues; the strategist only moves custody to a
+    // registered destination.
+    let destination_registration = next_account(accounts_iter)?;
+    let (expected_registration, _) =
+        ExternalDestination::find_address(vault_account.key, external_account.key);
+    if destination_registration.key != &expected_registration {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if destination_registration.data_is_empty() {
+        return Err(RoshiError::ExternalDestinationNotRegistered.into());
+    }
+    Account::load_as::<ExternalDestination>(destination_registration)?;
 
     let token_program = next_account(accounts_iter)?;
     token::verify_token_program_for(token_program, custody)?;

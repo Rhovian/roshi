@@ -337,10 +337,14 @@ tickets:
 Processing is atomic. If any transfer cannot be paid, the instruction fails and
 the tickets remain open and unmodified.
 
-`CancelRedeem` is a liveness escape for the no-report case. After
-`REDEEM_CANCEL_DELAY_SLOTS`, the ticket owner can cancel an unstruck ticket only
-while it is still ineligible for strike. Cancellation remints the originally
-burned shares, closes the ticket, and decrements `requested_withdrawal_shares`.
+`CancelRedeem` is a liveness escape. After `REDEEM_CANCEL_DELAY_SLOTS`, the
+ticket owner can cancel an unstruck ticket while it is still ineligible for
+strike (the no-report case). Once `cancel_grace_slots` have elapsed since the
+request, cancel re-opens even for a strike-eligible — but still unstruck —
+ticket: a dead withdrawal authority must not trap the redeemer's funds
+(0 = escape disabled). Struck tickets are never cancellable; their payout is
+already fixed. Cancellation remints the originally burned shares, closes the
+ticket, and decrements `requested_withdrawal_shares`.
 
 ## Withdrawal Buffer
 

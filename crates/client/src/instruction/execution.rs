@@ -83,6 +83,7 @@ pub fn atomic_redeem(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn swap(
     swap_authority: Pubkey,
     vault: Pubkey,
@@ -90,6 +91,7 @@ pub fn swap(
     input_custody: Pubkey,
     output_custody: Pubkey,
     action: Pubkey,
+    valuation_accounts: Vec<AccountMeta>,
     cpi_accounts: Vec<AccountMeta>,
     args: SwapArgs,
 ) -> Result<Instruction> {
@@ -101,6 +103,7 @@ pub fn swap(
         AccountMeta::new(output_custody, false),
         AccountMeta::new_readonly(action, false),
     ];
+    accounts.extend(valuation_accounts);
     accounts.extend(cpi_accounts);
 
     new(accounts, &args)

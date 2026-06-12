@@ -279,17 +279,17 @@
         ok
     }
 
-    /// Extended Token-2022 mints must be rejected by `initialize_asset` before
+    /// Transfer-fee Token-2022 mints must be rejected by `initialize_asset` before
     /// the Asset PDA is created. Bare 82-byte Token-2022 mints are covered by
     /// setup and `action_deposit_token_2022_asset`; this pins the opposite edge.
-    pub fn action_initialize_extended_token_2022_asset_rejects(&mut self) -> bool {
+    pub fn action_initialize_transfer_fee_token_2022_asset_rejects(&mut self) -> bool {
         let ix = roshi_client::instruction::initialize_asset(
             self.operator.pubkey(),
             self.vault,
-            self.extended_token_2022_mint,
-            self.extended_token_2022_asset_pda,
+            self.transfer_fee_token_2022_mint,
+            self.transfer_fee_token_2022_asset_pda,
             InitializeAssetArgs {
-                asset_mint: self.extended_token_2022_mint.to_bytes(),
+                asset_mint: self.transfer_fee_token_2022_mint.to_bytes(),
                 oracle: OracleConfig::pyth(PythOracleConfig::new(
                     PYTH_FEED_ID,
                     PYTH_PRICE_DECIMALS,
@@ -306,11 +306,11 @@
         let ok = submit(&mut self.ctx, ix, &[&self.operator.clone()]);
         let created = self
             .ctx
-            .get_account(&self.extended_token_2022_asset_pda)
+            .get_account(&self.transfer_fee_token_2022_asset_pda)
             .is_ok();
         fuzz_assert!(
             !ok && !created,
-            "extended Token-2022 mint initialized as asset: success={ok}, created={created}"
+            "transfer-fee Token-2022 mint initialized as asset: success={ok}, created={created}"
         );
         ok
     }

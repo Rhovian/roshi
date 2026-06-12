@@ -5,6 +5,7 @@ mod cancel_redeem;
 mod deposit;
 mod external_destination;
 mod manage;
+mod oracle_price;
 mod process_withdrawals;
 mod program_config;
 mod redeem;

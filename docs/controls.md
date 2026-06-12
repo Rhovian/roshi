@@ -25,7 +25,8 @@ withdrawal_authority: Pubkey,
 - authorize or revoke actions,
 - register or revoke external investment destinations,
 - choose default deposit and withdrawal subaccounts,
-- collect accrued fees, and write down fee liability.
+- collect accrued fees, and write down fee liability,
+- set the share mint's display metadata (Metaplex).
 
 `strategist` executes authorized strategy CPIs through `manage` and
 `manage_batch`.
@@ -114,10 +115,10 @@ VaultControls {
     max_unlock_duration_secs: u32, // profit-unlock window clamp
     max_report_age_secs: u32,      // staleness gate (atomic redeem only)
     min_report_interval_secs: u32, // report rate limit
-    cancel_grace_slots: u32,       // ticket-cancel liveness escape (pending)
+    cancel_grace_slots: u32,       // ticket-cancel liveness escape
     max_nav_gain_bps: u16,         // upward NAV move bound per report
     atomic_redeem_fee_bps: u16,    // atomic-exit fee, retained by the pool
-    max_swap_slippage_bps: u16,    // oracle-bounded swap slippage (pending)
+    max_swap_slippage_bps: u16,    // oracle-bounded swap slippage
 }
 ```
 
@@ -149,9 +150,9 @@ vault-scoped PDAs over the destination base token account:
 base-mint token account) creates the registration;
 `RevokeExternalDestination` closes it back to the admin. The admin authorizes
 venues; the strategist only moves funds between custody and authorized
-venues. `return_external` is inbound and unrestricted. (`invest_external`
-does not yet require a registered destination; that gating ships with the
-remaining hardening work.)
+venues. `return_external` is inbound and unrestricted.
+`invest_external` requires the destination's registration account and rejects
+unregistered (or revoked) destinations.
 
 ## Vault Access
 

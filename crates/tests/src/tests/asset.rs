@@ -20,8 +20,8 @@ use wincode::deserialize;
 
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, fund, send, send_ok,
-    set_extended_token_2022_mint, set_mint, set_token_2022_mint, setup_program, TestVault,
-    VaultBuilder,
+    set_metadata_pointer_token_2022_mint, set_mint, set_token_2022_mint,
+    set_transfer_fee_token_2022_mint, setup_program, TestVault, VaultBuilder,
 };
 
 fn init_args(asset_mint: Pubkey) -> InitializeAssetArgs {
@@ -318,7 +318,7 @@ fn test_initialize_asset_accepts_bare_token_2022_mint() {
 }
 
 #[test]
-fn test_initialize_asset_rejects_extended_token_2022_mint() {
+fn test_initialize_asset_accepts_metadata_extended_token_2022_mint() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -327,7 +327,32 @@ fn test_initialize_asset_rejects_extended_token_2022_mint() {
     fund(&mut svm, &vault.roles.admin);
 
     let asset_mint = Pubkey::new_unique();
-    set_extended_token_2022_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    set_metadata_pointer_token_2022_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    let ix = roshi_client::instruction::initialize_asset(
+        vault.roles.admin.pubkey(),
+        vault.address,
+        asset_mint,
+        asset_pda,
+        init_args(asset_mint),
+    )
+    .unwrap();
+    send_ok(&mut svm, ix, &vault.roles.admin);
+    assert!(svm.get_account(&asset_pda).is_some());
+}
+
+#[test]
+fn test_initialize_asset_rejects_transfer_fee_token_2022_mint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new().install(&mut svm);
+    fund(&mut svm, &vault.roles.admin);
+
+    let asset_mint = Pubkey::new_unique();
+    set_transfer_fee_token_2022_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
     let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
 
     let ix = roshi_client::instruction::initialize_asset(

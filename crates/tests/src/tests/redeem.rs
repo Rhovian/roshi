@@ -843,6 +843,79 @@ fn test_cancel_redeem_restores_burned_shares_when_no_active_holders_remain() {
 }
 
 #[test]
+fn test_cancel_redeem_grace_reopens_strike_eligible_ticket() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let mut state = fixture.vault.load(&svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
+    write_vault_state(&mut svm, &fixture, state);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    // A report makes the ticket strike-eligible; the withdrawal authority
+    // then goes dark. Once the grace elapses, cancel re-opens.
+    advance_vault_epoch(&mut svm, &fixture, 1);
+    svm.warp_to_slot(5_001);
+
+    send_ok(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner);
+
+    assert_eq!(token_balance(&svm, &fixture.share_account), ONE_BASE_SHARES);
+    assert_eq!(fixture.vault.load(&svm).requested_withdrawal_shares, 0);
+    assert!(svm.get_account(&ticket).is_none());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_strike_eligible_ticket_before_grace() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let mut state = fixture.vault.load(&svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
+    write_vault_state(&mut svm, &fixture, state);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    advance_vault_epoch(&mut svm, &fixture, 1);
+    advance_cancel_delay(&mut svm);
+
+    assert_roshi_error(
+        send(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner),
+        RoshiError::InvalidWithdrawalTicketAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
+fn test_cancel_redeem_rejects_strike_eligible_ticket_when_grace_disabled() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+
+    advance_vault_epoch(&mut svm, &fixture, 1);
+    svm.warp_to_slot(1_000_000);
+
+    assert_roshi_error(
+        send(&mut svm, cancel_redeem_ix(&fixture, ticket), &fixture.owner),
+        RoshiError::InvalidWithdrawalTicketAccount,
+    );
+    assert!(svm.get_account(&ticket).is_some());
+}
+
+#[test]
 fn test_cancel_redeem_rejects_non_owner() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

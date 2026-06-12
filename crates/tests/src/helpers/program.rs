@@ -50,6 +50,33 @@ pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
     Some((svm, authority, config_pda))
 }
 
+/// Metaplex Token Metadata program id (must match the program's vetted
+/// constant).
+pub const MPL_TOKEN_METADATA_ID: Pubkey =
+    solana_pubkey::pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+/// Like [`setup_program`], with the Metaplex Token Metadata program loaded
+/// from the dumped fixture binary. Skips (None) when the binary is absent —
+/// fetch it once with `just fetch-mpl`.
+pub fn setup_program_with_metaplex() -> Option<(LiteSVM, Keypair, Pubkey)> {
+    let (mut svm, authority, config_pda) = setup_program()?;
+
+    let mpl_so = std::env::var_os("ROSHI_MPL_SO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("fixtures/mpl_token_metadata.so"));
+    if !mpl_so.exists() {
+        eprintln!(
+            "Skipping Metaplex metadata test; fetch the binary with `just fetch-mpl` or set ROSHI_MPL_SO: {}",
+            mpl_so.display()
+        );
+        return None;
+    }
+    svm.add_program_from_file(MPL_TOKEN_METADATA_ID, mpl_so)
+        .unwrap();
+
+    Some((svm, authority, config_pda))
+}
+
 /// Set the on-chain clock's unix timestamp (slot and the rest untouched).
 pub fn set_clock_timestamp(svm: &mut LiteSVM, unix_timestamp: i64) {
     let mut clock: solana_sdk::clock::Clock = svm.get_sysvar();
