@@ -18,9 +18,10 @@ use crate::{
 ///
 /// Verifies the vault admin, rejects the vault base mint, and writes the
 /// supported non-base asset config. The oracle is recorded as configuration and
-/// must report this asset directly in vault base atoms; custody is the
-/// `ATA(deposit_sub_account, asset_mint)`, derived (not stored) and verified at
-/// deposit time.
+/// must quote one whole asset token — in whole base tokens (direct), or in the
+/// quote currency shared with the vault's `base_oracle` (routed); custody is
+/// the `ATA(deposit_sub_account, asset_mint)`, derived (not stored) and
+/// verified at deposit time.
 pub fn try_initialize_asset(accounts: &[AccountInfo], args: InitializeAssetArgs) -> ProgramResult {
     let context = InitializeAssetContext::load(accounts, &args)?;
     let asset = Asset::new(
@@ -29,6 +30,7 @@ pub fn try_initialize_asset(accounts: &[AccountInfo], args: InitializeAssetArgs)
         args.oracle,
         args.asset_decimals,
         args.enabled,
+        args.routed,
         context.asset_bump(),
     )?;
     context.create_and_store(asset)

@@ -158,12 +158,16 @@ pub struct InitializeAssetArgs {
     pub oracle: OracleConfig,
     pub asset_decimals: u8,
     pub enabled: bool,
+    /// Price deposits as `oracle / vault.base_oracle` (two legs sharing a
+    /// quote currency) instead of reading `oracle` as a direct asset/base feed.
+    pub routed: bool,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct UpdateAssetArgs {
     pub oracle: OracleConfig,
     pub enabled: bool,
+    pub routed: bool,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]

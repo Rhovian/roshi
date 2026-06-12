@@ -825,6 +825,7 @@ mod tests {
             oracle: roshi_interface::oracle::OracleConfig::default(),
             asset_decimals: 9,
             enabled: true,
+            routed: false,
         };
 
         let ix = initialize_asset(admin, vault, asset_mint, asset, args).unwrap();
@@ -854,6 +855,7 @@ mod tests {
         let args = UpdateAssetArgs {
             oracle: roshi_interface::oracle::OracleConfig::default(),
             enabled: false,
+            routed: false,
         };
 
         let ix = update_asset(admin, vault, asset, args).unwrap();

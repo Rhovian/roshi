@@ -246,6 +246,7 @@
                     )),
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
+                    routed: false,
                 },
             )
             .unwrap(),
@@ -317,6 +318,7 @@
                     )),
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
+                    routed: false,
                 },
             )
             .unwrap(),

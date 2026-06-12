@@ -26,26 +26,34 @@ pub struct Asset {
     pub vault: [u8; 32],
     /// Mint of the supported non-base deposit asset.
     pub asset_mint: [u8; 32],
-    /// Oracle config that reports this asset in vault base atoms.
+    /// Oracle pricing one whole asset token. Direct mode: in whole base
+    /// tokens. Routed mode: in the quote currency shared with the vault's
+    /// `base_oracle`.
     pub oracle: OracleConfig,
     /// Asset mint decimals.
     pub asset_decimals: u8,
     /// Whether deposits for this asset are enabled.
     enabled_flag: u8,
+    /// Whether deposit pricing routes through the vault's `base_oracle`
+    /// (asset/quote ÷ base/quote) instead of reading `oracle` as a direct
+    /// asset/base feed.
+    routed_flag: u8,
     pub bump: u8,
-    _padding: [u8; 5],
+    _padding: [u8; 4],
 }
 
 impl Asset {
     pub const SEED: &'static [u8] = b"asset";
     pub const SPACE: usize = std::mem::size_of::<Self>() + 1;
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         vault: [u8; 32],
         asset_mint: [u8; 32],
         oracle: OracleConfig,
         asset_decimals: u8,
         enabled: bool,
+        routed: bool,
         bump: u8,
     ) -> Result<Self, ProgramError> {
         oracle
@@ -58,8 +66,9 @@ impl Asset {
             oracle,
             asset_decimals,
             enabled_flag: flag(enabled),
+            routed_flag: flag(routed),
             bump,
-            _padding: [0; 5],
+            _padding: [0; 4],
         })
     }
 
@@ -78,11 +87,20 @@ impl Asset {
         self.enabled_flag = flag(enabled);
     }
 
+    pub fn routed(&self) -> Result<bool, ProgramError> {
+        bool_flag(self.routed_flag)
+    }
+
+    pub fn set_routed(&mut self, routed: bool) {
+        self.routed_flag = flag(routed);
+    }
+
     pub fn validate_state(&self) -> ProgramResult {
         self.oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidAssetAccount))?;
         bool_flag(self.enabled_flag)?;
+        bool_flag(self.routed_flag)?;
         Ok(())
     }
 }
@@ -117,7 +135,16 @@ mod tests {
     }
 
     fn test_asset(enabled: bool) -> Asset {
-        Asset::new([1; 32], [2; 32], OracleConfig::default(), 6, enabled, 7).unwrap()
+        Asset::new(
+            [1; 32],
+            [2; 32],
+            OracleConfig::default(),
+            6,
+            enabled,
+            false,
+            7,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -134,12 +161,32 @@ mod tests {
     }
 
     #[test]
-    fn enabled_flag_uses_typed_accessors() {
+    fn enabled_and_routed_flags_use_typed_accessors() {
         let mut asset = test_asset(false);
 
         assert_eq!(asset.enabled(), Ok(false));
         asset.set_enabled(true);
         assert_eq!(asset.enabled(), Ok(true));
+
+        assert_eq!(asset.routed(), Ok(false));
+        asset.set_routed(true);
+        assert_eq!(asset.routed(), Ok(true));
+    }
+
+    #[test]
+    fn load_as_rejects_invalid_routed_flag() {
+        let mut asset = test_asset(true);
+        asset.routed_flag = 255;
+        let mut data = serialize(&Account::Asset(asset)).unwrap();
+        let key = Pubkey::new_unique();
+        let owner = crate::ID;
+        let mut lamports = 1;
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+
+        assert_eq!(
+            Account::load_as::<Asset>(&account),
+            Err(ProgramError::from(RoshiError::InvalidAssetAccount))
+        );
     }
 
     #[test]

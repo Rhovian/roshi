@@ -5,45 +5,57 @@ requirements.
 
 ## Contract
 
-For every supported non-base deposit asset, the oracle value consumed by Roshi
-must answer:
+Oracle feeds quote one *whole* token in fixed point — the standard market
+convention every Pyth and Switchboard feed already publishes:
 
 ```text
-how many vault base atoms is one asset atom worth?
+price = value / 10^decimals    // quote units per whole token
 ```
 
-Equivalently:
+Roshi scales whole-token prices into atom terms on-chain using the asset and
+base mint decimals; feeds never need to encode mint decimals themselves.
+
+Each supported asset prices deposits in one of two modes:
+
+### Direct
+
+The asset's feed quotes whole asset tokens directly in whole base tokens
+(e.g. an STETH/ETH feed for an ETH-base vault):
 
 ```text
-base_atoms = floor(asset_atoms * price_value / 10^price_decimals)
+base_atoms = floor(asset_atoms * price.value * 10^base_decimals
+                 / 10^(asset_decimals + price.decimals))
 ```
 
-Where:
+### Routed
+
+The asset's feed and the vault's `base_oracle` share one quote currency
+(typically USD): the asset leg quotes asset/QUOTE, the base leg quotes
+BASE/QUOTE, and the program composes asset/base as their ratio:
 
 ```text
-price_value / 10^price_decimals = base_atoms_per_asset_atom
+base_atoms = floor(
+    asset_atoms * asset_price.value * 10^(base_decimals + base_price.decimals)
+    / (base_price.value * 10^(asset_decimals + asset_price.decimals))
+)
 ```
 
-The semantic output is always a direct `asset/base` relationship.
+This is how arbitrary token pairs price against arbitrary bases using only
+standard feeds — e.g. SOL deposits into a USDC-base vault via SOL/USD and
+USDC/USD. Roshi never inverts a feed; the base leg always divides.
 
-## Direct Asset/Base Only
+That both legs really share a quote currency is a configuration fact the
+program cannot observe — pairing an X/USD asset leg with a BASE/EUR base leg
+misprices silently. It is the vault operator's contract, like feed identity
+itself. Beyond the two supported legs, Roshi does not consume:
 
-Any routing or composition needed to produce that value belongs outside the
-vault program. Roshi does not consume:
-
-- USD legs,
-- inverse prices,
 - basket marks,
 - venue-specific marks,
 - strategy-specific discounts,
 - private reconciliation.
 
-An off-chain system may source or compute a mark however the vault operator
-chooses, including from venues or reports that use another quote convention.
-Before Roshi uses that mark, the configured oracle account must already encode
-the final direct `asset/base` fixed-point value. The program should then enforce
-ownership, feed identity, freshness, staleness, confidence, and configured move
-bounds.
+The program enforces ownership, feed identity, freshness, staleness, and
+confidence per leg.
 
 ## Supported Providers
 
@@ -89,7 +101,8 @@ The vault base mint is native to the vault. It does not need a supported asset
 PDA and does not need an oracle for deposit-time normalization.
 
 Base deposits use the deposited atomic amount as base value after validating the
-mint and custody route.
+mint and custody route. The vault-level `base_oracle` exists to price *other*
+assets in routed mode; base deposits themselves never read it.
 
 ## Supported Asset Accounts
 
@@ -99,13 +112,21 @@ Non-base assets use vault-scoped `Asset` PDAs:
 [b"asset", vault, asset_mint]
 ```
 
-The `Asset` account records the mint, custody account, oracle configuration,
-decimal metadata, deposit limit, enabled flag, and price guardrail fields.
+The `Asset` account records the mint, oracle configuration, mint decimals,
+enabled flag, and pricing mode (direct or routed). Custody is the deposit
+sub-account's ATA for the mint, derived rather than stored.
+
+The vault's `base_oracle` config supplies the BASE/QUOTE leg for every routed
+asset. Routed deposits append the base oracle's accounts after the asset
+oracle's accounts.
 
 ## Invariants
 
-- All non-base deposits normalize to base atoms before shares are minted.
+- All non-base deposits normalize to base atoms before shares are minted,
+  scaled on-chain by asset and base mint decimals.
 - The base asset has no `Asset` PDA.
-- Oracle values are consumed as direct `asset/base` relationships.
-- On-chain math must not compose, invert, or route external price feeds.
+- Oracle legs are whole-token prices; direct mode consumes one asset/base
+  leg, routed mode composes asset/QUOTE over BASE/QUOTE.
+- On-chain math never inverts a feed and composes at most the two configured
+  legs.
 - A disabled asset cannot be deposited.

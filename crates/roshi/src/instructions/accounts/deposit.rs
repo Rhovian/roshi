@@ -10,7 +10,7 @@ use crate::{
         token::{associated_token_address, verify_token_program_for},
         DepositArgs,
     },
-    oracle::{OracleKind, OraclePrice, PythOracle, SwitchboardOracle},
+    oracle::{OracleConfig, OracleKind, OraclePrice, PythOracle, SwitchboardOracle},
     state::{
         asset::Asset,
         sub_account::VaultSubAccount,
@@ -31,8 +31,9 @@ use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 /// 6. `[]` Share SPL Token program.
 /// 7. `[]` Asset SPL Token program.
 /// 8. `[]` Asset PDA (non-base deposits only).
-/// 9. `..` Oracle accounts (non-base deposits only; layout depends on the
-///    asset's oracle kind).
+/// 9. `..` Oracle accounts (non-base deposits only): the asset oracle's
+///    accounts, then — for routed assets — the vault base oracle's accounts.
+///    Each leg's layout depends on its oracle kind.
 pub(crate) struct DepositContext<'a, 'info> {
     pub(crate) depositor: &'a AccountInfo<'info>,
     pub(crate) vault_account: &'a AccountInfo<'info>,
@@ -95,7 +96,9 @@ where
 
     /// Resolve the deposited amount into vault base atoms, verifying the custody
     /// account is the deposit sub-account's ATA for the mint. Base-mint deposits
-    /// pass through 1:1; non-base deposits are priced through the asset's oracle.
+    /// pass through 1:1; non-base deposits are priced through the asset's oracle
+    /// (and, for routed assets, the vault's base oracle), scaled by mint
+    /// decimals.
     pub(crate) fn resolve_base_atoms(&self, args: &DepositArgs) -> Result<u64, ProgramError> {
         let vault_key = *self.vault_account.key;
         let base_mint = Pubkey::from(self.vault.base_mint);
@@ -128,47 +131,31 @@ where
             return Err(RoshiError::InvalidAssetAccount.into());
         }
 
-        let price = self.read_oracle_price(&asset)?;
-        base_atoms_from_asset_atoms(args.amount, price.value, price.decimals).map_err(Into::into)
-    }
-
-    fn read_oracle_price(&self, asset: &Asset) -> Result<OraclePrice, ProgramError> {
         let clock = Clock::get()?;
+        let oracle_accounts = &self.extra[1..];
+        let (asset_price, consumed) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;
+        // Direct feeds already quote in base; the base leg is exactly 1.
+        // Routed feeds quote in a shared currency, so the vault's base oracle
+        // supplies the base/quote leg from the accounts after the asset leg.
+        let base_price = if asset.routed()? {
+            let (price, _) = read_oracle_price(
+                &self.vault.base_oracle,
+                &oracle_accounts[consumed..],
+                &clock,
+            )?;
+            price
+        } else {
+            OraclePrice::UNIT
+        };
 
-        match asset
-            .oracle
-            .kind()
-            .map_err(|_| ProgramError::from(RoshiError::InvalidAssetAccount))?
-        {
-            OracleKind::Pyth => {
-                let price_account = self
-                    .extra
-                    .get(1)
-                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
-                PythOracle::new(asset.oracle.pyth)
-                    .read_verified_price(price_account, clock.unix_timestamp)
-            }
-            OracleKind::Switchboard => {
-                let quote = self
-                    .extra
-                    .get(1)
-                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
-                let queue = self
-                    .extra
-                    .get(2)
-                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
-                let slothash = self
-                    .extra
-                    .get(3)
-                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
-                let ix_sysvar = self
-                    .extra
-                    .get(4)
-                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
-                SwitchboardOracle::new(asset.oracle.switchboard)
-                    .read_verified_price(quote, queue, slothash, ix_sysvar, clock.slot)
-            }
-        }
+        base_atoms_from_asset_atoms(
+            args.amount,
+            asset_price,
+            base_price,
+            asset.asset_decimals,
+            self.vault.base_decimals,
+        )
+        .map_err(Into::into)
     }
 
     /// Apply `update` to the vault accounting and persist it.
@@ -187,5 +174,41 @@ where
         data[..serialized.len()].copy_from_slice(&serialized);
 
         Ok(())
+    }
+}
+
+/// Read one verified oracle leg from the front of `accounts`, returning the
+/// price and how many accounts the leg consumed (Pyth: 1 price update;
+/// Switchboard: quote, queue, slot-hashes sysvar, instructions sysvar).
+fn read_oracle_price<'a, 'info>(
+    oracle: &OracleConfig,
+    accounts: &'a [AccountInfo<'info>],
+    clock: &Clock,
+) -> Result<(OraclePrice, usize), ProgramError>
+where
+    'a: 'info,
+{
+    // Both holders of an OracleConfig (vault, asset) validate the kind at
+    // deserialization, so an invalid kind here is corrupted state.
+    let kind = oracle
+        .kind()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+
+    match kind {
+        OracleKind::Pyth => {
+            let price_account = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let price = PythOracle::new(oracle.pyth)
+                .read_verified_price(price_account, clock.unix_timestamp)?;
+            Ok((price, 1))
+        }
+        OracleKind::Switchboard => {
+            let quote = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let queue = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let slothash = accounts.get(2).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let ix_sysvar = accounts.get(3).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let price = SwitchboardOracle::new(oracle.switchboard)
+                .read_verified_price(quote, queue, slothash, ix_sysvar, clock.slot)?;
+            Ok((price, 4))
+        }
     }
 }

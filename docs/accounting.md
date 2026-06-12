@@ -55,14 +55,14 @@ Additional deposit mints use vault-scoped `Asset` PDAs:
 [b"asset", vault, asset_mint]
 ```
 
-Each `Asset` records the non-base mint, its custody token account,
-base-denominated oracle configuration, decimal metadata, deposit limit, and
-enabled state.
+Each `Asset` records the non-base mint, oracle configuration, mint decimals,
+enabled state, and pricing mode (direct or routed). Custody is the deposit
+sub-account's ATA for the mint, derived rather than stored.
 
 Deposit-time math normalizes each non-base amount into base atoms before
-minting shares. The oracle must report the direct asset/base fixed-point value
-consumed by Roshi. Roshi does not consume USD, inverse, or routed price
-semantics on-chain.
+minting shares, scaling whole-token oracle prices by mint decimals on-chain.
+Direct assets price through one asset/base feed; routed assets compose their
+asset/QUOTE feed over the vault `base_oracle`'s BASE/QUOTE feed.
 
 See [Oracles](./oracles.md) for the oracle contract.
 
@@ -358,7 +358,8 @@ for the v1 trusted-authority model.
 ## Non-Goals
 
 - No base asset `Asset` PDA.
-- No USD-denominated, inverse, composed, or routed oracle semantics on-chain.
+- No inverse feeds and no composition beyond the two configured legs
+  (asset leg, and the vault base leg for routed assets).
 - No on-chain recomputation of full portfolio NAV in v1.
 - No multi-asset redemption path in the current design.
 - No withdrawal solver market, discounts, maturity auctions, or deadline

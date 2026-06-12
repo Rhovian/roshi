@@ -388,6 +388,7 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
                 oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)),
                 asset_decimals: 9,
                 enabled: true,
+                routed: false,
             },
         )
         .unwrap(),
@@ -425,8 +426,10 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
     .unwrap();
     send_ok(&mut svm, ix, &depositor);
 
-    // base_atoms = amount * 2; first deposit -> base_atoms * 10^9 / 10^6 shares.
-    let base_atoms = amount * 2;
+    // 2.0 base per whole asset token, scaled across 9 asset / 6 base decimals:
+    // base_atoms = amount * 2 * 10^(6-9). First deposit -> base_atoms * 10^9 /
+    // 10^6 shares.
+    let base_atoms = amount * 2 / 1_000;
     let shares = base_atoms * 1_000;
     assert_eq!(token_balance(&svm, &source), 0);
     assert_eq!(token_balance(&svm, &custody), amount);
@@ -435,6 +438,127 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, base_atoms);
     assert_eq!(mint_supply(&svm, &share_mint), shares);
+}
+
+#[test]
+fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    // USDC-like base (6 decimals) priced in USD by the vault's base oracle;
+    // SOL-like asset (9 decimals) priced in USD by its own feed. Routed
+    // pricing composes asset/USD over base/USD.
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let base_feed_id = [11u8; 32];
+    let vault = VaultBuilder::new()
+        .base_mint(base_mint)
+        .base_oracle(OracleConfig::pyth(PythOracleConfig::new(
+            base_feed_id,
+            8,
+            i64::MAX as u64,
+            0,
+        )))
+        .install(&mut svm);
+    let share_mint = vault.share_mint;
+    set_mint(&mut svm, share_mint, &vault.address, 9);
+
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let asset_feed_id = [12u8; 32];
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    fund(&mut svm, &vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                oracle: OracleConfig::pyth(PythOracleConfig::new(
+                    asset_feed_id,
+                    8,
+                    i64::MAX as u64,
+                    0,
+                )),
+                asset_decimals: 9,
+                enabled: true,
+                routed: true,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    // Asset/USD at 150.0 and base/USD at 1.0, both exponent -8.
+    let asset_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, asset_pyth, asset_feed_id, 15_000_000_000, -8, 0);
+    let base_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, base_pyth, base_feed_id, 100_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000_000u64; // one whole 9-decimal asset token
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let deposit_via = |oracle_accounts: Vec<AccountMeta>| {
+        roshi_client::instruction::deposit(
+            depositor.pubkey(),
+            vault.address,
+            source,
+            custody,
+            share_dest,
+            share_mint,
+            TOKEN_PROGRAM_ID,
+            asset_mint,
+            amount,
+            0,
+            vec![],
+            oracle_accounts,
+        )
+        .unwrap()
+    };
+
+    // A routed deposit without the base-oracle leg fails closed.
+    assert_instruction_error(
+        send(
+            &mut svm,
+            deposit_via(vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(asset_pyth, false),
+            ]),
+            &depositor,
+        ),
+        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+
+    send_ok(
+        &mut svm,
+        deposit_via(vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(asset_pyth, false),
+            AccountMeta::new_readonly(base_pyth, false),
+        ]),
+        &depositor,
+    );
+
+    // 1 asset token at 150 USD over 1 USD base: 150 whole base = 150_000_000
+    // base atoms, scaled 1000x into shares.
+    let base_atoms = 150_000_000u64;
+    assert_eq!(token_balance(&svm, &source), 0);
+    assert_eq!(token_balance(&svm, &custody), amount);
+    assert_eq!(token_balance(&svm, &share_dest), base_atoms * 1_000);
+
+    let state = vault.load(&svm);
+    assert_eq!(state.total_assets, base_atoms);
 }
 
 #[test]
@@ -474,6 +598,7 @@ fn test_deposit_pyth_pinned_price_account_rejects_substitutes() {
                 ),
                 asset_decimals: 9,
                 enabled: true,
+                routed: false,
             },
         )
         .unwrap(),
@@ -520,10 +645,12 @@ fn test_deposit_pyth_pinned_price_account_rejects_substitutes() {
     );
     assert_eq!(token_balance(&svm, &source), amount);
 
-    // ...and the pinned account prices normally.
+    // ...and the pinned account prices normally: 2.0 base per whole asset
+    // token across 9 asset / 6 base decimals, then base atoms scale 1000x
+    // into shares.
     send_ok(&mut svm, deposit_via(pinned_pyth), &depositor);
     assert_eq!(token_balance(&svm, &source), 0);
-    assert_eq!(token_balance(&svm, &share_dest), amount * 2 * 1_000);
+    assert_eq!(token_balance(&svm, &share_dest), amount * 2);
 }
 
 #[test]
@@ -558,6 +685,7 @@ fn test_deposit_mixed_classic_base_token_2022_registered_asset() {
                 oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)),
                 asset_decimals: 9,
                 enabled: true,
+                routed: false,
             },
         )
         .unwrap(),
@@ -609,5 +737,7 @@ fn test_deposit_mixed_classic_base_token_2022_registered_asset() {
 
     assert_eq!(token_balance(&svm, &source), 0);
     assert_eq!(token_balance(&svm, &custody), amount);
-    assert_eq!(token_balance(&svm, &share_dest), amount * 2 * 1_000);
+    // 2.0 base per whole asset token across 9 asset / 6 base decimals, then
+    // base atoms scale 1000x into shares.
+    assert_eq!(token_balance(&svm, &share_dest), amount * 2);
 }

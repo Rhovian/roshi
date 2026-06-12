@@ -19,16 +19,18 @@ Share decimals do not inherit the base mint decimals. A USDC-based vault may
 have 6 base decimals and 9 share decimals. A SOL-based vault may have 9 base
 decimals and 9 share decimals.
 
-`price_value` is an oracle fixed-point value with `price_decimals` decimals.
-For Roshi, the value must mean:
+Oracle prices are fixed-point values with explicit decimals, quoting one
+*whole* token (standard market convention):
 
 ```text
-base_atoms_per_asset_atom = price_value / 10^price_decimals
+price = value / 10^decimals    // quote units per whole token
 ```
 
-Roshi does not consume USD, inverse, or routed price semantics in accounting
-math. Any source process that produces a mark must present the final value as a
-direct `asset/base` relationship before the program uses it.
+Deposit pricing composes up to two such legs sharing one quote currency —
+the asset leg and the base leg — and scales by mint decimals on-chain. A
+direct `asset/base` feed is the degenerate case where the base leg is exactly
+`1` (the quote currency *is* the base). Roshi never inverts a feed; the base
+leg always divides.
 
 `bps` values use the standard basis-point denominator:
 
@@ -83,7 +85,8 @@ mul_div_ceil_u64(lhs, rhs, denominator) -> Result<u64>
 bps_floor(amount, bps) -> Result<u64>
 bps_ceil(amount, bps) -> Result<u64>
 validate_percentage_bps(bps) -> Result<()>
-base_atoms_from_asset_atoms(asset_atoms, price_value, price_decimals) -> Result<u64>
+base_atoms_from_asset_atoms(asset_atoms, asset_price, base_price, asset_decimals, base_decimals)
+    -> Result<u64>
 virtual_share_offset(base_decimals) -> Result<u128>
 shares_for_deposit(base_atoms, total_assets, total_shares, base_decimals) -> Result<u64>
 assets_for_shares(shares, total_assets, total_shares, base_decimals) -> Result<u64>
@@ -102,11 +105,20 @@ use `validate_percentage_bps`.
 
 ## Formulas
 
-Normalize a non-base deposit into base atoms:
+Normalize a non-base deposit into base atoms through two whole-token price
+legs sharing a quote currency (`asset_price` quoting the asset, `base_price`
+quoting the base; a direct asset/base feed uses the exact unit base leg
+`1 / 10^0`):
 
 ```text
-base_atoms = floor(asset_atoms * price_value / 10^price_decimals)
+base_atoms = floor(
+    asset_atoms * asset_price.value * 10^(base_decimals + base_price.decimals)
+    / (base_price.value * 10^(asset_decimals + asset_price.decimals))
+)
 ```
+
+The shared powers of ten cancel before multiplication, so the only rounding
+is the final floor.
 
 Deposits and redeems price against a virtual position — the ERC-4626
 virtual-offset defense against donation/first-deposit share-price inflation:

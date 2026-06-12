@@ -1,6 +1,6 @@
 //! Shared integer accounting math for Roshi vaults.
 
-use crate::error::RoshiError;
+use crate::{error::RoshiError, oracle::OraclePrice};
 
 pub const SHARE_DECIMALS: u8 = 9;
 pub const BPS_DENOMINATOR: u16 = 10_000;
@@ -68,14 +68,66 @@ pub fn validate_percentage_bps(bps: u16) -> MathResult<()> {
     Ok(())
 }
 
+/// Floor-rounded base atoms for `asset_atoms`, priced through two whole-token
+/// oracle legs sharing one quote currency:
+///
+/// - `asset_price`: quote units per whole asset token (e.g. an X/USD feed),
+/// - `base_price`: quote units per whole base token (e.g. a BASE/USD feed).
+///
+/// A direct asset/base feed is the degenerate case `base_price ==`
+/// [`OraclePrice::UNIT`] (the quote currency *is* the base, priced at exactly
+/// 1). Whether both legs really share a quote currency is a configuration
+/// fact the program cannot observe; it is the vault operator's contract.
+///
+/// With whole-token prices `p = value / 10^decimals`:
+///
+/// ```text
+/// base_atoms = floor(asset_atoms / 10^asset_decimals   // whole asset tokens
+///                  * (p_asset / p_base)                 // base per asset
+///                  * 10^base_decimals)                  // base atoms
+/// ```
+///
+/// which in integer form is one floor division after cancelling the shared
+/// powers of ten:
+///
+/// ```text
+/// asset_atoms * asset_value * 10^(base_decimals + base_price_decimals)
+/// --------------------------------------------------------------------
+///  base_value * 10^(asset_decimals + asset_price_decimals)
+/// ```
 pub fn base_atoms_from_asset_atoms(
     asset_atoms: u64,
-    price_value: u128,
-    price_decimals: u8,
+    asset_price: OraclePrice,
+    base_price: OraclePrice,
+    asset_decimals: u8,
+    base_decimals: u8,
 ) -> MathResult<u64> {
-    let scale = pow10(price_decimals)?;
-    let value = mul_div_floor(u128::from(asset_atoms), price_value, scale)?;
+    if base_price.value == 0 {
+        return Err(RoshiError::DivisionByZero);
+    }
+
+    let numerator_exp = u32::from(base_decimals) + u32::from(base_price.decimals);
+    let denominator_exp = u32::from(asset_decimals) + u32::from(asset_price.decimals);
+
+    let scaled_atoms = u128::from(asset_atoms)
+        .checked_mul(asset_price.value)
+        .ok_or(RoshiError::Overflow)?;
+    let value = if numerator_exp >= denominator_exp {
+        let scale = pow10(net_decimals(numerator_exp - denominator_exp)?)?;
+        mul_div_floor(scaled_atoms, scale, base_price.value)?
+    } else {
+        let scale = pow10(net_decimals(denominator_exp - numerator_exp)?)?;
+        let denominator = base_price
+            .value
+            .checked_mul(scale)
+            .ok_or(RoshiError::Overflow)?;
+        scaled_atoms / denominator
+    };
     checked_u64(value)
+}
+
+fn net_decimals(exponent: u32) -> MathResult<u8> {
+    u8::try_from(exponent).map_err(|_| RoshiError::InvalidDecimals)
 }
 
 /// The virtual share supply backing one virtual base atom:
@@ -257,28 +309,113 @@ mod tests {
         assert_eq!(validate_percentage_bps(10_001), Err(RoshiError::InvalidBps));
     }
 
+    const fn price(value: u128, decimals: u8) -> OraclePrice {
+        OraclePrice { value, decimals }
+    }
+
     #[test]
-    fn normalizes_oracle_values_into_base_atoms() {
+    fn direct_pricing_scales_whole_token_price_by_mint_decimals() {
+        // Same mint decimals: 2.5 base per asset token, atom-for-atom.
         assert_eq!(
-            base_atoms_from_asset_atoms(1_000_000, 2_500_000_000, 9),
+            base_atoms_from_asset_atoms(
+                1_000_000,
+                price(2_500_000_000, 9),
+                OraclePrice::UNIT,
+                6,
+                6
+            ),
             Ok(2_500_000)
         );
+        // 8-decimal asset on a 6-decimal base at 100_000 base per token:
+        // 1 whole asset (10^8 atoms) is 100_000 whole base (10^11 atoms).
         assert_eq!(
-            base_atoms_from_asset_atoms(u64::MAX, u128::from(u64::MAX), 0),
+            base_atoms_from_asset_atoms(100_000_000, price(100_000, 0), OraclePrice::UNIT, 8, 6),
+            Ok(100_000_000_000)
+        );
+        // 6-decimal asset on a 9-decimal base: the scale flips sides.
+        assert_eq!(
+            base_atoms_from_asset_atoms(1_000_000, price(2, 0), OraclePrice::UNIT, 6, 9),
+            Ok(2_000_000_000)
+        );
+    }
+
+    #[test]
+    fn routed_pricing_composes_two_quote_legs() {
+        // SOL (9 dec) deposited into a USDC-base vault (6 dec): SOL/USD at
+        // 150.0 (8 dec), USDC/USD at 1.0 (8 dec). 1 SOL -> 150 USDC.
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                1_000_000_000,
+                price(150 * 100_000_000, 8),
+                price(100_000_000, 8),
+                9,
+                6,
+            ),
+            Ok(150_000_000)
+        );
+        // The legs need not share a scale: same ratio at different decimals.
+        assert_eq!(
+            base_atoms_from_asset_atoms(1_000_000_000, price(1_500, 1), price(10, 1), 9, 6),
+            Ok(150_000_000)
+        );
+        // A cheapened base leg buys more base atoms: USDC marked at 0.50 USD
+        // doubles the credited base amount.
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                1_000_000_000,
+                price(150 * 100_000_000, 8),
+                price(50_000_000, 8),
+                9,
+                6,
+            ),
+            Ok(300_000_000)
+        );
+    }
+
+    #[test]
+    fn pricing_rejects_zero_base_leg_and_overflow() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(1, price(1, 0), price(0, 0), 6, 6),
+            Err(RoshiError::DivisionByZero)
+        );
+        assert_eq!(
+            base_atoms_from_asset_atoms(u64::MAX, price(u128::MAX, 0), OraclePrice::UNIT, 6, 6),
+            Err(RoshiError::Overflow)
+        );
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                u64::MAX,
+                price(u128::from(u64::MAX), 0),
+                OraclePrice::UNIT,
+                0,
+                0,
+            ),
             Err(RoshiError::ResultDoesNotFit)
         );
     }
 
     #[test]
-    fn normalization_can_round_to_zero_without_failing() {
-        assert_eq!(base_atoms_from_asset_atoms(0, 1_000_000_000, 9), Ok(0));
-        assert_eq!(base_atoms_from_asset_atoms(1, 1, 9), Ok(0));
+    fn pricing_can_round_to_zero_without_failing() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(0, price(1_000_000_000, 9), OraclePrice::UNIT, 6, 6),
+            Ok(0)
+        );
+        // One atom of a 9-dec asset worth 1.0 base token on a 6-dec base
+        // floors to zero base atoms.
+        assert_eq!(
+            base_atoms_from_asset_atoms(1, price(1, 0), OraclePrice::UNIT, 9, 6),
+            Ok(0)
+        );
     }
 
     #[test]
-    fn normalization_rejects_invalid_price_decimals() {
+    fn pricing_rejects_unsupported_net_decimals() {
         assert_eq!(
-            base_atoms_from_asset_atoms(1, 1, 39),
+            base_atoms_from_asset_atoms(1, price(1, 39), OraclePrice::UNIT, 0, 0),
+            Err(RoshiError::InvalidDecimals)
+        );
+        assert_eq!(
+            base_atoms_from_asset_atoms(1, price(1, 0), price(1, 39), 0, 0),
             Err(RoshiError::InvalidDecimals)
         );
     }
@@ -669,6 +806,44 @@ mod tests {
             // No fee with no rate and no fee with no shares to charge against.
             if bps == 0 || total_shares == 0 {
                 prop_assert_eq!(fee, 0);
+            }
+        }
+
+        #[test]
+        fn prop_base_atoms_monotonic_in_amount_and_unit_leg_scale_invariant(
+            asset_atoms in 0u64..=1_000_000_000_000,
+            extra_atoms in 0u64..=1_000_000_000_000,
+            price_value in 1u128..=1_000_000_000_000,
+            price_decimals in 0u8..=12,
+            unit_leg_decimals in 0u8..=12,
+            asset_decimals in 0u8..=12,
+            base_decimals in 0u8..=9,
+        ) {
+            let asset_price = OraclePrice { value: price_value, decimals: price_decimals };
+            // Only assert when the UNIT-leg result is in u64 range; the
+            // out-of-range error paths are pinned by the example tests.
+            if let Ok(smaller) = base_atoms_from_asset_atoms(
+                asset_atoms, asset_price, OraclePrice::UNIT, asset_decimals, base_decimals,
+            ) {
+                let larger = base_atoms_from_asset_atoms(
+                    asset_atoms.saturating_add(extra_atoms),
+                    asset_price, OraclePrice::UNIT, asset_decimals, base_decimals,
+                );
+                if let Ok(larger) = larger {
+                    prop_assert!(larger >= smaller);
+                }
+
+                // A base leg of exactly 1.0 at any scale is the UNIT leg.
+                let scaled_unit = OraclePrice {
+                    value: pow10(unit_leg_decimals).unwrap(),
+                    decimals: unit_leg_decimals,
+                };
+                prop_assert_eq!(
+                    base_atoms_from_asset_atoms(
+                        asset_atoms, asset_price, scaled_unit, asset_decimals, base_decimals,
+                    ),
+                    Ok(smaller)
+                );
             }
         }
 

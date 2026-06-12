@@ -20,14 +20,16 @@ use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError, math::sha
 /// 6. `[]` Classic SPL Token program for share minting.
 /// 7. `[]` Deposited asset SPL Token program.
 /// 8. `[]` Asset PDA (non-base deposits only).
-/// 9. `..` Oracle accounts (non-base deposits only).
+/// 9. `..` Oracle accounts (non-base deposits only): asset oracle leg, then
+///    the vault base oracle leg for routed assets.
 ///
 /// If the vault is private, instruction data must include a Merkle proof for
 /// the depositor's wallet against `vault.access_merkle_root`.
 ///
 /// Rejects deposits while paused, gates private vaults by Merkle proof, prices
-/// the deposit in base atoms (non-base deposits through the asset oracle) with
-/// a virtual-share offset against donation inflation, and enforces
+/// the deposit in base atoms (non-base deposits through the asset oracle —
+/// composed with the vault base oracle for routed assets — scaled by mint
+/// decimals) with a virtual-share offset against donation inflation, and enforces
 /// `min_shares_out` *before* any funds move. Only then does it route base-mint
 /// deposits into custody owned by `vault.deposit_sub_account` (non-base
 /// deposits into their Asset custody), mint shares to the depositor (vault PDA

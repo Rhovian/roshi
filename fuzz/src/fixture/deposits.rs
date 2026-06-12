@@ -298,6 +298,7 @@
                 )),
                 asset_decimals: ASSET_DECIMALS,
                 enabled: true,
+                routed: false,
             },
         )
         .unwrap();
@@ -334,6 +335,7 @@
             UpdateAssetArgs {
                 oracle,
                 enabled: false,
+                routed: false,
             },
         )
         .unwrap();
@@ -367,6 +369,7 @@
             UpdateAssetArgs {
                 oracle,
                 enabled: true,
+                routed: false,
             },
         )
         .unwrap();

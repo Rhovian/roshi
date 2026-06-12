@@ -1,5 +1,23 @@
 use wincode::{SchemaRead, SchemaWrite};
 
+/// A fixed-point oracle price: `value / 10^decimals` quote units per one
+/// *whole* token of the priced asset (standard market convention).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OraclePrice {
+    pub value: u128,
+    pub decimals: u8,
+}
+
+impl OraclePrice {
+    /// The exact price of the base asset in itself. Direct asset/base feeds
+    /// price against this as their base leg, collapsing the two-leg
+    /// conversion to a single feed.
+    pub const UNIT: Self = Self {
+        value: 1,
+        decimals: 0,
+    };
+}
+
 /// Discriminator for oracle implementations.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]

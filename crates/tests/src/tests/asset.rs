@@ -29,6 +29,7 @@ fn init_args(asset_mint: Pubkey) -> InitializeAssetArgs {
         oracle: OracleConfig::default(),
         asset_decimals: 9,
         enabled: true,
+        routed: false,
     }
 }
 
@@ -36,6 +37,7 @@ fn update_args() -> UpdateAssetArgs {
     UpdateAssetArgs {
         oracle: OracleConfig::default(),
         enabled: false,
+        routed: false,
     }
 }
 
@@ -232,6 +234,7 @@ fn test_update_asset() {
     let args = UpdateAssetArgs {
         oracle: new_oracle,
         enabled: false,
+        routed: false,
     };
     let ix = roshi_client::instruction::update_asset(
         vault.roles.admin.pubkey(),
