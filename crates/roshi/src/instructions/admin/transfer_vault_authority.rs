@@ -27,6 +27,7 @@ pub fn try_transfer_vault_authority(
 mod tests {
     use super::*;
     use roshi_interface::oracle::OracleConfig;
+    use roshi_interface::state::VaultControls;
     use solana_program_error::ProgramError;
     use solana_pubkey::Pubkey;
     use wincode::{deserialize, serialize};
@@ -51,6 +52,7 @@ mod tests {
             admin.to_bytes(),
             0,
             0,
+            VaultControls::default(),
             false,
             [0; 32],
             bump,

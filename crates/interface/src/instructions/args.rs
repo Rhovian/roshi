@@ -1,6 +1,7 @@
 use crate::{
     action::{ActionScope, Ops},
     oracle::OracleConfig,
+    state::VaultControls,
 };
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -26,6 +27,7 @@ pub struct InitializeVaultArgs {
     pub treasury: [u8; 32],
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
+    pub controls: VaultControls,
     pub private: bool,
     pub access_merkle_root: [u8; 32],
 }
@@ -149,6 +151,7 @@ pub struct UpdateVaultConfigArgs {
     pub base_oracle: OracleConfig,
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
+    pub controls: VaultControls,
     pub external_enabled: bool,
 }
 
@@ -161,6 +164,9 @@ pub struct InitializeAssetArgs {
     /// Price deposits as `oracle / vault.base_oracle` (two legs sharing a
     /// quote currency) instead of reading `oracle` as a direct asset/base feed.
     pub routed: bool,
+    /// Inventory cap in asset atoms: deposits rejecting once
+    /// `custody_balance + amount` would exceed it. `u64::MAX` = uncapped.
+    pub deposit_cap_atoms: u64,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -168,6 +174,7 @@ pub struct UpdateAssetArgs {
     pub oracle: OracleConfig,
     pub enabled: bool,
     pub routed: bool,
+    pub deposit_cap_atoms: u64,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -212,3 +219,16 @@ pub struct SetNavAuthorityArgs {
 pub struct SetWithdrawalAuthorityArgs {
     pub withdrawal_authority: [u8; 32],
 }
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct WriteDownFeesArgs {
+    /// Fee liability to forgive: `0 < amount <= fees_payable`. No tokens
+    /// move; gross NAV is unchanged and liabilities shrink.
+    pub amount: u64,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct RegisterExternalDestinationArgs;
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct RevokeExternalDestinationArgs;

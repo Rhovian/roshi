@@ -94,6 +94,7 @@ mod tests {
             treasury: treasury.to_bytes(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
+            controls: roshi_interface::state::VaultControls::default(),
             private: true,
             access_merkle_root: [2; 32],
         };
@@ -826,6 +827,7 @@ mod tests {
             asset_decimals: 9,
             enabled: true,
             routed: false,
+            deposit_cap_atoms: u64::MAX,
         };
 
         let ix = initialize_asset(admin, vault, asset_mint, asset, args).unwrap();
@@ -856,6 +858,7 @@ mod tests {
             oracle: roshi_interface::oracle::OracleConfig::default(),
             enabled: false,
             routed: false,
+            deposit_cap_atoms: u64::MAX,
         };
 
         let ix = update_asset(admin, vault, asset, args).unwrap();
@@ -900,6 +903,7 @@ mod tests {
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             performance_fee_bps: 150,
             withdrawal_buffer_bps: 300,
+            controls: roshi_interface::state::VaultControls::default(),
             external_enabled: true,
         };
 

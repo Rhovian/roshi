@@ -8,7 +8,7 @@ use roshi_interface::error::RoshiError;
 
 use crate::state::Account;
 
-pub use roshi_interface::state::{Role, Vault};
+pub use roshi_interface::state::{Role, Vault, VaultControls};
 
 // `Vault` is ~600 bytes; keep its deserialize + validation on this function's
 // own frame rather than inlining it into already-large instruction handlers.
@@ -43,7 +43,7 @@ pub fn verify_role(vault: &Vault, role: Role, signer: &AccountInfo) -> ProgramRe
 mod tests {
     use super::*;
     use roshi_interface::oracle::OracleConfig;
-    use roshi_interface::state::VAULT_ACCOUNT_TAG;
+    use roshi_interface::state::{VaultControls, VAULT_ACCOUNT_TAG};
     use wincode::{deserialize, serialize};
 
     fn new_test_vault() -> Vault {
@@ -66,6 +66,7 @@ mod tests {
             [9; 32],
             100,
             250,
+            VaultControls::default(),
             false,
             [0; 32],
             bump,

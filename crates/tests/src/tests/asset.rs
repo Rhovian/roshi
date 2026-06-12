@@ -30,6 +30,7 @@ fn init_args(asset_mint: Pubkey) -> InitializeAssetArgs {
         asset_decimals: 9,
         enabled: true,
         routed: false,
+        deposit_cap_atoms: u64::MAX,
     }
 }
 
@@ -38,6 +39,7 @@ fn update_args() -> UpdateAssetArgs {
         oracle: OracleConfig::default(),
         enabled: false,
         routed: false,
+        deposit_cap_atoms: u64::MAX,
     }
 }
 
@@ -235,6 +237,7 @@ fn test_update_asset() {
         oracle: new_oracle,
         enabled: false,
         routed: false,
+        deposit_cap_atoms: u64::MAX,
     };
     let ix = roshi_client::instruction::update_asset(
         vault.roles.admin.pubkey(),

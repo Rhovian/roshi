@@ -37,6 +37,73 @@ pub enum Role {
     WithdrawalAuthority,
 }
 
+/// Admin-configured economic risk controls. Zero disables a control, so the
+/// all-zeros default is "every control off".
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
+)]
+#[wincode(assert_zero_copy)]
+#[repr(C)]
+pub struct VaultControls {
+    /// Clamp on the adaptive profit-unlock window: a reported gain drips over
+    /// `min(now - last_update_ts, max_unlock_duration_secs)`. 0 = gains apply
+    /// instantly (no smoothing).
+    pub max_unlock_duration_secs: u32,
+    /// Deposits and atomic redeems reject once the last NAV report is older
+    /// than this (pre-first-report vaults are exempt). 0 = disabled.
+    pub max_report_age_secs: u32,
+    /// Reports arriving sooner than this after the previous report are
+    /// rejected (the first report is exempt). 0 = disabled.
+    pub min_report_interval_secs: u32,
+    /// Strike-eligible unstruck withdrawal tickets become cancellable again
+    /// once `clock.slot >= request_slot + cancel_grace_slots` — the
+    /// withdrawal-authority liveness escape. 0 = escape disabled.
+    pub cancel_grace_slots: u32,
+    /// A report may not move the net share price up by more than this many
+    /// bps vs. the stored pre-report price. May exceed 10_000 (a bound above
+    /// +100% is meaningful). 0 = disabled.
+    pub max_nav_gain_bps: u16,
+    /// Fee on atomic redemptions, retained by the pool for remaining
+    /// holders. At most 10_000.
+    pub atomic_redeem_fee_bps: u16,
+    /// Oracle-valued swap output must be at least input value times
+    /// `1 - max_swap_slippage_bps`. At most 10_000. 0 = disabled.
+    pub max_swap_slippage_bps: u16,
+    _padding: [u8; 2],
+}
+
+impl VaultControls {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        max_unlock_duration_secs: u32,
+        max_report_age_secs: u32,
+        min_report_interval_secs: u32,
+        cancel_grace_slots: u32,
+        max_nav_gain_bps: u16,
+        atomic_redeem_fee_bps: u16,
+        max_swap_slippage_bps: u16,
+    ) -> Self {
+        Self {
+            max_unlock_duration_secs,
+            max_report_age_secs,
+            min_report_interval_secs,
+            cancel_grace_slots,
+            max_nav_gain_bps,
+            atomic_redeem_fee_bps,
+            max_swap_slippage_bps,
+            _padding: [0; 2],
+        }
+    }
+
+    pub fn validate(&self) -> ProgramResult {
+        // max_nav_gain_bps is deliberately not percentage-bounded: a gain
+        // bound above +100% is meaningful.
+        validate_percentage_bps(self.atomic_redeem_fee_bps)?;
+        validate_percentage_bps(self.max_swap_slippage_bps)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
@@ -50,6 +117,11 @@ pub struct Vault {
     pub report_epoch: u64,
     pub requested_withdrawal_shares: u64,
     pub last_update_ts: i64,
+    /// Reported profit still locked from past gain reports; drips out
+    /// linearly between the unlock timestamps. Always at most `total_assets`.
+    pub locked_profit: u64,
+    pub profit_unlock_start_ts: i64,
+    pub profit_unlock_end_ts: i64,
     pub tag: [u8; 32],
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
@@ -61,6 +133,7 @@ pub struct Vault {
     pub treasury: [u8; 32],
     pub last_report_hash: [u8; 32],
     pub access_merkle_root: [u8; 32],
+    pub controls: VaultControls,
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
     pub tag_len: u8,
@@ -98,6 +171,7 @@ impl Vault {
         treasury: [u8; 32],
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
+        controls: VaultControls,
         private: bool,
         access_merkle_root: [u8; 32],
         bump: u8,
@@ -109,6 +183,7 @@ impl Vault {
             performance_fee_bps,
             withdrawal_buffer_bps,
         )?;
+        controls.validate()?;
         base_oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidVaultState))?;
@@ -125,6 +200,9 @@ impl Vault {
             report_epoch: 0,
             requested_withdrawal_shares: 0,
             last_update_ts: 0,
+            locked_profit: 0,
+            profit_unlock_start_ts: 0,
+            profit_unlock_end_ts: 0,
             tag,
             admin,
             strategist,
@@ -136,6 +214,7 @@ impl Vault {
             treasury,
             last_report_hash: [0; 32],
             access_merkle_root,
+            controls,
             performance_fee_bps,
             withdrawal_buffer_bps,
             tag_len,
@@ -351,6 +430,13 @@ impl Vault {
         self.base_oracle
             .validate()
             .map_err(|_| ProgramError::from(RoshiError::InvalidVaultState))?;
+        self.controls.validate()?;
+        if self.locked_profit > self.total_assets {
+            return Err(RoshiError::InvalidVaultState.into());
+        }
+        if self.profit_unlock_start_ts > self.profit_unlock_end_ts {
+            return Err(RoshiError::InvalidVaultState.into());
+        }
         bool_flag(self.deposits_paused_flag)?;
         bool_flag(self.withdrawals_paused_flag)?;
         bool_flag(self.manage_paused_flag)?;
@@ -408,6 +494,7 @@ mod tests {
             [9; 32],
             100,
             250,
+            VaultControls::default(),
             private,
             access_merkle_root,
             bump,
@@ -435,8 +522,12 @@ mod tests {
         assert_eq!(vault.high_watermark, 0);
         assert_eq!(vault.report_epoch, 0);
         assert_eq!(vault.requested_withdrawal_shares, 0);
+        assert_eq!(vault.locked_profit, 0);
+        assert_eq!(vault.profit_unlock_start_ts, 0);
+        assert_eq!(vault.profit_unlock_end_ts, 0);
         assert_eq!(vault.performance_fee_bps, 100);
         assert_eq!(vault.withdrawal_buffer_bps, 250);
+        assert_eq!(vault.controls, VaultControls::default());
         assert_eq!(vault.last_update_ts, 0);
         assert_eq!(vault.deposits_paused(), Ok(false));
         assert_eq!(vault.withdrawals_paused(), Ok(false));
@@ -470,12 +561,51 @@ mod tests {
     #[test]
     fn vault_is_zero_copy_with_explicit_padding() {
         assert_zero_copy::<Vault>();
-        assert_eq!(core::mem::size_of::<Vault>(), 632);
-        assert_eq!(Vault::SPACE, 633);
+        assert_eq!(core::mem::size_of::<VaultControls>(), 24);
+        assert_eq!(core::mem::size_of::<Vault>(), 680);
+        assert_eq!(Vault::SPACE, 681);
         let vault = new_test_vault(false, [0; 32]);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()
+        );
+    }
+
+    #[test]
+    fn vault_controls_reject_invalid_percentage_bps() {
+        assert!(VaultControls::new(0, 0, 0, 0, 0, 10_001, 0)
+            .validate()
+            .is_err());
+        assert!(VaultControls::new(0, 0, 0, 0, 0, 0, 10_001)
+            .validate()
+            .is_err());
+        // The gain bound is not a percentage; above-100% bounds are legal.
+        assert!(VaultControls::new(0, 0, 0, 0, 60_000, 10_000, 10_000)
+            .validate()
+            .is_ok());
+    }
+
+    #[test]
+    fn validate_state_rejects_locked_profit_above_total_assets() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.total_assets = 100;
+        vault.locked_profit = 101;
+
+        assert_eq!(
+            vault.validate_state(),
+            Err(ProgramError::from(RoshiError::InvalidVaultState))
+        );
+    }
+
+    #[test]
+    fn validate_state_rejects_inverted_unlock_window() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.profit_unlock_start_ts = 10;
+        vault.profit_unlock_end_ts = 9;
+
+        assert_eq!(
+            vault.validate_state(),
+            Err(ProgramError::from(RoshiError::InvalidVaultState))
         );
     }
 

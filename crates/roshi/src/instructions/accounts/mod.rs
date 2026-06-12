@@ -3,6 +3,7 @@ mod asset;
 mod atomic_redeem;
 mod cancel_redeem;
 mod deposit;
+mod external_destination;
 mod manage;
 mod process_withdrawals;
 mod program_config;
@@ -16,6 +17,9 @@ pub(crate) use asset::{update_writable_asset_as_admin, InitializeAssetContext};
 pub(crate) use atomic_redeem::AtomicRedeemContext;
 pub(crate) use cancel_redeem::CancelRedeemContext;
 pub(crate) use deposit::DepositContext;
+pub(crate) use external_destination::{
+    close_external_destination_as_admin, RegisterExternalDestinationContext,
+};
 pub(crate) use manage::{ManageBatchContext, ManageContext, ValidatedManageAccounts};
 pub(crate) use process_withdrawals::ProcessWithdrawalsContext;
 pub(crate) use program_config::{InitializeProgramContext, WritableProgramConfigAuthorityContext};

@@ -389,6 +389,7 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
                 asset_decimals: 9,
                 enabled: true,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap(),
@@ -489,6 +490,7 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
                 asset_decimals: 9,
                 enabled: true,
                 routed: true,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap(),
@@ -599,6 +601,7 @@ fn test_deposit_pyth_pinned_price_account_rejects_substitutes() {
                 asset_decimals: 9,
                 enabled: true,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap(),
@@ -686,6 +689,7 @@ fn test_deposit_mixed_classic_base_token_2022_registered_asset() {
                 asset_decimals: 9,
                 enabled: true,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap(),

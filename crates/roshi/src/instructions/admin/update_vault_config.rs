@@ -50,6 +50,7 @@ pub fn try_update_vault_config(
     vault.base_oracle = args.base_oracle;
     vault.performance_fee_bps = args.performance_fee_bps;
     vault.withdrawal_buffer_bps = args.withdrawal_buffer_bps;
+    vault.controls = args.controls;
     vault.set_external_enabled(args.external_enabled);
     context.store()
 }

@@ -24,7 +24,7 @@ use roshi::{
         asset::Asset,
         program_config::ProgramConfig,
         sub_account::VaultSubAccount,
-        vault::Vault,
+        vault::{Vault, VaultControls},
         withdrawal_ticket::{WithdrawalTicket, WITHDRAWAL_STRIKE_DELAY_EPOCHS},
         Account as RoshiAccount,
     },

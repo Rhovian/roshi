@@ -36,6 +36,9 @@ pub mod tags {
     pub const SET_SWAP_AUTHORITY: u8 = 24;
     pub const ATOMIC_REDEEM: u8 = 25;
     pub const SWAP: u8 = 26;
+    pub const WRITE_DOWN_FEES: u8 = 27;
+    pub const REGISTER_EXTERNAL_DESTINATION: u8 = 28;
+    pub const REVOKE_EXTERNAL_DESTINATION: u8 = 29;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -222,6 +225,22 @@ pub enum RoshiInstruction {
     #[codama(account(name = "output_custody", writable))]
     #[codama(account(name = "action"))]
     Swap(#[codama(name = "args")] SwapArgs) = 26,
+
+    #[codama(account(name = "admin", signer))]
+    #[codama(account(name = "vault", writable))]
+    WriteDownFees(#[codama(name = "args")] WriteDownFeesArgs) = 27,
+
+    #[codama(account(name = "admin", signer, writable))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "destination_token_account"))]
+    #[codama(account(name = "external_destination", writable))]
+    #[codama(account(name = "system_program", default_value = program("system")))]
+    RegisterExternalDestination = 28,
+
+    #[codama(account(name = "admin", signer, writable))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "external_destination", writable))]
+    RevokeExternalDestination = 29,
 }
 
 impl RoshiInstruction {
@@ -254,6 +273,9 @@ impl RoshiInstruction {
             Self::CollectFees(_) => tags::COLLECT_FEES,
             Self::AtomicRedeem(_) => tags::ATOMIC_REDEEM,
             Self::Swap(_) => tags::SWAP,
+            Self::WriteDownFees(_) => tags::WRITE_DOWN_FEES,
+            Self::RegisterExternalDestination => tags::REGISTER_EXTERNAL_DESTINATION,
+            Self::RevokeExternalDestination => tags::REVOKE_EXTERNAL_DESTINATION,
         }
     }
 
@@ -298,6 +320,15 @@ impl RoshiInstruction {
             tags::COLLECT_FEES => Ok(Self::CollectFees(decode_payload(payload)?)),
             tags::ATOMIC_REDEEM => Ok(Self::AtomicRedeem(decode_payload(payload)?)),
             tags::SWAP => Ok(Self::Swap(decode_payload(payload)?)),
+            tags::WRITE_DOWN_FEES => Ok(Self::WriteDownFees(decode_payload(payload)?)),
+            tags::REGISTER_EXTERNAL_DESTINATION => {
+                let RegisterExternalDestinationArgs = decode_payload(payload)?;
+                Ok(Self::RegisterExternalDestination)
+            }
+            tags::REVOKE_EXTERNAL_DESTINATION => {
+                let RevokeExternalDestinationArgs = decode_payload(payload)?;
+                Ok(Self::RevokeExternalDestination)
+            }
             _ => Err(()),
         }
     }
@@ -335,6 +366,13 @@ impl RoshiInstruction {
             Self::CollectFees(args) => wincode::serialize_into(&mut data, args)?,
             Self::AtomicRedeem(args) => wincode::serialize_into(&mut data, args)?,
             Self::Swap(args) => wincode::serialize_into(&mut data, args)?,
+            Self::WriteDownFees(args) => wincode::serialize_into(&mut data, args)?,
+            Self::RegisterExternalDestination => {
+                wincode::serialize_into(&mut data, &RegisterExternalDestinationArgs)?
+            }
+            Self::RevokeExternalDestination => {
+                wincode::serialize_into(&mut data, &RevokeExternalDestinationArgs)?
+            }
         }
 
         Ok(data)
@@ -393,6 +431,9 @@ impl_instruction_args! {
     SetSwapAuthorityArgs = tags::SET_SWAP_AUTHORITY,
     AtomicRedeemArgs = tags::ATOMIC_REDEEM,
     SwapArgs = tags::SWAP,
+    WriteDownFeesArgs = tags::WRITE_DOWN_FEES,
+    RegisterExternalDestinationArgs = tags::REGISTER_EXTERNAL_DESTINATION,
+    RevokeExternalDestinationArgs = tags::REVOKE_EXTERNAL_DESTINATION,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -418,7 +459,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26
+                23, 24, 25, 26, 27, 28, 29
             ]
         );
         assert_eq!(
@@ -558,5 +599,14 @@ mod tests {
         ("setSwapAuthority", tags::SET_SWAP_AUTHORITY),
         ("atomicRedeem", tags::ATOMIC_REDEEM),
         ("swap", tags::SWAP),
+        ("writeDownFees", tags::WRITE_DOWN_FEES),
+        (
+            "registerExternalDestination",
+            tags::REGISTER_EXTERNAL_DESTINATION,
+        ),
+        (
+            "revokeExternalDestination",
+            tags::REVOKE_EXTERNAL_DESTINATION,
+        ),
     ];
 }

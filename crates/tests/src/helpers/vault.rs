@@ -5,6 +5,7 @@ use roshi::{
     state::{vault::Vault, Account as RoshiAccount},
     ID,
 };
+use roshi_interface::state::VaultControls;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
@@ -67,6 +68,7 @@ pub struct VaultBuilder {
     treasury: Pubkey,
     performance_fee_bps: u16,
     withdrawal_buffer_bps: u16,
+    controls: VaultControls,
     private: bool,
     access_merkle_root: [u8; 32],
     roles: VaultRoles,
@@ -84,6 +86,7 @@ impl Default for VaultBuilder {
             treasury: Pubkey::new_unique(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
+            controls: VaultControls::default(),
             private: false,
             access_merkle_root: [0; 32],
             roles: VaultRoles::generate(),
@@ -141,6 +144,12 @@ impl VaultBuilder {
         self
     }
 
+    /// Set the vault's economic risk controls.
+    pub fn controls(mut self, controls: VaultControls) -> Self {
+        self.controls = controls;
+        self
+    }
+
     /// Mark the vault private and set its access Merkle root.
     pub fn private(mut self, private: bool, access_merkle_root: [u8; 32]) -> Self {
         self.private = private;
@@ -179,6 +188,7 @@ impl VaultBuilder {
             treasury: self.treasury.to_bytes(),
             performance_fee_bps: self.performance_fee_bps,
             withdrawal_buffer_bps: self.withdrawal_buffer_bps,
+            controls: self.controls,
             private: self.private,
             access_merkle_root: self.access_merkle_root,
         }
@@ -273,6 +283,7 @@ impl VaultBuilder {
             self.treasury.to_bytes(),
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
+            self.controls,
             self.private,
             self.access_merkle_root,
             bump,

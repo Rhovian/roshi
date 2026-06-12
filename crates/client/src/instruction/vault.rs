@@ -1,8 +1,10 @@
 use roshi_interface::instructions::{
     CollectFeesArgs, InitializeVaultArgs, InvestExternalArgs, ProcessWithdrawalsArgs,
-    ReportNavArgs, ReturnExternalArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+    RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
+    RevokeExternalDestinationArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
     SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
+    WriteDownFeesArgs,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -195,6 +197,46 @@ pub fn report_nav(
             external_value,
             report_hash,
         },
+    )
+}
+
+pub fn write_down_fees(admin: Pubkey, vault: Pubkey, amount: u64) -> Result<Instruction> {
+    new(
+        vault_admin_accounts(admin, vault),
+        &WriteDownFeesArgs { amount },
+    )
+}
+
+pub fn register_external_destination(
+    admin: Pubkey,
+    vault: Pubkey,
+    destination_token_account: Pubkey,
+    external_destination: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new_readonly(destination_token_account, false),
+            AccountMeta::new(external_destination, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        &RegisterExternalDestinationArgs,
+    )
+}
+
+pub fn revoke_external_destination(
+    admin: Pubkey,
+    vault: Pubkey,
+    external_destination: Pubkey,
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(vault, false),
+            AccountMeta::new(external_destination, false),
+        ],
+        &RevokeExternalDestinationArgs,
     )
 }
 

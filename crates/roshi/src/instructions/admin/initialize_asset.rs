@@ -31,6 +31,7 @@ pub fn try_initialize_asset(accounts: &[AccountInfo], args: InitializeAssetArgs)
         args.asset_decimals,
         args.enabled,
         args.routed,
+        args.deposit_cap_atoms,
         context.asset_bump(),
     )?;
     context.create_and_store(asset)

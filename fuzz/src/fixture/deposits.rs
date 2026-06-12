@@ -299,6 +299,7 @@
                 asset_decimals: ASSET_DECIMALS,
                 enabled: true,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap();
@@ -336,6 +337,7 @@
                 oracle,
                 enabled: false,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap();
@@ -370,6 +372,7 @@
                 oracle,
                 enabled: true,
                 routed: false,
+                deposit_cap_atoms: u64::MAX,
             },
         )
         .unwrap();

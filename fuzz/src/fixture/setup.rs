@@ -74,6 +74,7 @@
             treasury: treasury.to_bytes(),
             performance_fee_bps: PERF_FEE_BPS,
             withdrawal_buffer_bps: WITHDRAWAL_BUFFER_BPS,
+            controls: VaultControls::default(),
             private: false,
             access_merkle_root: [0; 32],
         };
@@ -105,6 +106,7 @@
                     base_oracle: OracleConfig::default(),
                     performance_fee_bps: PERF_FEE_BPS,
                     withdrawal_buffer_bps: WITHDRAWAL_BUFFER_BPS,
+                    controls: VaultControls::default(),
                     external_enabled: true,
                 },
             )
@@ -247,6 +249,7 @@
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
                     routed: false,
+                    deposit_cap_atoms: u64::MAX,
                 },
             )
             .unwrap(),
@@ -319,6 +322,7 @@
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
                     routed: false,
+                    deposit_cap_atoms: u64::MAX,
                 },
             )
             .unwrap(),

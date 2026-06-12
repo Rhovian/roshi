@@ -2,15 +2,18 @@ use crate::{
     instructions::{
         admin::{
             try_authorize_action, try_collect_fees, try_initialize_asset, try_initialize_program,
-            try_initialize_vault, try_invest_external, try_process_withdrawals, try_report_nav,
-            try_return_external, try_revoke_action, try_set_nav_authority, try_set_pause_flags,
-            try_set_strategist, try_set_swap_authority, try_set_vault_access,
+            try_initialize_vault, try_invest_external, try_process_withdrawals,
+            try_register_external_destination, try_report_nav, try_return_external,
+            try_revoke_action, try_revoke_external_destination, try_set_nav_authority,
+            try_set_pause_flags, try_set_strategist, try_set_swap_authority, try_set_vault_access,
             try_set_withdrawal_authority, try_transfer_program_authority,
             try_transfer_vault_authority, try_update_asset, try_update_vault_config,
+            try_write_down_fees,
         },
         execution::{try_atomic_redeem, try_manage, try_manage_batch, try_swap},
         user::{try_cancel_redeem, try_deposit, try_redeem},
-        ProcessWithdrawalsArgs, RoshiInstruction,
+        ProcessWithdrawalsArgs, RegisterExternalDestinationArgs, RevokeExternalDestinationArgs,
+        RoshiInstruction,
     },
     ID,
 };
@@ -73,6 +76,13 @@ fn try_process_instruction<'info>(
             try_set_withdrawal_authority(accounts, args)
         }
         RoshiInstruction::CollectFees(args) => try_collect_fees(accounts, args),
+        RoshiInstruction::WriteDownFees(args) => try_write_down_fees(accounts, args),
+        RoshiInstruction::RegisterExternalDestination => {
+            try_register_external_destination(accounts, RegisterExternalDestinationArgs)
+        }
+        RoshiInstruction::RevokeExternalDestination => {
+            try_revoke_external_destination(accounts, RevokeExternalDestinationArgs)
+        }
     }
 }
 

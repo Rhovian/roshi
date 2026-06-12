@@ -40,6 +40,10 @@ pub(crate) struct ProcessWithdrawalsContext<'a, 'info> {
 }
 
 impl<'a, 'info> ProcessWithdrawalsContext<'a, 'info> {
+    // The context carries a full `Vault` by value; keep its construction (and
+    // the validation temporaries) on this function's own stack frame instead
+    // of inlining them into the already-large settlement handler.
+    #[inline(never)]
     pub(crate) fn load(accounts: &'a [AccountInfo<'info>]) -> Result<Self, ProgramError> {
         let accounts_iter = &mut accounts.iter();
 

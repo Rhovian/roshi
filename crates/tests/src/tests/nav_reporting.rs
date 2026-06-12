@@ -622,6 +622,7 @@ fn test_invest_external_moves_cash_without_changing_total_assets() {
             base_oracle: state.base_oracle,
             performance_fee_bps: state.performance_fee_bps,
             withdrawal_buffer_bps: state.withdrawal_buffer_bps,
+            controls: state.controls,
             external_enabled: true,
         },
     )
@@ -785,6 +786,7 @@ fn test_invest_external_rejects_non_idle_sub_account() {
             base_oracle: state.base_oracle,
             performance_fee_bps: state.performance_fee_bps,
             withdrawal_buffer_bps: state.withdrawal_buffer_bps,
+            controls: state.controls,
             external_enabled: true,
         },
     )

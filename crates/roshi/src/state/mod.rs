@@ -1,5 +1,6 @@
 pub mod action;
 pub mod asset;
+pub mod external_destination;
 pub mod program_config;
 pub mod sub_account;
 pub mod vault;
@@ -7,6 +8,7 @@ pub mod withdrawal_ticket;
 
 use action::Action;
 use asset::Asset;
+use external_destination::ExternalDestination;
 use program_config::ProgramConfig;
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
@@ -36,6 +38,8 @@ pub enum Account {
     WithdrawalTicket(WithdrawalTicket),
     #[wincode(tag = 4)]
     Asset(Asset),
+    #[wincode(tag = 5)]
+    ExternalDestination(ExternalDestination),
 }
 
 pub trait AccountData: Sized {
@@ -79,6 +83,11 @@ macro_rules! impl_account_data {
 
 impl_account_data!(ProgramConfig, ProgramConfig, InvalidProgramConfigAccount);
 impl_account_data!(Action, Action, InvalidActionAccount);
+impl_account_data!(
+    ExternalDestination,
+    ExternalDestination,
+    InvalidExternalDestinationAccount
+);
 impl_account_data!(
     WithdrawalTicket,
     WithdrawalTicket,

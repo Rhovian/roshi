@@ -3,7 +3,10 @@
 //! `update_writable_vault_as_admin`; the negative tests confirm each freshly
 //! wired handler is actually gated and validated.
 
-use roshi::{error::RoshiError, instructions::UpdateVaultConfigArgs, oracle::OracleConfig};
+use roshi::{
+    error::RoshiError, instructions::UpdateVaultConfigArgs, oracle::OracleConfig,
+    state::vault::VaultControls,
+};
 use solana_instruction::error::InstructionError;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
@@ -134,6 +137,7 @@ fn test_update_vault_config() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 150,
         withdrawal_buffer_bps: 300,
+        controls: VaultControls::default(),
         external_enabled: true,
     };
     let ix = roshi_client::instruction::update_vault_config(
@@ -179,6 +183,7 @@ fn test_update_vault_config_rejects_invalid_bps() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 10_001,
         withdrawal_buffer_bps: 0,
+        controls: VaultControls::default(),
         external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(
@@ -221,6 +226,7 @@ fn test_update_vault_config_rejects_non_admin() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        controls: VaultControls::default(),
         external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(outsider.pubkey(), vault.address, args)
@@ -259,6 +265,7 @@ fn test_update_vault_config_rejects_treasury_for_wrong_mint() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        controls: VaultControls::default(),
         external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(
@@ -313,6 +320,7 @@ fn test_update_vault_config_allows_withdraw_subaccount_rotation_with_liabilities
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        controls: VaultControls::default(),
         external_enabled: false,
     };
     let ix = roshi_client::instruction::update_vault_config(

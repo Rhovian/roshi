@@ -30,6 +30,10 @@ pub struct Asset {
     /// tokens. Routed mode: in the quote currency shared with the vault's
     /// `base_oracle`.
     pub oracle: OracleConfig,
+    /// Inventory cap in asset atoms: deposits reject once the custody balance
+    /// plus the deposit would exceed it. `u64::MAX` = uncapped (explicit — no
+    /// zero-means-off magic; a zero cap blocks all deposits of this asset).
+    pub deposit_cap_atoms: u64,
     /// Asset mint decimals.
     pub asset_decimals: u8,
     /// Whether deposits for this asset are enabled.
@@ -54,6 +58,7 @@ impl Asset {
         asset_decimals: u8,
         enabled: bool,
         routed: bool,
+        deposit_cap_atoms: u64,
         bump: u8,
     ) -> Result<Self, ProgramError> {
         oracle
@@ -64,6 +69,7 @@ impl Asset {
             vault,
             asset_mint,
             oracle,
+            deposit_cap_atoms,
             asset_decimals,
             enabled_flag: flag(enabled),
             routed_flag: flag(routed),
@@ -142,6 +148,7 @@ mod tests {
             6,
             enabled,
             false,
+            u64::MAX,
             7,
         )
         .unwrap()
@@ -152,8 +159,8 @@ mod tests {
         let asset = test_asset(true);
 
         assert_zero_copy::<Asset>();
-        assert_eq!(core::mem::size_of::<Asset>(), 272);
-        assert_eq!(Asset::SPACE, 273);
+        assert_eq!(core::mem::size_of::<Asset>(), 280);
+        assert_eq!(Asset::SPACE, 281);
         assert_eq!(
             serialize(&asset).unwrap().len(),
             core::mem::size_of::<Asset>()

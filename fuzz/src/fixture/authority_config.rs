@@ -224,6 +224,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps,
             withdrawal_buffer_bps,
+            controls: VaultControls::default(),
             external_enabled,
         };
         let ix =
@@ -258,6 +259,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps: MAX_BPS + 1,
             withdrawal_buffer_bps,
+            controls: VaultControls::default(),
             external_enabled,
         };
         let invalid_ix = roshi_client::instruction::update_vault_config(
@@ -280,6 +282,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps,
             withdrawal_buffer_bps,
+            controls: VaultControls::default(),
             external_enabled: !external_enabled,
         };
         let stale_ix = roshi_client::instruction::update_vault_config(
