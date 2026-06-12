@@ -222,6 +222,91 @@ impl AtomicRedeemFixture {
     }
 }
 
+fn write_vault_state(
+    svm: &mut LiteSVM,
+    fixture: &AtomicRedeemFixture,
+    state: roshi::state::vault::Vault,
+) {
+    svm.set_account(
+        fixture.vault.address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
+            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_atomic_redeem_rejects_stale_nav_report() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    let mut state = fixture.vault.load(&svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 100, 0, 0, 0, 0, 0);
+    state.report_epoch = 1;
+    state.last_update_ts = 1_000;
+    write_vault_state(&mut svm, &fixture, state);
+
+    // One second past max_report_age_secs: the atomic exit would escape an
+    // incurred-but-unreported loss, so it rejects.
+    crate::helpers::set_clock_timestamp(&mut svm, 1_101);
+    assert_roshi_error(
+        send(
+            &mut svm,
+            fixture.ix(REDEEM_SHARES, 0, fixture.ix_data.clone()),
+            &fixture.owner,
+        ),
+        RoshiError::StaleNavReport,
+    );
+
+    // At exactly the configured age the report is still fresh.
+    svm.expire_blockhash();
+    crate::helpers::set_clock_timestamp(&mut svm, 1_100);
+    send_ok(
+        &mut svm,
+        fixture.ix(REDEEM_SHARES, 0, fixture.ix_data.clone()),
+        &fixture.owner,
+    );
+    assert_eq!(token_balance(&svm, &fixture.recipient), REDEEM_AMOUNT);
+}
+
+#[test]
+fn test_atomic_redeem_entitlement_uses_effective_nav() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    // Half the NAV is still-locked profit, half-way through its drip:
+    // effective NAV = 750_000, so half the shares entitle ~375_000 — below
+    // the 500_000 this unwind CPI would pay out.
+    let mut state = fixture.vault.load(&svm);
+    state.locked_profit = 500_000;
+    state.profit_unlock_start_ts = 1_000;
+    state.profit_unlock_end_ts = 2_000;
+    write_vault_state(&mut svm, &fixture, state);
+    crate::helpers::set_clock_timestamp(&mut svm, 1_500);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            fixture.ix(REDEEM_SHARES, 0, fixture.ix_data.clone()),
+            &fixture.owner,
+        ),
+        RoshiError::WithdrawalExceedsEntitlement,
+    );
+}
+
 #[test]
 fn test_atomic_redeem_happy_path() {
     let Some((mut svm, ..)) = setup_program() else {

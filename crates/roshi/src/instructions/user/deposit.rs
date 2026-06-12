@@ -1,5 +1,6 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
+use solana_sysvar::{clock::Clock, Sysvar};
 
 use crate::{
     instructions::{accounts::DepositContext, token, DepositArgs},
@@ -56,9 +57,13 @@ pub fn try_deposit<'info>(
     let share_supply = token::mint_supply(context.share_mint)?;
     let economic_share_supply = vault.economic_share_supply(share_supply)?;
 
+    // Price at effective NAV: locked profit accrues to the share price only
+    // as it unlocks, so a just-pre-report or mid-drip depositor's capture
+    // rate stays at the vault's organic earning rate.
+    let now = Clock::get()?.unix_timestamp;
     let shares = shares_for_deposit(
         base_atoms,
-        vault.total_assets,
+        vault.effective_total_assets(now)?,
         economic_share_supply,
         vault.base_decimals,
     )?;

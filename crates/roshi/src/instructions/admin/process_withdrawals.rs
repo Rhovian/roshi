@@ -1,5 +1,6 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
+use solana_sysvar::{clock::Clock, Sysvar};
 
 use crate::{
     instructions::{
@@ -40,10 +41,16 @@ pub fn try_process_withdrawals(
 
 fn process(mut context: ProcessWithdrawalsContext) -> ProgramResult {
     let share_supply = token::mint_supply(context.share_mint)?;
+    let now = Clock::get()?.unix_timestamp;
     let mut settled_assets = 0u64;
     for settlement in &mut context.tickets {
         if settlement.ticket.assets_owed == 0 {
-            strike_ticket(&mut context.vault, share_supply, &mut settlement.ticket)?;
+            strike_ticket(
+                &mut context.vault,
+                share_supply,
+                &mut settlement.ticket,
+                now,
+            )?;
         }
         settled_assets = settled_assets
             .checked_add(settlement.ticket.assets_owed)
@@ -88,6 +95,7 @@ fn strike_ticket(
     vault: &mut Vault,
     active_share_supply: u64,
     ticket: &mut WithdrawalTicket,
+    now: i64,
 ) -> ProgramResult {
     let earliest_epoch = ticket
         .request_epoch
@@ -100,10 +108,12 @@ fn strike_ticket(
     // Zero is a valid strike: a dust ticket whose entitlement floors to
     // nothing settles as a zero payout and closes in this same call, instead
     // of wedging forever (it cannot be cancelled once strike-eligible).
+    // Priced at effective NAV: a mid-drip redeemer forfeits their slice of
+    // the still-locked profit, which socializes to remaining holders.
     let economic_share_supply = vault.economic_share_supply(active_share_supply)?;
     let assets_owed = assets_for_shares(
         ticket.shares_burned,
-        vault.total_assets,
+        vault.effective_total_assets(now)?,
         economic_share_supply,
         vault.base_decimals,
     )?;
@@ -112,10 +122,7 @@ fn strike_ticket(
         .requested_withdrawal_shares
         .checked_sub(ticket.shares_burned)
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
-    vault.total_assets = vault
-        .total_assets
-        .checked_sub(assets_owed)
-        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    vault.debit_assets_at_effective(assets_owed, now)?;
     vault.pending_withdrawal_assets = vault
         .pending_withdrawal_assets
         .checked_add(assets_owed)

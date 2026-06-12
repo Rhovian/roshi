@@ -50,6 +50,13 @@ pub fn setup_program() -> Option<(LiteSVM, Keypair, Pubkey)> {
     Some((svm, authority, config_pda))
 }
 
+/// Set the on-chain clock's unix timestamp (slot and the rest untouched).
+pub fn set_clock_timestamp(svm: &mut LiteSVM, unix_timestamp: i64) {
+    let mut clock: solana_sdk::clock::Clock = svm.get_sysvar();
+    clock.unix_timestamp = unix_timestamp;
+    svm.set_sysvar(&clock);
+}
+
 pub fn initialize_program_ix(
     payer: &Pubkey,
     config_pda: &Pubkey,

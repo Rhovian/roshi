@@ -10,6 +10,7 @@ Each vault stores named authorities:
 ```rust
 admin: Pubkey,
 strategist: Pubkey,
+swap_authority: Pubkey,
 nav_authority: Pubkey,
 withdrawal_authority: Pubkey,
 ```
@@ -20,13 +21,16 @@ withdrawal_authority: Pubkey,
 - update operational role authorities,
 - update pause flags,
 - update private/public access mode and access Merkle root,
-- configure supported assets,
+- configure supported assets and economic controls,
 - authorize or revoke actions,
+- register or revoke external investment destinations,
 - choose default deposit and withdrawal subaccounts,
-- collect accrued fees.
+- collect accrued fees, and write down fee liability.
 
 `strategist` executes authorized strategy CPIs through `manage` and
 `manage_batch`.
+
+`swap_authority` executes pre-authorized swap CPIs between vault custodies.
 
 `nav_authority` submits gross NAV reports and report commitments.
 
@@ -98,6 +102,53 @@ SetPauseFlags {
     manage_paused,
 }
 ```
+
+## Economic Controls
+
+The vault embeds an admin-configured `VaultControls` block. Zero disables a
+control, so the all-zeros default is "every control off". Set at
+`InitializeVault` and replaced atomically by `UpdateVaultConfig`.
+
+```rust
+VaultControls {
+    max_unlock_duration_secs: u32, // profit-unlock window clamp
+    max_report_age_secs: u32,      // staleness gate (atomic redeem only)
+    min_report_interval_secs: u32, // report rate limit
+    cancel_grace_slots: u32,       // ticket-cancel liveness escape (pending)
+    max_nav_gain_bps: u16,         // upward NAV move bound per report
+    atomic_redeem_fee_bps: u16,    // atomic-exit fee to the pool (pending)
+    max_swap_slippage_bps: u16,    // oracle-bounded swap slippage (pending)
+}
+```
+
+Recommended posture: `max_unlock_duration_secs` around 7 days (604_800);
+`min_report_interval_secs` and `max_nav_gain_bps` sized so their ratio caps
+NAV drift at the strategy's plausible organic rate; `max_report_age_secs` a
+small multiple of the expected reporting cadence. `max_nav_gain_bps` may
+exceed 10_000 (a bound above +100% is meaningful); the two fee/slippage
+fields are percentage-capped at 10_000.
+
+Deposits are never staleness-gated, and there is deliberately no downward NAV
+bound. The threat model and rationale for every control live in
+[Economic Controls](./economic-controls.md); the mechanics live in
+[Accounting](./accounting.md).
+
+## External Destinations
+
+`invest_external` destinations are admin-authorized venues, registered as
+vault-scoped PDAs over the destination base token account:
+
+```text
+[b"external_destination", vault, destination_token_account]
+```
+
+`RegisterExternalDestination` (admin-gated, destination validated as a
+base-mint token account) creates the registration;
+`RevokeExternalDestination` closes it back to the admin. The admin authorizes
+venues; the strategist only moves funds between custody and authorized
+venues. `return_external` is inbound and unrestricted. (`invest_external`
+does not yet require a registered destination; that gating ships with the
+remaining hardening work.)
 
 ## Vault Access
 

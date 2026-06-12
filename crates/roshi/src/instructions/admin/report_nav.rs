@@ -32,8 +32,11 @@ const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 /// program reads **idle base** on-chain from the vault's deposit and withdraw
 /// sub-account base ATAs (so it cannot be misreported), forms gross NAV =
 /// idle + `external_value`, then subtracts existing liabilities, accrues any
-/// performance fee into `fees_payable`, stores net `total_assets`, and records
-/// the report commitment and timestamp.
+/// performance fee into `fees_payable`, and recognizes the net NAV: losses
+/// land instantly, gains re-lock and drip over the span they were earned in
+/// (see [`Vault::apply_reported_nav`]). Reports are bounded by the configured
+/// rate limit and upward price-move bound; an over-bound honest gain is
+/// reported capped and rolled into subsequent reports.
 pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
 
@@ -45,6 +48,9 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
 
     let mut vault = vault::load_checked(vault_account)?;
     vault::verify_role(&vault, Role::NavAuthority, nav_authority)?;
+
+    let now = Clock::get()?.unix_timestamp;
+    vault.verify_report_interval(now)?;
 
     let share_mint = next_account(accounts_iter)?;
     vault::verify_share_mint(&vault, share_mint)?;
@@ -102,19 +108,22 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         vault.high_watermark,
         vault.performance_fee_bps,
     )?;
+    vault.verify_nav_gain_bound(net_total_assets, economic_share_supply)?;
 
     vault.fees_payable = vault
         .fees_payable
         .checked_add(fee_assets)
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
-    vault.total_assets = net_total_assets;
     vault.high_watermark = high_watermark;
     vault.report_epoch = vault
         .report_epoch
         .checked_add(1)
         .ok_or(ProgramError::from(RoshiError::Overflow))?;
     vault.last_report_hash = args.report_hash;
-    vault.last_update_ts = Clock::get()?.unix_timestamp;
+    // Recognize NAV (drip window derives from the previous `last_update_ts`)
+    // before stamping the report time.
+    vault.apply_reported_nav(net_total_assets, now)?;
+    vault.last_update_ts = now;
     vault.validate_state()?;
 
     let serialized =

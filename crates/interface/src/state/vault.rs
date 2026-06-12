@@ -7,7 +7,10 @@ use wincode::{deserialize, SchemaRead, SchemaWrite};
 use crate::{
     access::verify_access_merkle_proof,
     error::RoshiError,
-    math::{validate_percentage_bps, SHARE_DECIMALS},
+    math::{
+        checked_u64, mul_div_floor, share_price_from_assets, validate_percentage_bps,
+        BPS_DENOMINATOR, SHARE_DECIMALS,
+    },
     oracle::OracleConfig,
     state::VAULT_ACCOUNT_TAG,
     ID,
@@ -49,8 +52,9 @@ pub struct VaultControls {
     /// `min(now - last_update_ts, max_unlock_duration_secs)`. 0 = gains apply
     /// instantly (no smoothing).
     pub max_unlock_duration_secs: u32,
-    /// Deposits and atomic redeems reject once the last NAV report is older
-    /// than this (pre-first-report vaults are exempt). 0 = disabled.
+    /// Atomic redeems reject once the last NAV report is older than this
+    /// (pre-first-report vaults are exempt). Deposits and queued redeems are
+    /// never staleness-gated. 0 = disabled.
     pub max_report_age_secs: u32,
     /// Reports arriving sooner than this after the previous report are
     /// rejected (the first report is exempt). 0 = disabled.
@@ -344,6 +348,168 @@ impl Vault {
             .ok_or(ProgramError::from(RoshiError::Overflow))
     }
 
+    /// Reported profit still locked at `now`: the full `locked_profit` until
+    /// the window starts, decaying linearly to zero at the window end.
+    pub fn remaining_locked_profit(&self, now: i64) -> Result<u64, ProgramError> {
+        if now >= self.profit_unlock_end_ts {
+            return Ok(0);
+        }
+        if now <= self.profit_unlock_start_ts {
+            return Ok(self.locked_profit);
+        }
+
+        // start < now < end here, so both spans are positive.
+        let window = self
+            .profit_unlock_end_ts
+            .checked_sub(self.profit_unlock_start_ts)
+            .and_then(|span| u128::try_from(span).ok())
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        let left = self
+            .profit_unlock_end_ts
+            .checked_sub(now)
+            .and_then(|span| u128::try_from(span).ok())
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+
+        let remaining = mul_div_floor(u128::from(self.locked_profit), left, window)?;
+        Ok(checked_u64(remaining)?)
+    }
+
+    /// Share-pricing NAV at `now`: `total_assets` minus the profit still
+    /// dripping. Every pricing read (deposit mint, redeem dust guard, ticket
+    /// strike, atomic-redeem entitlement) uses this, never raw `total_assets`.
+    pub fn effective_total_assets(&self, now: i64) -> Result<u64, ProgramError> {
+        let remaining = self.remaining_locked_profit(now)?;
+        self.total_assets
+            .checked_sub(remaining)
+            .ok_or(ProgramError::from(RoshiError::InvalidVaultState))
+    }
+
+    /// Pay `amount` (priced at [`Self::effective_total_assets`]) out of the
+    /// vault at `now`. Re-anchors the unlock window at `now` with the
+    /// still-locked remainder — the unlock line is preserved up to one atom
+    /// of floor rounding, and `amount <= effective` keeps the static
+    /// `locked_profit <= total_assets` invariant true after the debit.
+    pub fn debit_assets_at_effective(&mut self, amount: u64, now: i64) -> ProgramResult {
+        let remaining = self.remaining_locked_profit(now)?;
+        let effective = self
+            .total_assets
+            .checked_sub(remaining)
+            .ok_or(ProgramError::from(RoshiError::InvalidVaultState))?;
+        if amount > effective {
+            return Err(RoshiError::InvalidVaultState.into());
+        }
+
+        self.total_assets = self
+            .total_assets
+            .checked_sub(amount)
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        self.locked_profit = remaining;
+        if remaining > 0 {
+            // remaining > 0 implies now < end, and the clock is monotone past
+            // the recorded start, so start <= now < end holds.
+            self.profit_unlock_start_ts = now;
+        }
+        Ok(())
+    }
+
+    /// Recognize a report's post-fee NAV at `now`. A gain re-locks in full —
+    /// rolling any unfinished drip forward — over the span it was earned in,
+    /// clamped to `controls.max_unlock_duration_secs`. A loss recognizes
+    /// instantly: the locked remainder absorbs it first (`locked_profit = 0`
+    /// with the lower `total_assets` means effective NAV never jumps up).
+    pub fn apply_reported_nav(&mut self, net_total_assets: u64, now: i64) -> ProgramResult {
+        let prior_effective = self.effective_total_assets(now)?;
+
+        if net_total_assets > prior_effective {
+            let gain = net_total_assets
+                .checked_sub(prior_effective)
+                .ok_or(ProgramError::from(RoshiError::Overflow))?;
+            // Adaptive window: gains unlock over the span they were earned
+            // in. No min clamp — rapid reports carry small gains.
+            let elapsed = now.saturating_sub(self.last_update_ts).max(0);
+            let window = elapsed.min(i64::from(self.controls.max_unlock_duration_secs));
+            if window == 0 {
+                self.locked_profit = 0;
+            } else {
+                self.locked_profit = gain;
+            }
+            self.profit_unlock_start_ts = now;
+            self.profit_unlock_end_ts = now
+                .checked_add(window)
+                .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        } else {
+            self.locked_profit = 0;
+            self.profit_unlock_start_ts = now;
+            self.profit_unlock_end_ts = now;
+        }
+
+        self.total_assets = net_total_assets;
+        Ok(())
+    }
+
+    /// Staleness gate: reject when the last report is older than
+    /// `controls.max_report_age_secs`. Applied to atomic redeems only —
+    /// deposits are never staleness-gated (stale-entry capture is bounded by
+    /// the drip and the gain bound; stale-high entry harms only the
+    /// depositor) and queued redeems price later at strike. Pre-first-report
+    /// vaults are exempt (pricing is exactly par via the virtual offset).
+    pub fn verify_report_fresh(&self, now: i64) -> ProgramResult {
+        let max_age = i64::from(self.controls.max_report_age_secs);
+        if self.report_epoch == 0 || max_age == 0 {
+            return Ok(());
+        }
+        if now.saturating_sub(self.last_update_ts) > max_age {
+            return Err(RoshiError::StaleNavReport.into());
+        }
+        Ok(())
+    }
+
+    /// Report rate limit: reject reports arriving sooner than
+    /// `controls.min_report_interval_secs` after the previous one (the first
+    /// report is exempt). Without this, a compromised NAV authority chains
+    /// small in-bound reports past the gain bound.
+    pub fn verify_report_interval(&self, now: i64) -> ProgramResult {
+        let interval = i64::from(self.controls.min_report_interval_secs);
+        if self.report_epoch == 0 || interval == 0 {
+            return Ok(());
+        }
+        if now.saturating_sub(self.last_update_ts) < interval {
+            return Err(RoshiError::ReportTooFrequent.into());
+        }
+        Ok(())
+    }
+
+    /// NAV gain bound: a report may not raise the net share price by more
+    /// than `controls.max_nav_gain_bps` vs. the stored pre-report price. No
+    /// downward bound — honest losses must land in one report. An over-bound
+    /// honest gain is not lost: the authority reports the capped amount and
+    /// rolls the remainder into subsequent reports. Skipped when supply or
+    /// the stored price is zero so post-total-loss recovery cannot wedge.
+    pub fn verify_nav_gain_bound(
+        &self,
+        net_total_assets: u64,
+        economic_share_supply: u64,
+    ) -> ProgramResult {
+        if self.controls.max_nav_gain_bps == 0 || economic_share_supply == 0 {
+            return Ok(());
+        }
+        let pre_price = share_price_from_assets(self.total_assets, economic_share_supply)?;
+        if pre_price == 0 {
+            return Ok(());
+        }
+
+        let new_price = share_price_from_assets(net_total_assets, economic_share_supply)?;
+        let max_price = checked_u64(mul_div_floor(
+            u128::from(pre_price),
+            u128::from(BPS_DENOMINATOR) + u128::from(self.controls.max_nav_gain_bps),
+            u128::from(BPS_DENOMINATOR),
+        )?)?;
+        if new_price > max_price {
+            return Err(RoshiError::NavGainExceedsBound.into());
+        }
+        Ok(())
+    }
+
     /// Base custody only ever moves through the sub-accounts whose base ATAs
     /// `report_nav` reads as idle — the vault's current deposit and withdraw
     /// sub-accounts. External investment, returns, and fee collection are pinned
@@ -583,6 +749,262 @@ mod tests {
         assert!(VaultControls::new(0, 0, 0, 0, 60_000, 10_000, 10_000)
             .validate()
             .is_ok());
+    }
+
+    /// A vault mid-drip: `locked` profit unlocking linearly over
+    /// `[start, end]` on top of `total` assets.
+    fn drip_vault(total: u64, locked: u64, start: i64, end: i64) -> Vault {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.total_assets = total;
+        vault.locked_profit = locked;
+        vault.profit_unlock_start_ts = start;
+        vault.profit_unlock_end_ts = end;
+        vault
+    }
+
+    #[test]
+    fn remaining_locked_profit_interpolates_linearly() {
+        let vault = drip_vault(2_000, 1_000, 0, 100);
+
+        assert_eq!(vault.remaining_locked_profit(-5), Ok(1_000));
+        assert_eq!(vault.remaining_locked_profit(0), Ok(1_000));
+        assert_eq!(vault.remaining_locked_profit(25), Ok(750));
+        assert_eq!(vault.remaining_locked_profit(50), Ok(500));
+        assert_eq!(vault.remaining_locked_profit(99), Ok(10));
+        assert_eq!(vault.remaining_locked_profit(100), Ok(0));
+        assert_eq!(vault.remaining_locked_profit(1_000), Ok(0));
+
+        assert_eq!(vault.effective_total_assets(50), Ok(1_500));
+        assert_eq!(vault.effective_total_assets(100), Ok(2_000));
+    }
+
+    #[test]
+    fn debit_at_effective_re_anchors_without_moving_the_unlock_line() {
+        let mut vault = drip_vault(2_000, 1_000, 0, 100);
+        let expected_remaining_at_70 = vault.remaining_locked_profit(70).unwrap();
+
+        vault.debit_assets_at_effective(1_400, 40).unwrap();
+
+        assert_eq!(vault.total_assets, 600);
+        assert_eq!(vault.locked_profit, 600);
+        assert_eq!(vault.profit_unlock_start_ts, 40);
+        assert_eq!(vault.profit_unlock_end_ts, 100);
+        assert_eq!(
+            vault.remaining_locked_profit(70),
+            Ok(expected_remaining_at_70)
+        );
+        assert!(vault.validate_state().is_ok());
+    }
+
+    #[test]
+    fn debit_at_effective_rejects_amounts_above_effective() {
+        let mut vault = drip_vault(2_000, 1_000, 0, 100);
+        let before = vault;
+
+        // Effective at t=40 is 1_400.
+        assert_eq!(
+            vault.debit_assets_at_effective(1_401, 40),
+            Err(ProgramError::from(RoshiError::InvalidVaultState))
+        );
+        assert_eq!(vault, before);
+    }
+
+    #[test]
+    fn apply_reported_nav_locks_gains_over_the_elapsed_window() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.controls = VaultControls::new(1_000, 0, 0, 0, 0, 0, 0);
+        vault.total_assets = 1_000;
+        vault.last_update_ts = 100;
+
+        vault.apply_reported_nav(1_600, 400).unwrap();
+
+        assert_eq!(vault.total_assets, 1_600);
+        assert_eq!(vault.locked_profit, 600);
+        assert_eq!(vault.profit_unlock_start_ts, 400);
+        // Earned over 300s < 1_000s clamp: drips over the same 300s.
+        assert_eq!(vault.profit_unlock_end_ts, 700);
+        // Effective NAV is continuous through the report.
+        assert_eq!(vault.effective_total_assets(400), Ok(1_000));
+    }
+
+    #[test]
+    fn apply_reported_nav_clamps_the_window() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.controls = VaultControls::new(1_000, 0, 0, 0, 0, 0, 0);
+        vault.total_assets = 1_000;
+        vault.last_update_ts = 0;
+
+        vault.apply_reported_nav(1_600, 5_000).unwrap();
+
+        assert_eq!(vault.profit_unlock_start_ts, 5_000);
+        assert_eq!(vault.profit_unlock_end_ts, 6_000);
+    }
+
+    #[test]
+    fn apply_reported_nav_rolls_unfinished_drip_forward() {
+        let mut vault = drip_vault(1_600, 600, 400, 700);
+        vault.controls = VaultControls::new(1_000, 0, 0, 0, 0, 0, 0);
+        vault.last_update_ts = 400;
+
+        // Mid-drip at t=550: remaining 300, effective 1_300.
+        vault.apply_reported_nav(1_700, 550).unwrap();
+
+        assert_eq!(vault.total_assets, 1_700);
+        // gain = 1_700 - 1_300: the unfinished 300 re-locks with the new 100.
+        assert_eq!(vault.locked_profit, 400);
+        assert_eq!(vault.profit_unlock_start_ts, 550);
+        assert_eq!(vault.profit_unlock_end_ts, 700);
+        assert_eq!(vault.effective_total_assets(550), Ok(1_300));
+    }
+
+    #[test]
+    fn apply_reported_nav_applies_losses_instantly() {
+        let mut vault = drip_vault(1_600, 600, 400, 700);
+        vault.controls = VaultControls::new(1_000, 0, 0, 0, 0, 0, 0);
+        vault.last_update_ts = 400;
+
+        // Effective at t=550 is 1_300; reporting below it is a loss.
+        vault.apply_reported_nav(1_200, 550).unwrap();
+
+        assert_eq!(vault.total_assets, 1_200);
+        assert_eq!(vault.locked_profit, 0);
+        assert_eq!(vault.effective_total_assets(550), Ok(1_200));
+    }
+
+    #[test]
+    fn apply_reported_nav_with_unlock_disabled_recognizes_gains_instantly() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.total_assets = 1_000;
+        vault.last_update_ts = 100;
+
+        vault.apply_reported_nav(1_600, 400).unwrap();
+
+        assert_eq!(vault.locked_profit, 0);
+        assert_eq!(vault.effective_total_assets(400), Ok(1_600));
+    }
+
+    #[test]
+    fn verify_report_fresh_gates_only_configured_post_first_report_vaults() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.last_update_ts = 0;
+
+        // Disabled control: never stale.
+        assert!(vault.verify_report_fresh(i64::MAX).is_ok());
+
+        vault.controls = VaultControls::new(0, 100, 0, 0, 0, 0, 0);
+        // Pre-first-report vaults are exempt.
+        assert!(vault.verify_report_fresh(1_000).is_ok());
+
+        vault.report_epoch = 1;
+        assert!(vault.verify_report_fresh(100).is_ok());
+        assert_eq!(
+            vault.verify_report_fresh(101),
+            Err(ProgramError::from(RoshiError::StaleNavReport))
+        );
+    }
+
+    #[test]
+    fn verify_report_interval_rejects_rapid_reports() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.controls = VaultControls::new(0, 0, 60, 0, 0, 0, 0);
+        vault.last_update_ts = 1_000;
+
+        // The first report is exempt.
+        assert!(vault.verify_report_interval(1_001).is_ok());
+
+        vault.report_epoch = 1;
+        assert_eq!(
+            vault.verify_report_interval(1_059),
+            Err(ProgramError::from(RoshiError::ReportTooFrequent))
+        );
+        assert!(vault.verify_report_interval(1_060).is_ok());
+    }
+
+    #[test]
+    fn verify_nav_gain_bound_caps_upward_price_moves_only() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.controls = VaultControls::new(0, 0, 0, 0, 1_000, 0, 0);
+        vault.total_assets = 1_000;
+        let supply = 1_000_000_000;
+
+        // +10% exactly passes; one atom more is rejected.
+        assert!(vault.verify_nav_gain_bound(1_100, supply).is_ok());
+        assert_eq!(
+            vault.verify_nav_gain_bound(1_101, supply),
+            Err(ProgramError::from(RoshiError::NavGainExceedsBound))
+        );
+        // No downward bound.
+        assert!(vault.verify_nav_gain_bound(0, supply).is_ok());
+        // Skips: supply zero, stored price zero, control disabled.
+        assert!(vault.verify_nav_gain_bound(u64::MAX, 0).is_ok());
+        vault.total_assets = 0;
+        assert!(vault.verify_nav_gain_bound(u64::MAX, supply).is_ok());
+        vault.total_assets = 1_000;
+        vault.controls = VaultControls::default();
+        assert!(vault.verify_nav_gain_bound(u64::MAX, supply).is_ok());
+    }
+
+    mod drip_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            /// Remaining locked profit never increases with time and never
+            /// exceeds the locked amount.
+            #[test]
+            fn prop_remaining_locked_is_monotone_and_bounded(
+                locked in 0u64..=1_000_000_000_000,
+                extra in 0u64..=1_000_000_000_000,
+                start in 0i64..=1_000_000_000,
+                window in 0i64..=10_000_000,
+                t1 in -1_000i64..=20_000_000,
+                dt in 0i64..=20_000_000,
+            ) {
+                let vault = drip_vault(
+                    locked.saturating_add(extra),
+                    locked,
+                    start,
+                    start + window,
+                );
+                let early = vault.remaining_locked_profit(start + t1).unwrap();
+                let late = vault.remaining_locked_profit(start + t1 + dt).unwrap();
+
+                prop_assert!(early <= locked);
+                prop_assert!(late <= early);
+            }
+
+            /// Debiting at effective NAV preserves the unlock line up to one
+            /// atom of floor rounding, and keeps the state invariant valid.
+            #[test]
+            fn prop_debit_preserves_unlock_line_within_one_atom(
+                locked in 0u64..=1_000_000_000_000,
+                extra in 0u64..=1_000_000_000_000,
+                start in 0i64..=1_000_000,
+                window in 1i64..=10_000_000,
+                now_offset in 0i64..=10_000_000,
+                t_offset in 0i64..=10_000_000,
+                amount_seed in any::<u64>(),
+            ) {
+                let total = locked.saturating_add(extra);
+                let now = start + now_offset.min(window);
+                let t = now + t_offset.min(window);
+                let mut vault = drip_vault(locked.saturating_add(extra), locked, start, start + window);
+
+                let before = vault.remaining_locked_profit(t).unwrap();
+                let effective = vault.effective_total_assets(now).unwrap();
+                let amount = if effective == 0 { 0 } else { amount_seed % (effective + 1) };
+
+                vault.debit_assets_at_effective(amount, now).unwrap();
+
+                let after = vault.remaining_locked_profit(t).unwrap();
+                prop_assert!(after <= before);
+                prop_assert!(before - after <= 1);
+                prop_assert_eq!(vault.total_assets, total - amount);
+                prop_assert!(vault.validate_state().is_ok());
+            }
+        }
     }
 
     #[test]

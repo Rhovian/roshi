@@ -1,6 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
+use solana_sysvar::{clock::Clock, Sysvar};
 
 use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 use crate::{
@@ -50,7 +51,13 @@ pub fn try_atomic_redeem(accounts: &[AccountInfo], args: AtomicRedeemArgs) -> Pr
         return Err(RoshiError::UnauthorizedAction.into());
     }
 
-    let max_assets_owed = validate_redeem_entitlement(&context, args.shares, &args.ix_data)?;
+    // Atomic exits price at the current NAV instantly, so they must not run
+    // on a stale one: escaping an incurred-but-unreported loss dumps it on
+    // remaining holders.
+    let now = Clock::get()?.unix_timestamp;
+    context.vault.verify_report_fresh(now)?;
+
+    let max_assets_owed = validate_redeem_entitlement(&context, args.shares, &args.ix_data, now)?;
 
     let received = execute_unwind_cpi(
         context.cpi_accounts,
@@ -74,7 +81,7 @@ pub fn try_atomic_redeem(accounts: &[AccountInfo], args: AtomicRedeemArgs) -> Pr
         return Err(RoshiError::SlippageExceeded.into());
     }
 
-    settle_atomic_redeem(&mut context, args.sub_account, args.shares, received)
+    settle_atomic_redeem(&mut context, args.sub_account, args.shares, received, now)
 }
 
 #[inline(never)]
@@ -82,6 +89,7 @@ fn validate_redeem_entitlement(
     context: &AtomicRedeemContext,
     shares: u64,
     ix_data: &[u8],
+    now: i64,
 ) -> Result<u64, ProgramError> {
     let share_balance = token::token_amount(context.user_share_account)?;
     if share_balance < shares {
@@ -92,7 +100,7 @@ fn validate_redeem_entitlement(
     let economic_share_supply = context.vault.economic_share_supply(share_supply)?;
     let max_assets_owed = assets_for_redeem(
         shares,
-        context.vault.total_assets,
+        context.vault.effective_total_assets(now)?,
         economic_share_supply,
         context.vault.base_decimals,
     )
@@ -159,6 +167,7 @@ fn settle_atomic_redeem(
     sub_account_index: u8,
     shares: u64,
     received: u64,
+    now: i64,
 ) -> ProgramResult {
     let sub_account_index_seed = [sub_account_index];
     let sub_account_bump_seed = [context.sub_account_bump];
@@ -184,11 +193,7 @@ fn settle_atomic_redeem(
         shares,
     )?;
 
-    context.vault.total_assets = context
-        .vault
-        .total_assets
-        .checked_sub(received)
-        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    context.vault.debit_assets_at_effective(received, now)?;
     context.store_vault()
 }
 

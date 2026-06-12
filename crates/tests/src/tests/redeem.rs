@@ -402,6 +402,51 @@ fn test_process_withdrawals_pays_recipient_and_closes_ticket() {
 }
 
 #[test]
+fn test_process_withdrawals_strikes_at_effective_nav_mid_drip() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.withdrawal_authority);
+
+    let shares = ONE_BASE_SHARES / 2;
+    let (ticket, redeem) = redeem_ix(&fixture, 0, shares);
+    send_ok(&mut svm, redeem, &fixture.owner);
+    svm.expire_blockhash();
+    advance_vault_epoch(&mut svm, &fixture, 1);
+
+    // Half the NAV is still-locked profit, half-way through its drip at
+    // t=1_500: remaining 250_000, effective 750_000.
+    let mut state = fixture.vault.load(&svm);
+    state.locked_profit = 500_000;
+    state.profit_unlock_start_ts = 1_000;
+    state.profit_unlock_end_ts = 2_000;
+    write_vault_state(&mut svm, &fixture, state);
+    crate::helpers::set_clock_timestamp(&mut svm, 1_500);
+
+    let expected_owed =
+        roshi_interface::math::assets_for_shares(shares, 750_000, ONE_BASE_SHARES, 6).unwrap();
+    let custody = setup_withdraw_custody(&mut svm, &fixture, expected_owed);
+    let ix = process_withdrawals_ix(
+        &fixture,
+        custody,
+        vec![(ticket, fixture.owner.pubkey(), fixture.recipient)],
+    );
+    send_ok(&mut svm, ix, &fixture.vault.roles.withdrawal_authority);
+
+    // The mid-drip redeemer forfeits their slice of the still-locked profit.
+    assert_eq!(token_balance(&svm, &fixture.recipient), expected_owed);
+
+    let state = fixture.vault.load(&svm);
+    assert_eq!(state.total_assets, ONE_BASE - expected_owed);
+    // The drip re-anchored: the remainder keeps unlocking on the same line.
+    assert_eq!(state.locked_profit, 250_000);
+    assert_eq!(state.profit_unlock_start_ts, 1_500);
+    assert_eq!(state.profit_unlock_end_ts, 2_000);
+    assert_eq!(state.pending_withdrawal_assets, 0);
+}
+
+#[test]
 fn test_process_withdrawals_rejects_unstruck_ticket_before_epoch_delay() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

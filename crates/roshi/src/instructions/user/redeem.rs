@@ -48,13 +48,14 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
     }
 
     // Fail fast on dust: reject a redeem whose entitlement already rounds to
-    // zero at the current NAV. Pricing happens later at strike (where zero is
-    // tolerated, since NAV can move); this guard just refuses to burn shares
-    // into a ticket that is worthless today.
+    // zero at the current effective NAV. Pricing happens later at strike
+    // (where zero is tolerated, since NAV can move); this guard just refuses
+    // to burn shares into a ticket that is worthless today.
+    let clock = Clock::get()?;
     let economic_share_supply = vault.economic_share_supply(share_supply)?;
     assets_for_redeem(
         args.shares,
-        vault.total_assets,
+        vault.effective_total_assets(clock.unix_timestamp)?,
         economic_share_supply,
         vault.base_decimals,
     )?;
@@ -69,7 +70,6 @@ pub fn try_redeem(accounts: &[AccountInfo], args: RedeemArgs) -> ProgramResult {
         args.shares,
     )?;
 
-    let clock = Clock::get()?;
     let ticket = WithdrawalTicket::new(
         context.vault_account.key.to_bytes(),
         context.owner.key.to_bytes(),

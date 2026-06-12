@@ -9,6 +9,7 @@ mod deposit;
 mod external_destination;
 mod initialize_vault;
 mod manage;
+mod nav_controls;
 mod nav_reporting;
 mod program;
 mod redeem;

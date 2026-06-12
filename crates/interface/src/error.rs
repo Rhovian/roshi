@@ -31,6 +31,9 @@ pub enum RoshiError {
     InvalidSubAccount = 25,
     InvalidExternalDestinationAccount = 26,
     InvalidWriteDownAmount = 27,
+    StaleNavReport = 28,
+    NavGainExceedsBound = 29,
+    ReportTooFrequent = 30,
 }
 
 impl From<RoshiError> for ProgramError {

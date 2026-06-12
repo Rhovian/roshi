@@ -16,13 +16,20 @@ high_watermark: u64,
 report_epoch: u64,
 requested_withdrawal_shares: u64,
 performance_fee_bps: u16,
-fee_collector: Pubkey,
+treasury: Pubkey,
 withdrawal_buffer_bps: u16,
 last_update_ts: i64,
+locked_profit: u64,
+profit_unlock_start_ts: i64,
+profit_unlock_end_ts: i64,
 ```
 
 `total_assets` is active-share NAV in base atoms after subtracting Roshi-tracked
 liabilities and newly accrued fees.
+
+`locked_profit` and the two unlock timestamps carry the profit-unlock drip:
+reported gains reach the share price linearly over a window, not at once. See
+[Profit Unlock](#profit-unlock).
 
 `pending_withdrawal_assets` is the vault-scoped base-asset amount owed across
 struck withdrawal tickets. It is not tied to any withdrawal subaccount.
@@ -36,7 +43,7 @@ requests but have not yet been struck into fixed base-asset claims. These shares
 remain part of the vault's economic share supply until strike.
 
 `fees_payable` is the base-asset fee liability accrued during NAV reporting but
-not yet transferred to the configured fee collector token account.
+not yet transferred to the configured `treasury` token account.
 
 The total supply of shares is the SPL share mint's `supply` field. Roshi does
 not mirror active share supply in vault state. For pricing while unstruck
@@ -68,23 +75,24 @@ See [Oracles](./oracles.md) for the oracle contract.
 
 ## NAV Reporting
 
-`ReportNav` accepts gross total portfolio NAV in base atoms:
+`ReportNav` accepts the marked external value in base atoms:
 
 ```rust
 ReportNav {
-    total_assets,
+    external_value,
     report_hash,
 }
 ```
 
-The reported gross NAV must include the full portfolio value before subtracting
-Roshi-tracked liabilities, including assets reserved or owed for open
-withdrawal tickets and unpaid fees.
-
-The program stores active-share NAV:
+`external_value` is everything the program does not read as idle: venue
+positions, non-base idle, and any base not held in the vault's current
+deposit/withdraw custodies. The program reads idle base on-chain from those
+two pinned custody ATAs — the authority cannot misreport it — and forms gross
+NAV before subtracting Roshi-tracked liabilities:
 
 ```text
-fee_base_assets = reported_gross_nav - fees_payable - pending_withdrawal_assets
+gross_nav = on_chain_idle_base + external_value
+fee_base_assets = gross_nav - fees_payable - pending_withdrawal_assets
 total_assets = fee_base_assets - newly_accrued_fees
 ```
 
@@ -96,19 +104,75 @@ report yet".
 The NAV update flow:
 
 - verify the caller is `vault.nav_authority`,
+- reject reports arriving sooner than `min_report_interval_secs` after the
+  previous report (`ReportTooFrequent`; the first report is exempt),
 - reject an all-zero `report_hash`,
 - read `share_mint.supply` and add `requested_withdrawal_shares` for fee
   pricing,
 - subtract existing `fees_payable` and `pending_withdrawal_assets`,
 - accrue performance fees when share price exceeds `high_watermark`,
-- store fee-adjusted `total_assets`,
+- reject a report that would raise the net share price by more than
+  `max_nav_gain_bps` vs. the stored pre-report price (`NavGainExceedsBound`;
+  no downward bound — losses land whole; skipped when supply or the stored
+  price is zero),
 - increase `fees_payable`,
 - update `high_watermark`,
 - increment `report_epoch`,
-- store `last_report_hash` and `last_update_ts`.
+- store `last_report_hash`,
+- recognize the fee-adjusted NAV: losses land instantly, gains re-lock into
+  the profit-unlock drip (see [Profit Unlock](#profit-unlock)),
+- store `last_update_ts`.
 
 The update fails if arithmetic overflows or if reported gross NAV is less than
-existing fee and withdrawal liabilities.
+existing fee and withdrawal liabilities. A `NavGainExceedsBound` rejection is
+not an error state for an honest authority: report the capped amount now and
+roll the remainder into subsequent reports. Rationale for the bound shape is
+in [Economic Controls](./economic-controls.md).
+
+## Profit Unlock
+
+Reported gains do not reach the share price at once. At each gain report the
+whole gain (including any unfinished drip from the previous window) re-locks
+into `locked_profit` and unlocks linearly over
+
+```text
+window = min(now - last_update_ts, max_unlock_duration_secs)
+```
+
+— the span the gain was earned in, clamped. `max_unlock_duration_secs = 0`
+disables smoothing (gains recognize instantly). Losses always recognize
+instantly, absorbed by the locked remainder first: effective NAV declines but
+never jumps upward.
+
+Every share-pricing read uses effective NAV, never raw `total_assets`:
+
+```text
+remaining_locked_profit(now) = locked_profit * (end_ts - now) / (end_ts - start_ts)   // clamped to [0, locked_profit]
+effective_total_assets(now)  = total_assets - remaining_locked_profit(now)
+```
+
+This applies to deposit minting, the redeem dust guard, withdrawal-ticket
+strikes, and atomic-redeem entitlements. Nothing cranks the drip: the three
+stored fields define a line, and every reader (on-chain and off-chain)
+interpolates it against the clock at read time.
+
+Two consequences:
+
+- A depositor entering just before — or during — a drip mints as if the
+  locked profit does not exist yet, and earns it only as it unlocks, at the
+  same rate as every other holder.
+- A redeemer exiting mid-drip is paid at effective NAV and forfeits their
+  slice of the still-locked profit, which socializes pro-rata to remaining
+  holders.
+
+Payouts priced at effective NAV (strikes, atomic redeems) re-anchor the
+window to `(remaining(now), now, end_ts)` when they debit `total_assets` —
+the same unlock line, restated — so the static invariant
+`locked_profit <= total_assets` holds without a clock.
+
+Performance fees and the high watermark are computed on report-time gross,
+not effective NAV: the gain is fee-charged once, when reported, and the HWM
+ratchets on the full net price.
 
 NAV and liquidity are separate. Token account balances determine whether queued
 withdrawals, fee collection, or strategy withdrawals can settle; balances do
@@ -151,7 +215,7 @@ Deposits mint shares at the current share price after normalizing the deposit
 amount into base atoms.
 
 ```text
-shares_to_mint = floor(base_atoms * (economic_share_supply + virtual_shares) / (total_assets + 1))
+shares_to_mint = floor(base_atoms * (economic_share_supply + virtual_shares) / (effective_total_assets + 1))
 ```
 
 where `economic_share_supply = share_mint.supply + requested_withdrawal_shares`
@@ -229,7 +293,7 @@ WithdrawalTicket {
 processes an eligible unstruck ticket, strike computes:
 
 ```text
-assets_owed = floor(shares_burned * (total_assets + 1) / (economic_share_supply + virtual_shares))
+assets_owed = floor(shares_burned * (effective_total_assets + 1) / (economic_share_supply + virtual_shares))
 ```
 
 where `economic_share_supply = share_mint.supply + requested_withdrawal_shares`
@@ -323,9 +387,25 @@ CollectFees {
 ```
 
 The instruction is admin-gated. It transfers base tokens from the supplied
-vault subaccount's custody account to the configured `fee_collector` token
+vault subaccount's custody account to the configured `treasury` token
 account and decrements `fees_payable`. Collection does not change
 `total_assets`; NAV already excluded the fee when it accrued.
+
+`WriteDownFees` forgives accrued fee liability without moving tokens:
+
+```rust
+WriteDownFees {
+    amount, // 0 < amount <= fees_payable
+}
+```
+
+It is admin-gated and decrements `fees_payable` only; gross NAV is untouched
+(`total_assets` is recomputed at the next report from unchanged gross and the
+smaller liabilities). It exists to unwedge `report_nav` when losses ate into
+the fee cushion (`gross < fees_payable + pending_withdrawal_assets`). Struck
+withdrawal tickets remain inviolable — losses deeper than the fee cushion
+leave the vault wedged by design. See
+[Economic Controls](./economic-controls.md).
 
 ## Future NAV Verification
 
@@ -349,9 +429,14 @@ for the v1 trusted-authority model.
 - Redeems burn SPL shares at request time but leave assets in `total_assets`
   and shares in `requested_withdrawal_shares` until strike.
 - Striking a withdrawal ticket decreases `total_assets` and
-  `requested_withdrawal_shares` proportionally, then fixes `assets_owed`.
+  `requested_withdrawal_shares` proportionally (priced at effective NAV),
+  then fixes `assets_owed`.
 - Withdrawal tickets are settled only by `ProcessWithdrawals`.
-- Collecting fees does not change `total_assets`.
+- `locked_profit <= total_assets` always; `effective_total_assets(now) <=
+  total_assets` for every `now`; remaining locked profit is monotone
+  non-increasing between reports.
+- Collecting fees does not change `total_assets`; writing fees down changes
+  neither `total_assets` nor any token balance.
 - Custody token account balances are the payment source of truth for
   withdrawals and fee collection.
 

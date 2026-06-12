@@ -46,6 +46,11 @@ This keeps strategy positions, venue balances, counterparties, and private marks
 off-chain unless the vault chooses to disclose them. Future verification can
 tighten this boundary without changing the core share accounting model.
 
+The boundary is bounded, not blind: reported gains drip into the share price
+(profit unlock), upward price moves are capped per report and rate-limited,
+and atomic exits reject stale reports. The threat model and the rationale for
+each control live in [Economic Controls](./economic-controls.md).
+
 ## Implementation Details
 
 Subaccounts are implementation details for custody and execution isolation.
