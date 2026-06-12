@@ -113,9 +113,16 @@
             fuzz_assert!(false, "economic share supply overflow after flat NAV deposit");
             return true;
         };
+        // Entitlements price at effective NAV: mid-drip, the locked profit
+        // is not redeemable, so the probe sizes its unwind the same way the
+        // program will.
+        let Ok(effective) = after_deposit.effective_total_assets(self.unix_timestamp()) else {
+            fuzz_assert!(false, "effective NAV failed after flat-NAV deposit");
+            return true;
+        };
         let Ok(max_owed) = assets_for_redeem(
             minted_shares,
-            after_deposit.total_assets,
+            effective,
             economic_share_supply,
             BASE_DECIMALS,
         ) else {

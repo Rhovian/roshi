@@ -120,6 +120,17 @@
             .ok()
         });
 
+        // C-controls gating, predicted exactly: the rate limit from the
+        // stored timestamp, and the gain bound on the expected net NAV.
+        let now = self.unix_timestamp();
+        let interval_ok = before.verify_report_interval(now).is_ok();
+        let bound_ok = match &expected_nav {
+            Some((_, net_total_assets, _)) => before
+                .verify_nav_gain_bound(*net_total_assets, economic_share_supply)
+                .is_ok(),
+            None => true,
+        };
+
         self.report_nonce += 1;
         let mut hash = [0u8; 32];
         hash[..8].copy_from_slice(&self.report_nonce.to_le_bytes());
@@ -135,6 +146,11 @@
         )
         .unwrap();
         let ok = submit(&mut self.ctx, ix, &[&self.nav_authority.clone()]);
+        fuzz_assert!(
+            ok == (expected_nav.is_some() && interval_ok && bound_ok),
+            "report gating mismatch: ok={ok}, fee_math_ok={}, interval_ok={interval_ok}, bound_ok={bound_ok}",
+            expected_nav.is_some()
+        );
         if ok {
             // NAV-report conservation: the program's own fee/liability arithmetic
             // must balance the moment a report lands. Gross NAV is idle custody +

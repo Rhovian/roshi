@@ -475,8 +475,11 @@
         let Some(economic) = supply.checked_add(vault.requested_withdrawal_shares) else {
             return false;
         };
-        let Ok(max_owed) = assets_for_redeem(shares, vault.total_assets, economic, BASE_DECIMALS)
-        else {
+        let Ok(effective) = vault.effective_total_assets(self.unix_timestamp()) else {
+            fuzz_assert!(false, "effective NAV failed before atomic redeem");
+            return false;
+        };
+        let Ok(max_owed) = assets_for_redeem(shares, effective, economic, BASE_DECIMALS) else {
             // Zero/invalid entitlement (e.g. nothing deposited yet): nothing to do.
             return false;
         };

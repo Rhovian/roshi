@@ -6,4 +6,5 @@ impl RoshiFixture {
     include!("fixture/execution.rs");
     include!("fixture/nav_fees.rs");
     include!("fixture/authority_config.rs");
+    include!("fixture/controls.rs");
 }
