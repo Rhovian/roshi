@@ -131,6 +131,16 @@ where
             return Err(RoshiError::InvalidAssetAccount.into());
         }
 
+        // Inventory cap, read from the custody balance already in the account
+        // list: no tracking state, and it self-heals as swaps drain custody.
+        let custody_balance = crate::instructions::token::token_amount(self.custody)?;
+        let projected = custody_balance
+            .checked_add(args.amount)
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        if projected > asset.deposit_cap_atoms {
+            return Err(RoshiError::DepositCapExceeded.into());
+        }
+
         let clock = Clock::get()?;
         let oracle_accounts = &self.extra[1..];
         let (asset_price, consumed) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;

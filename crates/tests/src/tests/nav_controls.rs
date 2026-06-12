@@ -262,6 +262,60 @@ fn test_report_gain_bound_skips_empty_vaults() {
 }
 
 #[test]
+fn test_write_down_fees_unwedges_report_nav() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    set_clock_timestamp(&mut svm, 10_000);
+    let (vault, custody) = setup_vault(&mut svm, VaultControls::default());
+    deposit_base(&mut svm, &vault, custody, ONE_BASE);
+    fund(&mut svm, &vault.roles.admin);
+
+    // Losses ate into the fee cushion: gross (1_000_000 idle) no longer
+    // covers the fee liability, so reporting wedges.
+    let mut state = vault.load(&svm);
+    state.fees_payable = 1_500_000;
+    svm.set_account(
+        vault.address,
+        solana_sdk::account::Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
+            data: wincode::serialize(&roshi::state::Account::Vault(state)).unwrap(),
+            owner: roshi::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            report_nav_ix(&vault, 0, [1; 32]),
+            &vault.roles.nav_authority,
+        ),
+        RoshiError::InvalidVaultState,
+    );
+
+    // Forgiving part of the fee liability unwedges the report path; struck
+    // tickets would have remained untouched throughout.
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::write_down_fees(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            600_000,
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+    report(&mut svm, &vault, 0, 2);
+
+    let state = vault.load(&svm);
+    assert_eq!(state.fees_payable, 900_000);
+    assert_eq!(state.total_assets, 100_000);
+}
+
+#[test]
 fn test_report_rejects_reports_arriving_before_the_min_interval() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

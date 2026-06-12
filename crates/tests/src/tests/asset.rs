@@ -7,6 +7,7 @@
 
 use litesvm::LiteSVM;
 use roshi::{
+    error::RoshiError,
     instructions::{InitializeAssetArgs, UpdateAssetArgs},
     oracle::{OracleConfig, PythOracleConfig},
     state::{asset::Asset, Account as RoshiAccount},
@@ -108,6 +109,38 @@ fn test_initialize_asset() {
     assert_eq!(asset.asset_decimals, 9);
     assert_eq!(asset.enabled(), Ok(true));
     assert_eq!(asset.bump, bump);
+}
+
+#[test]
+fn test_initialize_asset_rejects_pyth_oracle_without_confidence_bound() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new().install(&mut svm);
+    fund(&mut svm, &vault.roles.admin);
+    let asset_mint = Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    let mut args = init_args(asset_mint);
+    args.oracle = OracleConfig::pyth(PythOracleConfig::new([3; 32], 8, 30, 0));
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            roshi_client::instruction::initialize_asset(
+                vault.roles.admin.pubkey(),
+                vault.address,
+                asset_mint,
+                asset_pda,
+                args,
+            )
+            .unwrap(),
+            &vault.roles.admin,
+        ),
+        RoshiError::InvalidAssetAccount,
+    );
 }
 
 #[test]

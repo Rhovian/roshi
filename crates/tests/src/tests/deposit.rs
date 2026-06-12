@@ -385,7 +385,7 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
             asset_pda,
             InitializeAssetArgs {
                 asset_mint: asset_mint.to_bytes(),
-                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)),
+                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 250)),
                 asset_decimals: 9,
                 enabled: true,
                 routed: false,
@@ -442,6 +442,89 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
 }
 
 #[test]
+fn test_deposit_rejects_above_asset_deposit_cap() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let vault = VaultBuilder::new().base_mint(base_mint).install(&mut svm);
+    let share_mint = vault.share_mint;
+    set_mint(&mut svm, share_mint, &vault.address, 9);
+
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let feed_id = [3u8; 32];
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    fund(&mut svm, &vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 250)),
+                asset_decimals: 9,
+                enabled: true,
+                routed: false,
+                deposit_cap_atoms: 1_500_000,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    let pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, pyth, feed_id, 200_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, 1_900_000);
+    // The cap is an inventory cap: pre-existing custody balance counts.
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 600_000);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let deposit_ix = |amount: u64| {
+        roshi_client::instruction::deposit(
+            depositor.pubkey(),
+            vault.address,
+            source,
+            custody,
+            share_dest,
+            share_mint,
+            TOKEN_PROGRAM_ID,
+            asset_mint,
+            amount,
+            0,
+            vec![],
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(pyth, false),
+            ],
+        )
+        .unwrap()
+    };
+
+    // 600_000 + 1_000_000 exceeds the 1_500_000 cap; nothing moves.
+    assert_roshi_error(
+        send(&mut svm, deposit_ix(1_000_000), &depositor),
+        RoshiError::DepositCapExceeded,
+    );
+    assert_eq!(token_balance(&svm, &custody), 600_000);
+    assert_eq!(token_balance(&svm, &share_dest), 0);
+
+    // Filling custody exactly to the cap is allowed.
+    send_ok(&mut svm, deposit_ix(900_000), &depositor);
+    assert_eq!(token_balance(&svm, &custody), 1_500_000);
+}
+
+#[test]
 fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
     let Some((mut svm, _authority, _config_pda)) = setup_program() else {
         return;
@@ -458,7 +541,7 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
             base_feed_id,
             8,
             i64::MAX as u64,
-            0,
+            250,
         )))
         .install(&mut svm);
     let share_mint = vault.share_mint;
@@ -485,7 +568,7 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
                     asset_feed_id,
                     8,
                     i64::MAX as u64,
-                    0,
+                    250,
                 )),
                 asset_decimals: 9,
                 enabled: true,
@@ -595,7 +678,7 @@ fn test_deposit_pyth_pinned_price_account_rejects_substitutes() {
             InitializeAssetArgs {
                 asset_mint: asset_mint.to_bytes(),
                 oracle: OracleConfig::pyth(
-                    PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)
+                    PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 250)
                         .pin_price_update_account(pinned_pyth.to_bytes()),
                 ),
                 asset_decimals: 9,
@@ -685,7 +768,7 @@ fn test_deposit_mixed_classic_base_token_2022_registered_asset() {
             asset_pda,
             InitializeAssetArgs {
                 asset_mint: asset_mint.to_bytes(),
-                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 0)),
+                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 250)),
                 asset_decimals: 9,
                 enabled: true,
                 routed: false,

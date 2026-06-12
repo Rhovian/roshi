@@ -116,7 +116,7 @@ VaultControls {
     min_report_interval_secs: u32, // report rate limit
     cancel_grace_slots: u32,       // ticket-cancel liveness escape (pending)
     max_nav_gain_bps: u16,         // upward NAV move bound per report
-    atomic_redeem_fee_bps: u16,    // atomic-exit fee to the pool (pending)
+    atomic_redeem_fee_bps: u16,    // atomic-exit fee, retained by the pool
     max_swap_slippage_bps: u16,    // oracle-bounded swap slippage (pending)
 }
 ```
@@ -124,9 +124,12 @@ VaultControls {
 Recommended posture: `max_unlock_duration_secs` around 7 days (604_800);
 `min_report_interval_secs` and `max_nav_gain_bps` sized so their ratio caps
 NAV drift at the strategy's plausible organic rate; `max_report_age_secs` a
-small multiple of the expected reporting cadence. `max_nav_gain_bps` may
-exceed 10_000 (a bound above +100% is meaningful); the two fee/slippage
-fields are percentage-capped at 10_000.
+small multiple of the expected reporting cadence; `atomic_redeem_fee_bps`
+around 50 — at or above the expected one-report NAV drift, so escaping an
+incurred-but-unreported loss through the atomic path is unprofitable (the
+queue path never pays the fee). `max_nav_gain_bps` may exceed 10_000 (a
+bound above +100% is meaningful); the two fee/slippage fields are
+percentage-capped at 10_000.
 
 Deposits are never staleness-gated, and there is deliberately no downward NAV
 bound. The threat model and rationale for every control live in

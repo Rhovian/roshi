@@ -74,8 +74,11 @@ them internally today, but Roshi's account contract does not depend on that.
 ### Pyth Pull Oracle
 
 Pyth configs pin the feed id, output decimal scale, max update age in seconds,
-and optional confidence guardrail in basis points. The on-chain reader accepts
-Pyth `PriceUpdateV2` accounts owned by the Pyth Solana Receiver program.
+and a confidence guardrail in basis points. The guardrail is mandatory for an
+active Pyth leg — `OracleConfig::validate` rejects `max_confidence_bps == 0`,
+since an unbounded confidence interval admits an arbitrarily uncertain,
+technically-fresh price. The on-chain reader accepts Pyth `PriceUpdateV2`
+accounts owned by the Pyth Solana Receiver program.
 
 For fixed price-feed accounts, clients pass the derived feed account address to
 Roshi. For ephemeral price-update accounts, clients fetch updates from Hermes,

@@ -14,7 +14,10 @@ use crate::{
         sub_account::VaultSubAccount,
     },
 };
-use roshi_interface::{error::RoshiError, math::assets_for_redeem};
+use roshi_interface::{
+    error::RoshiError,
+    math::{assets_for_redeem, bps_ceil},
+};
 
 /// Implements [`crate::instructions::RoshiInstruction::AtomicRedeem`].
 ///
@@ -34,8 +37,9 @@ use roshi_interface::{error::RoshiError, math::assets_for_redeem};
 ///     and the target CPI program account must follow the selected CPI metas.
 ///
 /// Atomically unwinds one pre-authorized vault position CPI, bounds the CPI
-/// amount by the caller's share entitlement, pays out realized base proceeds,
-/// burns the caller's shares, and decreases vault total assets by the payout.
+/// amount by the caller's share entitlement, pays out realized base proceeds
+/// minus the configured exit fee (which stays in the pool), burns the
+/// caller's shares, and decreases vault total assets by the payout.
 pub fn try_atomic_redeem(accounts: &[AccountInfo], args: AtomicRedeemArgs) -> ProgramResult {
     let mut context = AtomicRedeemContext::load(accounts, &args)?;
 
@@ -77,11 +81,21 @@ pub fn try_atomic_redeem(accounts: &[AccountInfo], args: AtomicRedeemArgs) -> Pr
     if received > max_assets_owed {
         return Err(RoshiError::WithdrawalExceedsEntitlement.into());
     }
-    if received < args.min_output {
+
+    // Exit fee for immediacy, retained by the pool: the realized proceeds
+    // stay in custody, only `payout` leaves and only `payout` is debited
+    // from NAV, so the fee accrues to remaining holders. The fee rounds up
+    // (in the pool's favor), and `min_output` protects what the caller
+    // actually receives.
+    let fee = bps_ceil(received, context.vault.controls.atomic_redeem_fee_bps)?;
+    let payout = received
+        .checked_sub(fee)
+        .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    if payout < args.min_output {
         return Err(RoshiError::SlippageExceeded.into());
     }
 
-    settle_atomic_redeem(&mut context, args.sub_account, args.shares, received, now)
+    settle_atomic_redeem(&mut context, args.sub_account, args.shares, payout, now)
 }
 
 #[inline(never)]
@@ -166,7 +180,7 @@ fn settle_atomic_redeem(
     context: &mut AtomicRedeemContext,
     sub_account_index: u8,
     shares: u64,
-    received: u64,
+    payout: u64,
     now: i64,
 ) -> ProgramResult {
     let sub_account_index_seed = [sub_account_index];
@@ -182,7 +196,7 @@ fn settle_atomic_redeem(
         context.custody,
         context.recipient_token_account,
         context.sub_account,
-        received,
+        payout,
         signer_seeds,
     )?;
     token::burn(
@@ -193,7 +207,7 @@ fn settle_atomic_redeem(
         shares,
     )?;
 
-    context.vault.debit_assets_at_effective(received, now)?;
+    context.vault.debit_assets_at_effective(payout, now)?;
     context.store_vault()
 }
 

@@ -308,6 +308,65 @@ fn test_atomic_redeem_entitlement_uses_effective_nav() {
 }
 
 #[test]
+fn test_atomic_redeem_charges_exit_fee_to_the_pool() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    let mut state = fixture.vault.load(&svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
+    write_vault_state(&mut svm, &fixture, state);
+
+    send_ok(
+        &mut svm,
+        fixture.ix(REDEEM_SHARES, 0, fixture.ix_data.clone()),
+        &fixture.owner,
+    );
+
+    // 1% of the 500_000 realized proceeds stays in custody for the pool.
+    let fee = REDEEM_AMOUNT / 100;
+    let payout = REDEEM_AMOUNT - fee;
+    assert_eq!(token_balance(&svm, &fixture.recipient), payout);
+    assert_eq!(token_balance(&svm, &fixture.custody), ONE_BASE + fee);
+
+    let state = fixture.vault.load(&svm);
+    // NAV drops by the payout only: the retained fee accrues to the
+    // remaining holders' share price (full shares were burned).
+    assert_eq!(state.total_assets, ONE_BASE - payout);
+    assert_eq!(
+        mint_supply(&svm, &fixture.vault.share_mint),
+        ONE_BASE_SHARES - REDEEM_SHARES
+    );
+}
+
+#[test]
+fn test_atomic_redeem_min_output_applies_to_net_payout() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    let mut state = fixture.vault.load(&svm);
+    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
+    write_vault_state(&mut svm, &fixture, state);
+
+    // Gross proceeds meet min_output but the net payout does not.
+    assert_roshi_error(
+        send(
+            &mut svm,
+            fixture.ix(REDEEM_SHARES, REDEEM_AMOUNT, fixture.ix_data.clone()),
+            &fixture.owner,
+        ),
+        RoshiError::SlippageExceeded,
+    );
+}
+
+#[test]
 fn test_atomic_redeem_happy_path() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

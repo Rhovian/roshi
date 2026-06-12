@@ -63,8 +63,9 @@ Additional deposit mints use vault-scoped `Asset` PDAs:
 ```
 
 Each `Asset` records the non-base mint, oracle configuration, mint decimals,
-enabled state, and pricing mode (direct or routed). Custody is the deposit
-sub-account's ATA for the mint, derived rather than stored.
+enabled state, pricing mode (direct or routed), and `deposit_cap_atoms` — an
+inventory cap on the asset's custody balance (`u64::MAX` = uncapped). Custody
+is the deposit sub-account's ATA for the mint, derived rather than stored.
 
 Deposit-time math normalizes each non-base amount into base atoms before
 minting shares, scaling whole-token oracle prices by mint decimals on-chain.
@@ -226,6 +227,9 @@ The deposit flow:
 
 - reject deposits while deposits are paused,
 - if the vault is private, verify the depositor's access proof,
+- for non-base assets, reject when `custody_balance + amount` would exceed
+  the asset's `deposit_cap_atoms` (`DepositCapExceeded`; the custody balance
+  is read live, so the cap self-heals as swaps drain custody),
 - price the deposit in base atoms: directly if
   `asset_mint == vault.base_mint`, otherwise through the enabled `Asset` PDA's
   configured oracle,

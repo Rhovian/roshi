@@ -130,6 +130,52 @@ effective NAV — it governs report-to-report movement, and using effective
 would double-count the in-flight drip. It is skipped when the share supply or
 the stored price is zero, so post-total-loss recovery cannot wedge.
 
+## Atomic-Redeem Exit Fee
+
+`atomic_redeem_fee_bps` charges atomic exits a fee that **stays in the pool**:
+the realized proceeds remain in custody, only the net payout leaves and only
+the net payout is debited from NAV, so the fee accrues to remaining holders.
+Two purposes:
+
+- **Immediacy is a service remaining holders provide** — an atomic exit
+  consumes the vault's most liquid inventory while queued redeemers wait.
+  The fee compensates the providers.
+- **It prices out residual staleness games.** The gate bounds *how* stale an
+  atomic exit's price can be; the fee makes exploiting the drift *inside*
+  that window unprofitable. Sizing: fee ≥ expected one-report NAV drift
+  (recommended default 50 bps). The queue path never pays the fee — patient
+  exits are not taxed.
+
+The fee rounds up (in the pool's favor) and `min_output` protects the net
+amount the caller actually receives.
+
+## Per-Asset Deposit Caps
+
+`deposit_cap_atoms` bounds each non-base asset's custody inventory:
+a deposit rejects when `custody_balance + amount` would exceed the cap. The
+cap limits oracle-pricing exposure per asset — how much of the vault's NAV
+can enter through any one feed.
+
+It is an **inventory cap, not a flow cap**, by construction: the check reads
+the custody balance already in the deposit's account list, so there is no
+tracking state to maintain and the cap self-heals as swaps drain custody.
+`u64::MAX` means uncapped — explicitly, no zero-means-off magic (a zero cap
+blocks all deposits of that asset, equivalent to disabling it). The base
+mint is uncapped: it has no oracle leg to bound.
+
+Accepted: donation-griefing — inflating custody to block deposits — is
+possible and cheap to undo (the admin raises the cap).
+
+## Mandatory Pyth Confidence Bound
+
+`OracleConfig::validate` rejects an active Pyth leg with
+`max_confidence_bps == 0`. An unbounded confidence interval admits an
+arbitrarily uncertain, technically-fresh price — staleness checks alone do
+not protect against a feed that is current but wide. Only the active leg is
+checked; the zeroed inactive half of an `OracleConfig` stays legal. Enforced
+through the same validation path every vault/Asset store already runs, so a
+misconfigured oracle cannot enter state.
+
 ## Fees-Only Insolvency Writedown
 
 `WriteDownFees` lets the admin forgive accrued fee liability — no token
@@ -178,8 +224,8 @@ Accepted risks, documented rather than mitigated:
 - **Routed-leg quote consistency is operator config.** Two oracle legs must
   share a quote currency; the program cannot verify they do. Using X/USD legs
   on a stable base assumes the USD≈stable peg.
-- **Donation-griefing of deposit caps** (when caps land): inflating custody to
-  block deposits is accepted; the admin raises the cap.
+- **Donation-griefing of deposit caps**: inflating custody to block deposits
+  is accepted; the admin raises the cap.
 
 ## Prior Art
 
@@ -194,11 +240,10 @@ on-chain-measurable-profit system does not need.
 ## Status
 
 Enforced today: profit unlock, staleness gate (atomic redeem), NAV gain bound,
-report rate limit, fee writedown, destination registry instructions.
+report rate limit, atomic-redeem exit fee, per-asset deposit caps, mandatory
+Pyth confidence bound, fee writedown, destination registry instructions.
 
 Config fields present but not yet enforced (mechanisms land with their plan
-sections): `atomic_redeem_fee_bps` (exit fee paid to the pool),
-`deposit_cap_atoms` (per-asset inventory cap), `max_swap_slippage_bps`
-(oracle-bounded swap slippage on priceable endpoints), `cancel_grace_slots`
-(withdrawal-authority liveness escape), and `invest_external` does not yet
-require a registered destination.
+sections): `max_swap_slippage_bps` (oracle-bounded swap slippage on priceable
+endpoints), `cancel_grace_slots` (withdrawal-authority liveness escape), and
+`invest_external` does not yet require a registered destination.

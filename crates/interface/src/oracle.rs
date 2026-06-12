@@ -44,7 +44,7 @@ impl OracleKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InvalidOracleKind;
+pub struct InvalidOracleConfig;
 
 /// Switchboard On-Demand oracle configuration stored with the asset it prices.
 ///
@@ -90,7 +90,9 @@ impl SwitchboardOracleConfig {
 /// `OraclePrice`; for example, a Pyth price of `123456789 * 10^-8` with
 /// `price_decimals = 8` is returned as `123456789`.
 ///
-/// `max_confidence_bps = 0` disables the confidence-width guardrail.
+/// `max_confidence_bps` must be nonzero for an active Pyth leg —
+/// [`OracleConfig::validate`] rejects an unbounded confidence interval. The
+/// raw reader still treats `0` as "no width check" for inactive configs.
 ///
 /// `price_update_account` optionally pins the price update account by address;
 /// all-zeros (the default) accepts any Pyth-verified update account carrying
@@ -165,16 +167,26 @@ impl OracleConfig {
         self.kind
     }
 
-    pub const fn kind(&self) -> Result<OracleKind, InvalidOracleKind> {
+    pub const fn kind(&self) -> Result<OracleKind, InvalidOracleConfig> {
         match OracleKind::from_u8(self.kind) {
             Some(kind) => Ok(kind),
-            None => Err(InvalidOracleKind),
+            None => Err(InvalidOracleConfig),
         }
     }
 
-    pub const fn validate(&self) -> Result<(), InvalidOracleKind> {
+    pub const fn validate(&self) -> Result<(), InvalidOracleConfig> {
         match self.kind() {
-            Ok(_) => Ok(()),
+            // An active Pyth leg must carry a confidence-width guardrail: an
+            // unbounded confidence interval admits an arbitrarily uncertain,
+            // technically-fresh price. Only the active leg is checked, so
+            // zeroed inactive configs stay legal.
+            Ok(OracleKind::Pyth) => {
+                if self.pyth.max_confidence_bps == 0 {
+                    return Err(InvalidOracleConfig);
+                }
+                Ok(())
+            }
+            Ok(OracleKind::Switchboard) => Ok(()),
             Err(error) => Err(error),
         }
     }
@@ -308,13 +320,29 @@ mod tests {
     }
 
     #[test]
+    fn validate_requires_confidence_bound_on_active_pyth_leg() {
+        let unbounded = OracleConfig::pyth(PythOracleConfig::new([4; 32], 8, 30, 0));
+        assert_eq!(unbounded.validate(), Err(InvalidOracleConfig));
+
+        let bounded = OracleConfig::pyth(PythOracleConfig::new([4; 32], 8, 30, 250));
+        assert_eq!(bounded.validate(), Ok(()));
+
+        // The inactive Pyth config may stay zeroed under a Switchboard kind.
+        let switchboard = OracleConfig::switchboard(SwitchboardOracleConfig::new(
+            [1; 32], [2; 32], [3; 32], 6, 100,
+        ));
+        assert_eq!(switchboard.pyth.max_confidence_bps, 0);
+        assert_eq!(switchboard.validate(), Ok(()));
+    }
+
+    #[test]
     fn oracle_config_rejects_invalid_kind() {
         let config = OracleConfig {
             kind: 255,
             ..OracleConfig::default()
         };
 
-        assert_eq!(config.kind(), Err(InvalidOracleKind));
-        assert_eq!(config.validate(), Err(InvalidOracleKind));
+        assert_eq!(config.kind(), Err(InvalidOracleConfig));
+        assert_eq!(config.validate(), Err(InvalidOracleConfig));
     }
 }
