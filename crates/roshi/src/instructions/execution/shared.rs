@@ -45,7 +45,10 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
     /// Pre-CPI: identify writable custody accounts controlled by the subaccount
     /// and assert that each is clean before the downstream program runs.
     pub(crate) fn scan_subaccount_custody(&self) -> Result<Vec<Pubkey>, ProgramError> {
-        let mut keys = Vec::new();
+        // Pre-size to the route's meta count: this runs once per relayed CPI, so
+        // in a `manage_batch` a growing `Vec` would leak its discarded buffers
+        // into the never-freed per-instruction heap on every leg (see #24).
+        let mut keys = Vec::with_capacity(self.instruction.accounts.len());
         for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
             if meta.is_writable
                 && crate::instructions::token::is_clean_custody(info, &self.sub_account_key)?
