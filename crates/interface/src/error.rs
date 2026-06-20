@@ -43,6 +43,8 @@ pub enum RoshiError {
     FlashDelegateMismatch = 37,
     FlashDestinationMismatch = 38,
     SiblingsRequireTopLevel = 39,
+    DelegateNotCleared = 40,
+    FlashFeeRateNotLower = 41,
 }
 
 impl From<RoshiError> for ProgramError {

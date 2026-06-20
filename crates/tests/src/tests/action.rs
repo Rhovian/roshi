@@ -36,6 +36,8 @@ fn authorize_action_ix(
         ActionScope::Manager,
         Ops::empty(),
         0,
+        0,
+        0,
     )
     .unwrap();
 
@@ -68,6 +70,8 @@ fn test_authorize_action() {
         ActionScope::Manager,
         Ops::empty(),
         13,
+        0,
+        0,
     )
     .unwrap();
     send_ok(&mut svm, ix, &vault.roles.admin);
@@ -105,6 +109,8 @@ fn test_authorize_action_rejects_non_admin() {
         ACTION_HASH,
         ActionScope::Manager,
         Ops::empty(),
+        0,
+        0,
         0,
     )
     .unwrap();
@@ -168,6 +174,8 @@ fn test_authorize_action_rejects_invalid_ops() {
         ActionScope::Manager,
         ops,
         0,
+        0,
+        0,
     )
     .unwrap();
     assert_roshi_error(
@@ -201,6 +209,8 @@ fn test_authorize_action_requires_admin_signature() {
             scope: ActionScope::Manager,
             ops: Ops::empty(),
             redeem_amount_offset: 0,
+            fee_num: 0,
+            fee_den: 0,
         },
     )
     .unwrap();
@@ -238,6 +248,8 @@ fn test_authorize_action_rejects_non_writable_admin() {
             scope: ActionScope::Manager,
             ops: Ops::empty(),
             redeem_amount_offset: 0,
+            fee_num: 0,
+            fee_den: 0,
         },
     )
     .unwrap();
@@ -270,6 +282,8 @@ fn test_authorize_action_rejects_mismatched_seeds() {
         ACTION_HASH,
         ActionScope::Manager,
         Ops::empty(),
+        0,
+        0,
         0,
     )
     .unwrap();

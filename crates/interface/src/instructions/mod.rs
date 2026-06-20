@@ -40,6 +40,9 @@ pub mod tags {
     pub const REGISTER_EXTERNAL_DESTINATION: u8 = 28;
     pub const REVOKE_EXTERNAL_DESTINATION: u8 = 29;
     pub const SET_SHARE_METADATA: u8 = 30;
+    pub const ASSERT_DELEGATE_CLEARED: u8 = 31;
+    pub const ADMIN_SET_FLASH_FEE_RATE: u8 = 32;
+    pub const STRATEGIST_LOWER_FLASH_FEE_RATE: u8 = 33;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -251,6 +254,19 @@ pub enum RoshiInstruction {
     #[codama(account(name = "token_metadata_program"))]
     #[codama(account(name = "system_program", default_value = program("system")))]
     SetShareMetadata(#[codama(name = "args")] SetShareMetadataArgs) = 30,
+
+    #[codama(account(name = "token_account"))]
+    AssertDelegateCleared = 31,
+
+    #[codama(account(name = "admin", signer))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "action", writable))]
+    AdminSetFlashFeeRate(#[codama(name = "args")] AdminSetFlashFeeRateArgs) = 32,
+
+    #[codama(account(name = "strategist", signer))]
+    #[codama(account(name = "vault"))]
+    #[codama(account(name = "action", writable))]
+    StrategistLowerFlashFeeRate(#[codama(name = "args")] StrategistLowerFlashFeeRateArgs) = 33,
 }
 
 impl RoshiInstruction {
@@ -287,6 +303,9 @@ impl RoshiInstruction {
             Self::RegisterExternalDestination => tags::REGISTER_EXTERNAL_DESTINATION,
             Self::RevokeExternalDestination => tags::REVOKE_EXTERNAL_DESTINATION,
             Self::SetShareMetadata(_) => tags::SET_SHARE_METADATA,
+            Self::AssertDelegateCleared => tags::ASSERT_DELEGATE_CLEARED,
+            Self::AdminSetFlashFeeRate(_) => tags::ADMIN_SET_FLASH_FEE_RATE,
+            Self::StrategistLowerFlashFeeRate(_) => tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
         }
     }
 
@@ -341,6 +360,16 @@ impl RoshiInstruction {
                 Ok(Self::RevokeExternalDestination)
             }
             tags::SET_SHARE_METADATA => Ok(Self::SetShareMetadata(decode_payload(payload)?)),
+            tags::ASSERT_DELEGATE_CLEARED => {
+                let AssertDelegateClearedArgs = decode_payload(payload)?;
+                Ok(Self::AssertDelegateCleared)
+            }
+            tags::ADMIN_SET_FLASH_FEE_RATE => {
+                Ok(Self::AdminSetFlashFeeRate(decode_payload(payload)?))
+            }
+            tags::STRATEGIST_LOWER_FLASH_FEE_RATE => {
+                Ok(Self::StrategistLowerFlashFeeRate(decode_payload(payload)?))
+            }
             _ => Err(()),
         }
     }
@@ -386,6 +415,11 @@ impl RoshiInstruction {
                 wincode::serialize_into(&mut data, &RevokeExternalDestinationArgs)?
             }
             Self::SetShareMetadata(args) => wincode::serialize_into(&mut data, args)?,
+            Self::AssertDelegateCleared => {
+                wincode::serialize_into(&mut data, &AssertDelegateClearedArgs)?
+            }
+            Self::AdminSetFlashFeeRate(args) => wincode::serialize_into(&mut data, args)?,
+            Self::StrategistLowerFlashFeeRate(args) => wincode::serialize_into(&mut data, args)?,
         }
 
         Ok(data)
@@ -448,6 +482,9 @@ impl_instruction_args! {
     RegisterExternalDestinationArgs = tags::REGISTER_EXTERNAL_DESTINATION,
     RevokeExternalDestinationArgs = tags::REVOKE_EXTERNAL_DESTINATION,
     SetShareMetadataArgs = tags::SET_SHARE_METADATA,
+    AssertDelegateClearedArgs = tags::ASSERT_DELEGATE_CLEARED,
+    AdminSetFlashFeeRateArgs = tags::ADMIN_SET_FLASH_FEE_RATE,
+    StrategistLowerFlashFeeRateArgs = tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -473,7 +510,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
             ]
         );
         assert_eq!(
@@ -623,5 +660,11 @@ mod tests {
             tags::REVOKE_EXTERNAL_DESTINATION,
         ),
         ("setShareMetadata", tags::SET_SHARE_METADATA),
+        ("assertDelegateCleared", tags::ASSERT_DELEGATE_CLEARED),
+        ("adminSetFlashFeeRate", tags::ADMIN_SET_FLASH_FEE_RATE),
+        (
+            "strategistLowerFlashFeeRate",
+            tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
+        ),
     ];
 }

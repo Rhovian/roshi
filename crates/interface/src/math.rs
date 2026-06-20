@@ -52,6 +52,19 @@ pub fn mul_div_ceil_u64(lhs: u64, rhs: u64, denominator: u64) -> MathResult<u64>
     checked_u64(value)
 }
 
+/// Ceiling of `value * num / den` as `u128` — a committed proportional rate
+/// applied to an amount (e.g. a flash-loan `num/den` fee on a borrow). `num == 0`
+/// yields `0` without dividing, so a zero rate needs no valid denominator; a
+/// non-zero `num` over `den == 0` is `DivisionByZero`. Returns `u128` so the
+/// caller checks the `value + fee` sum against its own bound.
+pub fn ceil_mul(value: u64, num: u64, den: u64) -> MathResult<u128> {
+    if num == 0 {
+        return Ok(0);
+    }
+
+    mul_div_ceil(u128::from(value), u128::from(num), u128::from(den))
+}
+
 pub fn bps_floor(amount: u64, bps: u16) -> MathResult<u64> {
     mul_div_floor_u64(amount, u64::from(bps), u64::from(BPS_DENOMINATOR))
 }
@@ -291,6 +304,25 @@ mod tests {
         assert_eq!(
             mul_div_floor_u64(u64::MAX, u64::MAX, 1),
             Err(RoshiError::ResultDoesNotFit)
+        );
+    }
+
+    #[test]
+    fn ceil_mul_applies_a_proportional_rate() {
+        // Kamino USDC example from #21: rate 0.00001 (sf 11529215046068 / 2^60)
+        // on a 1_000_000 borrow ceils to a fee of 10.
+        assert_eq!(ceil_mul(1_000_000, 11_529_215_046_068, 1 << 60), Ok(10));
+        // Ceil, not floor: any remainder rounds up (in the lender's favour).
+        assert_eq!(ceil_mul(1_000_000, 1, 1_000_001), Ok(1));
+        // A zero numerator is a zero fee regardless of the denominator (incl. 0),
+        // reproducing #19's fee-free `delegated == F`.
+        assert_eq!(ceil_mul(1_000_000, 0, 0), Ok(0));
+        // A non-zero rate over a zero denominator is rejected, not silently zero.
+        assert_eq!(ceil_mul(1, 1, 0), Err(RoshiError::DivisionByZero));
+        // Overflow propagates rather than wrapping.
+        assert_eq!(
+            ceil_mul(u64::MAX, u64::MAX, 1),
+            Ok(u128::from(u64::MAX) * u128::from(u64::MAX))
         );
     }
 

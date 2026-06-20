@@ -1,16 +1,20 @@
 use crate::{
     instructions::{
         admin::{
-            try_authorize_action, try_collect_fees, try_initialize_asset, try_initialize_program,
-            try_initialize_vault, try_invest_external, try_process_withdrawals,
-            try_register_external_destination, try_report_nav, try_return_external,
-            try_revoke_action, try_revoke_external_destination, try_set_nav_authority,
-            try_set_pause_flags, try_set_share_metadata, try_set_strategist,
-            try_set_swap_authority, try_set_vault_access, try_set_withdrawal_authority,
-            try_transfer_program_authority, try_transfer_vault_authority, try_update_asset,
-            try_update_vault_config, try_write_down_fees,
+            try_admin_set_flash_fee_rate, try_authorize_action, try_collect_fees,
+            try_initialize_asset, try_initialize_program, try_initialize_vault,
+            try_invest_external, try_process_withdrawals, try_register_external_destination,
+            try_report_nav, try_return_external, try_revoke_action,
+            try_revoke_external_destination, try_set_nav_authority, try_set_pause_flags,
+            try_set_share_metadata, try_set_strategist, try_set_swap_authority,
+            try_set_vault_access, try_set_withdrawal_authority,
+            try_strategist_lower_flash_fee_rate, try_transfer_program_authority,
+            try_transfer_vault_authority, try_update_asset, try_update_vault_config,
+            try_write_down_fees,
         },
-        execution::{try_atomic_redeem, try_manage, try_manage_batch, try_swap},
+        execution::{
+            try_assert_delegate_cleared, try_atomic_redeem, try_manage, try_manage_batch, try_swap,
+        },
         user::{try_cancel_redeem, try_deposit, try_redeem},
         ProcessWithdrawalsArgs, RegisterExternalDestinationArgs, RevokeExternalDestinationArgs,
         RoshiInstruction,
@@ -84,6 +88,13 @@ fn try_process_instruction<'info>(
             try_revoke_external_destination(accounts, RevokeExternalDestinationArgs)
         }
         RoshiInstruction::SetShareMetadata(args) => try_set_share_metadata(accounts, args),
+        RoshiInstruction::AssertDelegateCleared => try_assert_delegate_cleared(accounts),
+        RoshiInstruction::AdminSetFlashFeeRate(args) => {
+            try_admin_set_flash_fee_rate(accounts, args)
+        }
+        RoshiInstruction::StrategistLowerFlashFeeRate(args) => {
+            try_strategist_lower_flash_fee_rate(accounts, args)
+        }
     }
 }
 

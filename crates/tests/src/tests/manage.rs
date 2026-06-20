@@ -76,6 +76,8 @@ impl SystemTransferManageFixture {
                     action_hash: self.action_hash,
                     ops: self.ops,
                     scope: ActionScope::Manager,
+                    fee_num: 0,
+                    fee_den: 0,
                     redeem_amount_offset: 0,
                     bump: action_bump,
                 }))
@@ -167,6 +169,8 @@ fn install_manager_action(
                 action_hash,
                 ops,
                 scope: ActionScope::Manager,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump: action_bump,
             }))
@@ -406,6 +410,8 @@ fn test_manage_rejects_atomic_redeem_action() {
                 action_hash: fixture.action_hash,
                 ops: fixture.ops,
                 scope: ActionScope::AtomicRedeem,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump: action_bump,
             }))
@@ -449,6 +455,8 @@ fn test_manage_rejects_swap_action() {
                 action_hash: fixture.action_hash,
                 ops: fixture.ops,
                 scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump: action_bump,
             }))
@@ -512,6 +520,8 @@ fn test_authorized_action_lifecycle_gates_manage() {
             ActionScope::Manager,
             fixture.ops,
             0,
+            0,
+            0,
         )
         .unwrap(),
         &authority,
@@ -569,6 +579,8 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
                 action_hash: readonly_hash,
                 ops: readonly_ops,
                 scope: ActionScope::Manager,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump: readonly_action_bump,
             }))

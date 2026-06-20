@@ -28,5 +28,6 @@ pub(crate) use redeem::RedeemContext;
 pub(crate) use shared::{close_account, next_account, require_writable};
 pub(crate) use swap::SwapContext;
 pub(crate) use vault::{
-    update_writable_vault_as_admin, InitializeVaultContext, WritableVaultRoleContext,
+    update_writable_vault_as_admin, InitializeVaultContext, VaultRoleContext,
+    WritableVaultRoleContext,
 };

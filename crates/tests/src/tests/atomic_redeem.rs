@@ -165,6 +165,8 @@ impl AtomicRedeemFixture {
                     action_hash: self.action_hash,
                     ops: self.ops,
                     scope: ActionScope::AtomicRedeem,
+                    fee_num: 0,
+                    fee_den: 0,
                     redeem_amount_offset: amount_offset,
                     bump: action_bump,
                 }))

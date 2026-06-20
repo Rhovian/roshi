@@ -8,6 +8,7 @@ mod atomic_redeem;
 mod deposit;
 mod external_destination;
 mod flash_approve;
+mod flash_fee_rate;
 mod initialize_vault;
 mod manage;
 mod nav_controls;

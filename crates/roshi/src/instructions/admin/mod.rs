@@ -1,5 +1,6 @@
 pub mod authorize_action;
 pub mod collect_fees;
+pub mod flash_fee_rate;
 pub mod initialize_asset;
 pub mod initialize_program;
 pub mod initialize_vault;
@@ -25,6 +26,7 @@ pub mod write_down_fees;
 
 pub use authorize_action::try_authorize_action;
 pub use collect_fees::try_collect_fees;
+pub use flash_fee_rate::{try_admin_set_flash_fee_rate, try_strategist_lower_flash_fee_rate};
 pub use initialize_asset::try_initialize_asset;
 pub use initialize_program::try_initialize_program;
 pub use initialize_vault::try_initialize_vault;
