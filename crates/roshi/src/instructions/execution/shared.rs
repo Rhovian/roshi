@@ -45,7 +45,10 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
     /// Pre-CPI: identify writable custody accounts controlled by the subaccount
     /// and assert that each is clean before the downstream program runs.
     pub(crate) fn scan_subaccount_custody(&self) -> Result<Vec<Pubkey>, ProgramError> {
-        let mut keys = Vec::new();
+        // Pre-size to the route's meta count: this runs once per relayed CPI, so
+        // in a `manage_batch` a growing `Vec` would leak its discarded buffers
+        // into the never-freed per-instruction heap on every leg (see #24).
+        let mut keys = Vec::with_capacity(self.instruction.accounts.len());
         for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
             if meta.is_writable
                 && crate::instructions::token::is_clean_custody(info, &self.sub_account_key)?
@@ -82,6 +85,57 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
                 .ok_or(ProgramError::from(RoshiError::InvalidTokenAccount))?;
             if !crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
                 return Err(RoshiError::InvalidTokenAccount.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pre-CPI: snapshot every writable sub-account custody in the CPI account
+    /// section as `(key, balance)`, skipping `exempt` (the named swap endpoints,
+    /// whose flow the oracle value bound governs). Deduped — aggregator routes
+    /// list the same account more than once.
+    pub(crate) fn snapshot_writable_custody(
+        &self,
+        exempt: &[Pubkey],
+    ) -> Result<Vec<(Pubkey, u64)>, ProgramError> {
+        // Pre-size to the route's meta count (the upper bound on custody here).
+        // The bump allocator never frees within an instruction, so a growing
+        // `Vec` would leak every discarded buffer — one sized allocation instead.
+        let mut snapshot: Vec<(Pubkey, u64)> = Vec::with_capacity(self.instruction.accounts.len());
+        for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
+            if !meta.is_writable
+                || exempt.contains(info.key)
+                || snapshot.iter().any(|(key, _)| key == info.key)
+            {
+                continue;
+            }
+            if crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
+                let amount = crate::instructions::token::token_amount(info)?;
+                snapshot.push((*info.key, amount));
+            }
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Post-CPI: every snapshotted custody must still be clean and hold the same
+    /// balance — an authorized route may only move value through the named
+    /// endpoints, never a sibling custody it was also handed. A lingering
+    /// delegate (balance flat but a later drain enabled) is caught by the clean
+    /// check, a debit by the balance check.
+    pub(crate) fn verify_custody_unchanged(&self, snapshot: &[(Pubkey, u64)]) -> ProgramResult {
+        for (key, amount) in snapshot {
+            let info = self
+                .account_infos
+                .iter()
+                .find(|info| info.key == key)
+                .ok_or(ProgramError::from(RoshiError::InvalidTokenAccount))?;
+            if !crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
+                return Err(RoshiError::InvalidTokenAccount.into());
+            }
+            if crate::instructions::token::token_amount(info)? != *amount {
+                return Err(RoshiError::SwapCustodyMoved.into());
             }
         }
 

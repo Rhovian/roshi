@@ -73,7 +73,16 @@ where
         args.ix_data,
     )?;
 
+    // The CPI is signed by the sub-account PDA, so the route can move any
+    // sub-account custody it was handed — not just the two named endpoints the
+    // value bound measures. Snapshot every other writable custody and require it
+    // untouched, so a route can't drain a sibling custody past a flat bound.
+    let custody = authorized_cpi
+        .snapshot_writable_custody(&[*context.input_custody.key, *context.output_custody.key])?;
+
     invoke_authorized_cpi(&authorized_cpi)?;
+
+    authorized_cpi.verify_custody_unchanged(&custody)?;
 
     token::verify_custody_account(context.input_custody, context.sub_account.key)?;
     token::verify_custody_account(context.output_custody, context.sub_account.key)?;

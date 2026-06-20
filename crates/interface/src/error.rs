@@ -45,6 +45,7 @@ pub enum RoshiError {
     SiblingsRequireTopLevel = 39,
     DelegateNotCleared = 40,
     FlashFeeRateNotLower = 41,
+    SwapCustodyMoved = 42,
 }
 
 impl From<RoshiError> for ProgramError {

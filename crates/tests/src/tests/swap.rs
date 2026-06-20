@@ -743,7 +743,7 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
 }
 
 #[test]
-fn test_swap_value_bound_prices_routed_asset_output() {
+fn test_swap_value_bound_prices_routed_asset_swap() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -758,15 +758,6 @@ fn test_swap_value_bound_prices_routed_asset_output() {
 
     let sub_account_index = 0;
     let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
-    let input_custody = Pubkey::new_unique();
-    set_token_account_with_program(
-        &mut svm,
-        input_custody,
-        &vault.base_mint,
-        &sub_account,
-        INPUT_BALANCE,
-        TOKEN_PROGRAM_ID,
-    );
 
     // Routed asset: ASSET/QUOTE 2.0 over BASE/QUOTE 1.0.
     let asset_mint = Pubkey::new_unique();
@@ -804,10 +795,18 @@ fn test_swap_value_bound_prices_routed_asset_output() {
     let pyth_base = Pubkey::new_unique();
     crate::helpers::set_pyth_price(&mut svm, pyth_base, base_feed, 100_000_000, -8, 0);
 
+    // Both endpoints are the routed asset: the route's source must be the named
+    // input (#16 — an unnamed sub-account venue would be an unmeasured drain).
+    let asset_input = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        asset_input,
+        &asset_mint,
+        &sub_account,
+        1_000_000_000,
+    );
     let asset_output = Pubkey::new_unique();
     crate::helpers::set_token_account(&mut svm, asset_output, &asset_mint, &sub_account, 0);
-    let venue = Pubkey::new_unique();
-    crate::helpers::set_token_account(&mut svm, venue, &asset_mint, &sub_account, 1_000_000_000);
 
     set_swap_slippage(&mut svm, &fixture_vault, 100);
     fund(&mut svm, &fixture_vault.roles.swap_authority);
@@ -819,7 +818,7 @@ fn test_swap_value_bound_prices_routed_asset_output() {
         Op::IngestAccount { index: 1 },
     ])
     .unwrap();
-    let metas = token_transfer_metas(venue, asset_output, sub_account);
+    let metas = token_transfer_metas(asset_input, asset_output, sub_account);
     let hash =
         compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data, &[]).unwrap();
     let (action, bump) = Action::find_address(&vault.address, &hash);
@@ -845,25 +844,27 @@ fn test_swap_value_bound_prices_routed_asset_output() {
     )
     .unwrap();
 
-    // Input is base (no accounts); output leg consumes Asset PDA + asset
-    // oracle + routed base oracle. Nothing is spent, so the bound passes —
-    // this pins the routed valuation account layout end-to-end.
+    // Equal asset in and out: the routed valuation prices both legs through the
+    // asset oracle and the shared base leg end-to-end, pinning the layout
+    // (input asset, output asset, shared base).
     send_ok(
         &mut svm,
         roshi_client::instruction::swap(
             fixture_vault.roles.swap_authority.pubkey(),
             vault.address,
             sub_account,
-            input_custody,
+            asset_input,
             asset_output,
             action,
             vec![
                 AccountMeta::new_readonly(asset_pda, false),
                 AccountMeta::new_readonly(pyth_asset, false),
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(pyth_asset, false),
                 AccountMeta::new_readonly(pyth_base, false),
             ],
             vec![
-                AccountMeta::new(venue, false),
+                AccountMeta::new(asset_input, false),
                 AccountMeta::new(asset_output, false),
                 AccountMeta::new_readonly(sub_account, false),
                 AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
@@ -896,6 +897,7 @@ fn test_swap_value_bound_prices_routed_asset_output() {
         &fixture_vault.roles.swap_authority,
     );
     assert_eq!(token_balance(&svm, &asset_output), amount);
+    assert_eq!(token_balance(&svm, &asset_input), 1_000_000_000 - amount);
 }
 
 #[test]
@@ -1035,4 +1037,280 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
         RoshiError::SlippageExceeded,
     );
     assert_eq!(token_balance(&svm, &leak), 0);
+}
+
+// --- Custody scope: the bound must cover every sub-account custody it signs
+// for, not just the two named endpoints (#16). ---
+
+const SIBLING_BALANCE: u64 = 750_000;
+
+/// A funded clean token account owned by the fixture sub-account.
+fn install_sibling_custody(svm: &mut LiteSVM, fixture: &SwapFixture, balance: u64) -> Pubkey {
+    let custody = Pubkey::new_unique();
+    set_token_account_with_program(
+        svm,
+        custody,
+        &fixture.vault.base_mint,
+        &fixture.sub_account,
+        balance,
+        fixture.token_program,
+    );
+    custody
+}
+
+/// Empty-`Ops` Swap action: the hash commits only the program id, so the route's
+/// account list floats — the real-world Jupiter integration shape and the #16
+/// threat surface. Returns the action PDA.
+fn install_floating_swap_action(svm: &mut LiteSVM, fixture: &SwapFixture) -> Pubkey {
+    let ops = Ops::new(std::iter::empty::<Op>()).unwrap();
+    let hash = compute_action_hash_from_metas(&fixture.token_program, &ops, &[], &[], &[]).unwrap();
+    let (pda, bump) = Action::find_address(&fixture.vault.address, &hash);
+    svm.set_account(
+        pda,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: hash,
+                ops,
+                scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+    pda
+}
+
+/// A swap relaying `route_metas` as the CPI (program appended), with no amount
+/// or oracle bound in the way (`min_out = 0`, `max_in = MAX`, no valuation). The
+/// account flags mirror each meta's writability; the sub-account is promoted to
+/// signer by the relay.
+fn swap_ix_route(
+    fixture: &SwapFixture,
+    input_custody: Pubkey,
+    output_custody: Pubkey,
+    action: Pubkey,
+    route_metas: Vec<AccountMeta>,
+    ix_data: Vec<u8>,
+) -> Instruction {
+    let account_flags = route_metas
+        .iter()
+        .map(|meta| AccountFlags {
+            is_signer: false,
+            is_writable: meta.is_writable,
+        })
+        .collect();
+    let accounts_len = route_metas.len() as u8;
+    let mut cpi_accounts = route_metas;
+    cpi_accounts.push(AccountMeta::new_readonly(fixture.token_program, false));
+
+    roshi_client::instruction::swap(
+        fixture.vault.roles.swap_authority.pubkey(),
+        fixture.vault.address,
+        fixture.sub_account,
+        input_custody,
+        output_custody,
+        action,
+        vec![],
+        cpi_accounts,
+        SwapArgs {
+            min_out: 0,
+            max_in: u64::MAX,
+            sub_account: fixture.sub_account_index,
+            program_id: fixture.token_program.to_bytes(),
+            accounts_start: 0,
+            accounts_len,
+            account_flags,
+            ix_data,
+        },
+    )
+    .unwrap()
+}
+
+fn token_approve_data(amount: u64) -> Vec<u8> {
+    let mut data = vec![4];
+    data.extend_from_slice(&amount.to_le_bytes());
+    data
+}
+
+#[test]
+fn test_swap_rejects_draining_unnamed_sibling_custody() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    // The sub-account owns a third, funded custody. The attacker names the two
+    // empty fixture endpoints as input/output (they stay flat) and routes the
+    // drain through the sibling to their own account — the #16 PoC.
+    let sibling = install_sibling_custody(&mut svm, &fixture, SIBLING_BALANCE);
+    let attacker_dest = Pubkey::new_unique();
+    set_token_account_with_program(
+        &mut svm,
+        attacker_dest,
+        &fixture.vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+        fixture.token_program,
+    );
+    let action = install_transfer_action(&mut svm, &fixture, sibling, attacker_dest);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            swap_ix_with_valuation(
+                &fixture,
+                fixture.input_custody,
+                fixture.output_custody,
+                action,
+                sibling,
+                attacker_dest,
+                vec![],
+                fixture.ix_data.clone(),
+            ),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::SwapCustodyMoved,
+    );
+    // The drain was rolled back with the failed transaction.
+    assert_eq!(token_balance(&svm, &sibling), SIBLING_BALANCE);
+}
+
+#[test]
+fn test_swap_allows_untouched_sibling_in_route() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    let sibling = install_sibling_custody(&mut svm, &fixture, SIBLING_BALANCE);
+    let action = install_floating_swap_action(&mut svm, &fixture);
+
+    // An honest input -> output transfer that also hands the sibling to the
+    // route (a 4th meta the SPL transfer ignores). The snapshot records the
+    // sibling, sees it unchanged, and lets the swap settle.
+    let route = vec![
+        AccountMeta::new(fixture.input_custody, false),
+        AccountMeta::new(fixture.output_custody, false),
+        AccountMeta::new_readonly(fixture.sub_account, false),
+        AccountMeta::new(sibling, false),
+    ];
+    send_ok(
+        &mut svm,
+        swap_ix_route(
+            &fixture,
+            fixture.input_custody,
+            fixture.output_custody,
+            action,
+            route,
+            token_transfer_data(SWAP_AMOUNT),
+        ),
+        &fixture.vault.roles.swap_authority,
+    );
+
+    assert_eq!(
+        token_balance(&svm, &fixture.input_custody),
+        INPUT_BALANCE - SWAP_AMOUNT
+    );
+    assert_eq!(
+        token_balance(&svm, &fixture.output_custody),
+        OUTPUT_BALANCE + SWAP_AMOUNT
+    );
+    assert_eq!(token_balance(&svm, &sibling), SIBLING_BALANCE);
+}
+
+#[test]
+fn test_swap_rejects_draining_sibling_listed_twice() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    // Aggregator routes list the same account more than once. A duplicated
+    // sibling must be snapshotted once and still caught when the route drains it.
+    let sibling = install_sibling_custody(&mut svm, &fixture, SIBLING_BALANCE);
+    let attacker_dest = Pubkey::new_unique();
+    set_token_account_with_program(
+        &mut svm,
+        attacker_dest,
+        &fixture.vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+        fixture.token_program,
+    );
+    let action = install_floating_swap_action(&mut svm, &fixture);
+
+    let route = vec![
+        AccountMeta::new(sibling, false),
+        AccountMeta::new(attacker_dest, false),
+        AccountMeta::new_readonly(fixture.sub_account, false),
+        AccountMeta::new(sibling, false),
+    ];
+    assert_roshi_error(
+        send(
+            &mut svm,
+            swap_ix_route(
+                &fixture,
+                fixture.input_custody,
+                fixture.output_custody,
+                action,
+                route,
+                token_transfer_data(SWAP_AMOUNT),
+            ),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::SwapCustodyMoved,
+    );
+    assert_eq!(token_balance(&svm, &sibling), SIBLING_BALANCE);
+}
+
+#[test]
+fn test_swap_rejects_route_that_delegates_sibling() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    // The route leaves the sibling balance flat but grants a delegate — a
+    // deferred drain. Balance-unchanged alone wouldn't catch it; the post-CPI
+    // clean check rejects the lingering delegate.
+    let sibling = install_sibling_custody(&mut svm, &fixture, SIBLING_BALANCE);
+    let action = install_floating_swap_action(&mut svm, &fixture);
+
+    let route = vec![
+        AccountMeta::new(sibling, false),
+        AccountMeta::new_readonly(Pubkey::new_unique(), false),
+        AccountMeta::new_readonly(fixture.sub_account, false),
+    ];
+    assert_roshi_error(
+        send(
+            &mut svm,
+            swap_ix_route(
+                &fixture,
+                fixture.input_custody,
+                fixture.output_custody,
+                action,
+                route,
+                token_approve_data(SWAP_AMOUNT),
+            ),
+            &fixture.vault.roles.swap_authority,
+        ),
+        RoshiError::InvalidTokenAccount,
+    );
 }
