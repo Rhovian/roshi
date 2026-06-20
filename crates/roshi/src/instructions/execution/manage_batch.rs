@@ -2,7 +2,7 @@ use crate::instructions::{accounts::ManageBatchContext, ManageBatchArgs};
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
+use super::shared::{settle_authorized_cpi, validate_authorized_cpi};
 
 /// Implements [`crate::instructions::RoshiInstruction::ManageBatch`].
 ///
@@ -40,9 +40,11 @@ pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> Prog
             action.account_flags,
             action.ix_data,
         )?;
-        let custody = authorized_cpi.scan_subaccount_custody()?;
-        invoke_authorized_cpi(&authorized_cpi)?;
-        authorized_cpi.reverify_subaccount_custody(&custody)?;
+        settle_authorized_cpi(
+            &authorized_cpi,
+            &validated_accounts.action,
+            accounts.cpi_accounts,
+        )?;
     }
 
     Ok(())

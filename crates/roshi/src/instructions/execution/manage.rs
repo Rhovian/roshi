@@ -1,7 +1,7 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramResult;
 
-use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
+use super::shared::{settle_authorized_cpi, validate_authorized_cpi};
 use crate::instructions::{accounts::ManageContext, ManageArgs};
 
 /// Implements [`crate::instructions::RoshiInstruction::Manage`].
@@ -36,7 +36,9 @@ pub fn try_manage(accounts: &[AccountInfo], args: ManageArgs) -> ProgramResult {
         args.ix_data,
     )?;
 
-    let custody = authorized_cpi.scan_subaccount_custody()?;
-    invoke_authorized_cpi(&authorized_cpi)?;
-    authorized_cpi.reverify_subaccount_custody(&custody)
+    settle_authorized_cpi(
+        &authorized_cpi,
+        &validated_accounts.action,
+        accounts.cpi_accounts,
+    )
 }

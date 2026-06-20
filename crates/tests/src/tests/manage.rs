@@ -51,7 +51,7 @@ impl SystemTransferManageFixture {
         let transfer_data = system_transfer_data(TRANSFER_LAMPORTS);
         let ops = Ops::empty();
         let action_hash =
-            compute_action_hash(&system_program::ID, &ops, &[], &transfer_data).unwrap();
+            compute_action_hash(&system_program::ID, &ops, &[], &transfer_data, &[]).unwrap();
         let (action_pda, _) = Action::find_address(&vault_pda, &action_hash);
 
         Self {
@@ -249,9 +249,14 @@ fn test_manage_rejects_dirty_custody_before_cpi() {
     let ix_data = token_transfer_data(1);
     let metas = token_transfer_metas(custody, destination, sub_account);
     let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
-    let action_hash =
-        compute_action_hash_from_metas(&crate::helpers::TOKEN_PROGRAM_ID, &ops, &metas, &ix_data)
-            .unwrap();
+    let action_hash = compute_action_hash_from_metas(
+        &crate::helpers::TOKEN_PROGRAM_ID,
+        &ops,
+        &metas,
+        &ix_data,
+        &[],
+    )
+    .unwrap();
     let action_pda = install_manager_action(&mut svm, &vault, action_hash, ops);
 
     assert_roshi_error(
@@ -314,9 +319,14 @@ fn test_manage_rejects_post_cpi_custody_owner_hijack() {
     let ix_data = set_account_owner_data(new_owner);
     let metas = set_account_owner_metas(custody, sub_account);
     let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
-    let action_hash =
-        compute_action_hash_from_metas(&crate::helpers::TOKEN_PROGRAM_ID, &ops, &metas, &ix_data)
-            .unwrap();
+    let action_hash = compute_action_hash_from_metas(
+        &crate::helpers::TOKEN_PROGRAM_ID,
+        &ops,
+        &metas,
+        &ix_data,
+        &[],
+    )
+    .unwrap();
     let action_pda = install_manager_action(&mut svm, &vault, action_hash, ops);
 
     assert_roshi_error(
@@ -542,6 +552,7 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
         &system_program::ID,
         &readonly_ops,
         &[AccountMeta::new_readonly(fixture.scratch, false)],
+        &[],
         &[],
     )
     .unwrap();

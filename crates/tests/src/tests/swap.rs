@@ -79,7 +79,8 @@ impl SwapFixture {
         .unwrap();
         let action_metas = token_transfer_metas(input_custody, output_custody, sub_account);
         let action_hash =
-            compute_action_hash_from_metas(&token_program, &ops, &action_metas, &ix_data).unwrap();
+            compute_action_hash_from_metas(&token_program, &ops, &action_metas, &ix_data, &[])
+                .unwrap();
         let action_pda = Action::find_address(&vault.address, &action_hash).0;
 
         Self {
@@ -445,6 +446,7 @@ fn install_transfer_action(
         &fixture.ops,
         &metas,
         &fixture.ix_data,
+        &[],
     )
     .unwrap();
     let (pda, bump) = Action::find_address(&fixture.vault.address, &hash);
@@ -689,7 +691,7 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
     let ix_data = token_transfer_data(amount);
     let metas = token_transfer_metas(asset_input, leak, fixture.sub_account);
     let hash =
-        compute_action_hash_from_metas(&fixture.token_program, &fixture.ops, &metas, &ix_data)
+        compute_action_hash_from_metas(&fixture.token_program, &fixture.ops, &metas, &ix_data, &[])
             .unwrap();
     let (action, bump) = Action::find_address(&fixture.vault.address, &hash);
     svm.set_account(
@@ -812,7 +814,8 @@ fn test_swap_value_bound_prices_routed_asset_output() {
     ])
     .unwrap();
     let metas = token_transfer_metas(venue, asset_output, sub_account);
-    let hash = compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data).unwrap();
+    let hash =
+        compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data, &[]).unwrap();
     let (action, bump) = Action::find_address(&vault.address, &hash);
     svm.set_account(
         action,
@@ -948,7 +951,8 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
     ])
     .unwrap();
     let metas = token_transfer_metas(input_a, leak, sub_account);
-    let hash = compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data).unwrap();
+    let hash =
+        compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data, &[]).unwrap();
     let (action, bump) = Action::find_address(&vault.address, &hash);
     svm.set_account(
         action,

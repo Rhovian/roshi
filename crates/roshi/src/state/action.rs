@@ -9,7 +9,9 @@ use roshi_interface::action::{
 };
 use roshi_interface::error::RoshiError;
 
-pub use roshi_interface::action::{ActionScope, Op, Ops, StoredOp, MAX_ACTION_OPS};
+pub use roshi_interface::action::{
+    ActionScope, Op, Ops, ResolvedSibling, StoredOp, MAX_ACTION_OPS,
+};
 
 #[derive(Clone, Copy, SchemaWrite, SchemaRead)]
 #[repr(C)]
@@ -58,6 +60,7 @@ pub fn compute_action_hash(
     ops: &Ops,
     accounts: &[AccountInfo],
     ix_data: &[u8],
+    siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ProgramError> {
     let account_metas = accounts
         .iter()
@@ -68,7 +71,7 @@ pub fn compute_action_hash(
         })
         .collect::<Vec<_>>();
 
-    compute_action_hash_from_metas(program_id, ops, &account_metas, ix_data)
+    compute_action_hash_from_metas(program_id, ops, &account_metas, ix_data, siblings)
 }
 
 pub fn compute_action_hash_from_metas(
@@ -76,8 +79,9 @@ pub fn compute_action_hash_from_metas(
     ops: &Ops,
     accounts: &[AccountMeta],
     ix_data: &[u8],
+    siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ProgramError> {
-    compute_interface_action_hash_from_metas(program_id, ops, accounts, ix_data)
+    compute_interface_action_hash_from_metas(program_id, ops, accounts, ix_data, siblings)
         .map_err(action_hash_error_to_program_error)
 }
 
@@ -100,6 +104,7 @@ fn action_hash_error_to_program_error(error: ActionHashError) -> ProgramError {
         }
         ActionHashError::AccountIndexOutOfBounds => RoshiError::AccountIndexOutOfBounds.into(),
         ActionHashError::InvalidInstructionData => ProgramError::InvalidInstructionData,
+        ActionHashError::MissingSibling => RoshiError::RequiredSiblingMissing.into(),
     }
 }
 
@@ -127,7 +132,7 @@ mod tests {
             false,
         );
         let readonly_hash =
-            compute_action_hash(&program_id, &ops, &[readonly_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[readonly_account], &ix_data, &[]).unwrap();
 
         let mut lamports = 0;
         let mut data = [];
@@ -141,7 +146,7 @@ mod tests {
             false,
         );
         let writable_hash =
-            compute_action_hash(&program_id, &ops, &[writable_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[writable_account], &ix_data, &[]).unwrap();
 
         let mut lamports = 0;
         let mut data = [];
@@ -155,7 +160,7 @@ mod tests {
             false,
         );
         let signer_hash =
-            compute_action_hash(&program_id, &ops, &[signer_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[signer_account], &ix_data, &[]).unwrap();
 
         assert_ne!(readonly_hash, writable_hash);
         assert_ne!(readonly_hash, signer_hash);

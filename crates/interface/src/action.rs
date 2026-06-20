@@ -19,6 +19,13 @@ pub enum ActionScope {
     Swap,
     #[wincode(tag = 2)]
     AtomicRedeem,
+    /// Strategist-relayed SPL `approve` that grants a one-shot delegate on a
+    /// sub-account custody account, bound at relay so a forced `flash_repay`
+    /// consumes it exactly and clears it. Relayed through `manage`/`manage_batch`
+    /// like `Manager`, but its approved account is exempt from the standard
+    /// custody reverify in favor of a bounded-delegate check.
+    #[wincode(tag = 3)]
+    FlashApprove,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -32,6 +39,22 @@ pub enum Op {
     IngestAccount { index: u8 },
     #[wincode(tag = 3)]
     IngestInstructionDataSize,
+    /// Commit a top-level sibling instruction's program id plus a leading data
+    /// slice (its selector). `relative_index` locates the sibling relative to
+    /// the executing top-level instruction (the `manage`/`manage_batch` call);
+    /// the sibling's program id is always folded so a discriminator cannot be
+    /// forged under a different program. Reaches the instructions sysvar at
+    /// relay; see [`compute_action_hash_from_metas`].
+    #[wincode(tag = 4)]
+    IngestSiblingInstruction {
+        relative_index: i8,
+        offset: u8,
+        len: u8,
+    },
+    /// Commit a top-level sibling instruction's account pubkey at `index`,
+    /// located by `relative_index` as in [`Op::IngestSiblingInstruction`].
+    #[wincode(tag = 5)]
+    IngestSiblingAccount { relative_index: i8, index: u8 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -64,6 +87,15 @@ impl StoredOp {
             3 if self.arg0 == 0 && self.arg1 == 0 && self.arg2 == 0 => {
                 Op::IngestInstructionDataSize
             }
+            4 => Op::IngestSiblingInstruction {
+                relative_index: self.arg0 as i8,
+                offset: self.arg1,
+                len: self.arg2,
+            },
+            5 if self.arg2 == 0 => Op::IngestSiblingAccount {
+                relative_index: self.arg0 as i8,
+                index: self.arg1,
+            },
             _ => return Err(ActionHashError::InvalidOp),
         };
 
@@ -100,6 +132,25 @@ impl From<Op> for StoredOp {
                 kind: 3,
                 arg0: 0,
                 arg1: 0,
+                arg2: 0,
+            },
+            Op::IngestSiblingInstruction {
+                relative_index,
+                offset,
+                len,
+            } => Self {
+                kind: 4,
+                arg0: relative_index as u8,
+                arg1: offset,
+                arg2: len,
+            },
+            Op::IngestSiblingAccount {
+                relative_index,
+                index,
+            } => Self {
+                kind: 5,
+                arg0: relative_index as u8,
+                arg1: index,
                 arg2: 0,
             },
         }
@@ -146,6 +197,15 @@ mod tests {
             },
             Op::IngestAccount { index: 9 },
             Op::IngestInstructionDataSize,
+            Op::IngestSiblingInstruction {
+                relative_index: -1,
+                offset: 0,
+                len: 8,
+            },
+            Op::IngestSiblingAccount {
+                relative_index: 2,
+                index: 5,
+            },
         ])
         .unwrap();
         let decoded = ops.iter().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
@@ -160,6 +220,15 @@ mod tests {
                 },
                 Op::IngestAccount { index: 9 },
                 Op::IngestInstructionDataSize,
+                Op::IngestSiblingInstruction {
+                    relative_index: -1,
+                    offset: 0,
+                    len: 8,
+                },
+                Op::IngestSiblingAccount {
+                    relative_index: 2,
+                    index: 5,
+                },
             ]
         );
     }
@@ -173,7 +242,7 @@ mod tests {
         let mut too_many = Ops::empty();
         too_many.ops_len = u8::try_from(MAX_ACTION_OPS + 1).unwrap();
         assert_eq!(
-            compute_action_hash_from_metas(&program_id, &too_many, &account_metas, &ix_data),
+            compute_action_hash_from_metas(&program_id, &too_many, &account_metas, &ix_data, &[]),
             Err(ActionHashError::TooManyOps)
         );
 
@@ -186,7 +255,13 @@ mod tests {
         };
         invalid_kind.ops_len = 1;
         assert_eq!(
-            compute_action_hash_from_metas(&program_id, &invalid_kind, &account_metas, &ix_data),
+            compute_action_hash_from_metas(
+                &program_id,
+                &invalid_kind,
+                &account_metas,
+                &ix_data,
+                &[]
+            ),
             Err(ActionHashError::InvalidOp)
         );
 
@@ -199,7 +274,13 @@ mod tests {
         };
         non_canonical.ops_len = 1;
         assert_eq!(
-            compute_action_hash_from_metas(&program_id, &non_canonical, &account_metas, &ix_data),
+            compute_action_hash_from_metas(
+                &program_id,
+                &non_canonical,
+                &account_metas,
+                &ix_data,
+                &[]
+            ),
             Err(ActionHashError::InvalidOp)
         );
     }
@@ -263,6 +344,20 @@ pub enum ActionHashError {
     InstructionSliceOutOfBounds,
     AccountIndexOutOfBounds,
     InvalidInstructionData,
+    MissingSibling,
+}
+
+/// A top-level sibling instruction already read from the transaction, supplied
+/// to the hash so [`Op::IngestSiblingInstruction`]/[`Op::IngestSiblingAccount`]
+/// can fold its observed fields. On-chain the relay reads these from the
+/// instructions sysvar; off-chain the admin supplies the intended sibling when
+/// precomputing the authorized hash. Hashing stays a pure function of its
+/// inputs — it never touches the sysvar itself.
+pub struct ResolvedSibling<'a> {
+    pub relative_index: i8,
+    pub program_id: Pubkey,
+    pub data: &'a [u8],
+    pub accounts: &'a [Pubkey],
 }
 
 pub fn compute_action_hash_from_metas(
@@ -270,6 +365,7 @@ pub fn compute_action_hash_from_metas(
     ops: &Ops,
     accounts: &[AccountMeta],
     ix_data: &[u8],
+    siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ActionHashError> {
     let mut chunks = vec![program_id.to_bytes().to_vec()];
 
@@ -309,9 +405,56 @@ pub fn compute_action_hash_from_metas(
                 chunks.push(vec![3]);
                 chunks.push(data_len.to_le_bytes().to_vec());
             }
+            Op::IngestSiblingInstruction {
+                relative_index,
+                offset,
+                len,
+            } => {
+                let sibling = resolve_sibling(siblings, relative_index)?;
+                let start = usize::from(offset);
+                let end = start
+                    .checked_add(usize::from(len))
+                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
+                let slice = sibling
+                    .data
+                    .get(start..end)
+                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
+
+                chunks.push(vec![4]);
+                chunks.push(vec![relative_index as u8]);
+                chunks.push(sibling.program_id.to_bytes().to_vec());
+                chunks.push(vec![offset]);
+                chunks.push(vec![len]);
+                chunks.push(slice.to_vec());
+            }
+            Op::IngestSiblingAccount {
+                relative_index,
+                index,
+            } => {
+                let sibling = resolve_sibling(siblings, relative_index)?;
+                let account = sibling
+                    .accounts
+                    .get(usize::from(index))
+                    .ok_or(ActionHashError::AccountIndexOutOfBounds)?;
+
+                chunks.push(vec![5]);
+                chunks.push(vec![relative_index as u8]);
+                chunks.push(vec![index]);
+                chunks.push(account.to_bytes().to_vec());
+            }
         }
     }
 
     let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
     Ok(hashv(&refs).to_bytes())
+}
+
+fn resolve_sibling<'a, 'b>(
+    siblings: &'a [ResolvedSibling<'b>],
+    relative_index: i8,
+) -> Result<&'a ResolvedSibling<'b>, ActionHashError> {
+    siblings
+        .iter()
+        .find(|sibling| sibling.relative_index == relative_index)
+        .ok_or(ActionHashError::MissingSibling)
 }
