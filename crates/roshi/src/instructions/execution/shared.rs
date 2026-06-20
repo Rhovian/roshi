@@ -96,7 +96,10 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
         &self,
         exempt: &[Pubkey],
     ) -> Result<Vec<(Pubkey, u64)>, ProgramError> {
-        let mut snapshot: Vec<(Pubkey, u64)> = Vec::new();
+        // Pre-size to the route's meta count (the upper bound on custody here).
+        // The bump allocator never frees within an instruction, so a growing
+        // `Vec` would leak every discarded buffer — one sized allocation instead.
+        let mut snapshot: Vec<(Pubkey, u64)> = Vec::with_capacity(self.instruction.accounts.len());
         for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
             if !meta.is_writable
                 || exempt.contains(info.key)
