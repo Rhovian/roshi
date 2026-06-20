@@ -88,6 +88,54 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
         Ok(())
     }
 
+    /// Pre-CPI: snapshot every writable sub-account custody in the CPI account
+    /// section as `(key, balance)`, skipping `exempt` (the named swap endpoints,
+    /// whose flow the oracle value bound governs). Deduped — aggregator routes
+    /// list the same account more than once.
+    pub(crate) fn snapshot_writable_custody(
+        &self,
+        exempt: &[Pubkey],
+    ) -> Result<Vec<(Pubkey, u64)>, ProgramError> {
+        let mut snapshot: Vec<(Pubkey, u64)> = Vec::new();
+        for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
+            if !meta.is_writable
+                || exempt.contains(info.key)
+                || snapshot.iter().any(|(key, _)| key == info.key)
+            {
+                continue;
+            }
+            if crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
+                let amount = crate::instructions::token::token_amount(info)?;
+                snapshot.push((*info.key, amount));
+            }
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Post-CPI: every snapshotted custody must still be clean and hold the same
+    /// balance — an authorized route may only move value through the named
+    /// endpoints, never a sibling custody it was also handed. A lingering
+    /// delegate (balance flat but a later drain enabled) is caught by the clean
+    /// check, a debit by the balance check.
+    pub(crate) fn verify_custody_unchanged(&self, snapshot: &[(Pubkey, u64)]) -> ProgramResult {
+        for (key, amount) in snapshot {
+            let info = self
+                .account_infos
+                .iter()
+                .find(|info| info.key == key)
+                .ok_or(ProgramError::from(RoshiError::InvalidTokenAccount))?;
+            if !crate::instructions::token::is_clean_custody(info, &self.sub_account_key)? {
+                return Err(RoshiError::InvalidTokenAccount.into());
+            }
+            if crate::instructions::token::token_amount(info)? != *amount {
+                return Err(RoshiError::SwapCustodyMoved.into());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Assert the relayed CPI is an SPL `approve` (program is an SPL token
     /// program, leading data byte is the approve discriminator). A
     /// `FlashApprove` action may only ever grant a delegate via `approve`.
