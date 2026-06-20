@@ -16,22 +16,25 @@ use crate::{
     },
 };
 use roshi_interface::error::RoshiError;
+use roshi_interface::math::round_with_min1;
 
 /// SPL Token `Approve` instruction discriminator (shared by Token and
 /// Token-2022; `Transfer` is 3, `Approve` is 4). A `FlashApprove` action must
 /// relay exactly this instruction.
 const SPL_APPROVE_TAG: u8 = 4;
 
-pub(crate) struct AuthorizedCpi<'a> {
+pub(crate) struct AuthorizedCpi<'a, 'info> {
     instruction: Instruction,
-    account_infos: Vec<AccountInfo<'a>>,
+    // Borrowed from the relay's account list, not cloned: the same `manage_batch`
+    // bump-allocator pressure that #24 fixes in the action hash applied here too.
+    account_infos: &'a [AccountInfo<'info>],
     vault_key: Pubkey,
     sub_account_key: Pubkey,
     sub_account_index: u8,
     sub_account_bump: u8,
 }
 
-impl<'a> AuthorizedCpi<'a> {
+impl<'a, 'info> AuthorizedCpi<'a, 'info> {
     pub(crate) fn has_account_meta(&self, key: &Pubkey) -> bool {
         self.instruction
             .accounts
@@ -43,7 +46,7 @@ impl<'a> AuthorizedCpi<'a> {
     /// and assert that each is clean before the downstream program runs.
     pub(crate) fn scan_subaccount_custody(&self) -> Result<Vec<Pubkey>, ProgramError> {
         let mut keys = Vec::new();
-        for (meta, info) in self.instruction.accounts.iter().zip(&self.account_infos) {
+        for (meta, info) in self.instruction.accounts.iter().zip(self.account_infos) {
             if meta.is_writable
                 && crate::instructions::token::is_clean_custody(info, &self.sub_account_key)?
             {
@@ -99,7 +102,7 @@ impl<'a> AuthorizedCpi<'a> {
     }
 
     /// The approve's source token account = its first CPI account.
-    fn approve_source(&self) -> Result<&AccountInfo<'a>, ProgramError> {
+    fn approve_source(&self) -> Result<&AccountInfo<'info>, ProgramError> {
         self.account_infos
             .first()
             .ok_or(ProgramError::NotEnoughAccountKeys)
@@ -134,15 +137,15 @@ impl<'a> AuthorizedCpi<'a> {
 /// flags, then recomputes the action hash from the effective CPI program id,
 /// stored `Ops`, rebuilt metas, and instruction data. The selected subaccount
 /// is promoted to signer when present in the CPI metas.
-pub(crate) fn validate_authorized_cpi<'a>(
-    cpi_accounts: &[AccountInfo<'a>],
+pub(crate) fn validate_authorized_cpi<'a, 'info>(
+    cpi_accounts: &'a [AccountInfo<'info>],
     validated_accounts: &ValidatedManageAccounts,
     program_id: [u8; 32],
     accounts_start: u8,
     accounts_len: u8,
     account_flags: Vec<AccountFlags>,
     ix_data: Vec<u8>,
-) -> Result<AuthorizedCpi<'a>, ProgramError> {
+) -> Result<AuthorizedCpi<'a, 'info>, ProgramError> {
     let accounts_start = usize::from(accounts_start);
     let accounts_len = usize::from(accounts_len);
     let accounts_end = accounts_start
@@ -218,7 +221,7 @@ pub(crate) fn validate_authorized_cpi<'a>(
             accounts: cpi_account_metas,
             data: ix_data,
         },
-        account_infos: cpi_account_infos.to_vec(),
+        account_infos: cpi_account_infos,
         vault_key: validated_accounts.vault_key,
         sub_account_key: validated_accounts.sub_account_key,
         sub_account_index: validated_accounts.sub_account_index,
@@ -319,7 +322,7 @@ fn load_required_siblings(
 
 /// Invokes a CPI after all Roshi and CPI-specific authorization checks have
 /// already been performed.
-pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramResult {
+pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi<'_, '_>) -> ProgramResult {
     let sub_account_index_seed = [authorized_cpi.sub_account_index];
     let sub_account_bump_seed = [authorized_cpi.sub_account_bump];
     let signer_seeds = &[
@@ -331,7 +334,7 @@ pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramRe
 
     invoke_signed(
         &authorized_cpi.instruction,
-        &authorized_cpi.account_infos,
+        authorized_cpi.account_infos,
         &[signer_seeds],
     )
 }
@@ -344,7 +347,7 @@ pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi) -> ProgramRe
 /// exactly. Reachable scopes are gated to the strategist by
 /// `verify_action_executor`; `Swap`/`AtomicRedeem` never relay here.
 pub(crate) fn settle_authorized_cpi(
-    authorized_cpi: &AuthorizedCpi,
+    authorized_cpi: &AuthorizedCpi<'_, '_>,
     action: &Action,
     cpi_accounts: &[AccountInfo],
 ) -> ProgramResult {
@@ -357,89 +360,116 @@ pub(crate) fn settle_authorized_cpi(
         ActionScope::FlashApprove => {
             authorized_cpi.verify_is_approve()?;
             let source_key = *authorized_cpi.approve_source()?.key;
-            let (amount, destination) = read_flash_binding(&action.ops, cpi_accounts)?;
-            // The flash-borrowed F must land in the exact account being
-            // delegated: then the delegate can only ever move money the flash
-            // itself deposited there, and any drain is owed back to the loan.
-            if destination != source_key {
-                return Err(RoshiError::FlashDestinationMismatch.into());
-            }
+            // Tie the flash-borrow's destination and the cleared-check's target
+            // to the delegated account, and read the borrowed `F`.
+            let flash_amount = bind_flash_siblings(&action.ops, cpi_accounts, &source_key)?;
+            // Bind the allowance to `F + round_half_up(F * fee_num / fee_den)`
+            // floored at one atom — the committed opaque rate reproduces the
+            // lender's proportional flash fee bit-for-bit (klend rounds, not
+            // ceils; see #25), so the forced `flash_repay` clears the delegate.
+            let fee = round_with_min1(flash_amount, action.fee_num, action.fee_den)?;
+            let expected = flash_amount.checked_add(fee).ok_or(RoshiError::Overflow)?;
             let custody = authorized_cpi.scan_subaccount_custody()?;
             invoke_authorized_cpi(authorized_cpi)?;
             authorized_cpi.reverify_subaccount_custody_except(&custody, Some(&source_key))?;
-            authorized_cpi.verify_flash_delegate(amount)
+            authorized_cpi.verify_flash_delegate(expected)
         }
         ActionScope::Swap | ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
     }
 }
 
-/// Resolve the bound flash-borrow sibling and return `(F, destination)` — the
-/// borrowed amount and the account it was paid into. A `FlashApprove` action
-/// commits this binding with exactly one `IngestSiblingInstruction` (the
-/// flash-borrow's program + selector; `F` is the `u64` right after the committed
-/// selector — klend `flash_borrow(liquidity_amount)` puts the amount after its
-/// discriminator) and exactly one `IngestSiblingAccount` (the borrow's
-/// destination slot), both at the same relative index. Program + selector +
-/// destination are pinned by the action hash; the caller requires
-/// `destination == approve.source`.
-fn read_flash_binding(
+/// Resolve the two siblings a `FlashApprove` action commits, tie each to the
+/// delegated `source`, and return the flash-borrowed `F`.
+///
+/// The action commits, via the #18 ops, exactly two siblings — each an
+/// `IngestSiblingInstruction` (program + selector, with `F` right after the
+/// flash-borrow's selector) paired with an `IngestSiblingAccount` (one of its
+/// accounts) at the same relative index, disambiguated by resolved program:
+///
+/// - the **flash-borrow** (`program != crate::ID`): `F` lands in the delegated
+///   account, so its tied account must equal `source`; `F` is read after the
+///   committed selector;
+/// - the **`assert_delegate_cleared` backstop** (`program == crate::ID`): a
+///   committed, un-omittable post-`flash_repay` check that the same `source`
+///   ends with no delegate, so an over-high committed fee can't leave a residual.
+///
+/// Program + selector + the tied account are pinned by the action hash; this
+/// adds the runtime tie of each sibling's account to `source`.
+fn bind_flash_siblings(
     ops: &Ops,
     cpi_accounts: &[AccountInfo],
-) -> Result<(u64, Pubkey), ProgramError> {
-    let mut instruction_op = None;
-    let mut account_op = None;
+    source: &Pubkey,
+) -> Result<u64, ProgramError> {
+    // (relative_index, amount_offset) and (relative_index, account_index).
+    let mut instruction_ops: Vec<(i8, usize)> = Vec::new();
+    let mut account_ops: Vec<(i8, usize)> = Vec::new();
     for op in ops.iter().map_err(|_| RoshiError::InvalidOp)? {
         match op.map_err(|_| RoshiError::InvalidOp)? {
             Op::IngestSiblingInstruction {
                 relative_index,
                 offset,
                 len,
-            } => {
-                if instruction_op.is_some() {
-                    return Err(RoshiError::InvalidOp.into());
-                }
-                instruction_op = Some((relative_index, usize::from(offset) + usize::from(len)));
-            }
+            } => instruction_ops.push((relative_index, usize::from(offset) + usize::from(len))),
             Op::IngestSiblingAccount {
                 relative_index,
                 index,
-            } => {
-                if account_op.is_some() {
-                    return Err(RoshiError::InvalidOp.into());
-                }
-                account_op = Some((relative_index, usize::from(index)));
-            }
+            } => account_ops.push((relative_index, usize::from(index))),
             _ => {}
         }
     }
-    let (relative_index, amount_offset) =
-        instruction_op.ok_or(RoshiError::RequiredSiblingMissing)?;
-    let (account_relative_index, dest_index) =
-        account_op.ok_or(RoshiError::RequiredSiblingMissing)?;
-    // Both ops must designate the same sibling (the flash-borrow we read F from
-    // is the same one whose destination we tie to the delegated account).
-    if account_relative_index != relative_index {
+    // Exactly two committed siblings, each instruction op paired with an account op.
+    if instruction_ops.len() != 2 || account_ops.len() != 2 {
         return Err(RoshiError::InvalidOp.into());
     }
 
     let sysvar = instructions_sysvar(cpi_accounts)?;
-    let instruction = get_instruction_relative(i64::from(relative_index), sysvar)
-        .map_err(|_| RoshiError::RequiredSiblingMissing)?;
 
-    let end = amount_offset
-        .checked_add(8)
-        .ok_or(ProgramError::InvalidInstructionData)?;
-    let bytes = instruction
-        .data
-        .get(amount_offset..end)
-        .ok_or(ProgramError::from(RoshiError::InstructionSliceOutOfBounds))?;
-    let amount = u64::from_le_bytes(bytes.try_into().unwrap());
+    let mut flash_amount: Option<u64> = None;
+    let mut cleared_check_seen = false;
+    for (relative_index, amount_offset) in instruction_ops {
+        let (_, account_index) = account_ops
+            .iter()
+            .copied()
+            .find(|(rel, _)| *rel == relative_index)
+            .ok_or(RoshiError::InvalidOp)?;
+        let instruction = get_instruction_relative(i64::from(relative_index), sysvar)
+            .map_err(|_| RoshiError::RequiredSiblingMissing)?;
 
-    let destination = instruction
-        .accounts
-        .get(dest_index)
-        .ok_or(ProgramError::from(RoshiError::AccountIndexOutOfBounds))?
-        .pubkey;
+        // Both siblings tie an account to the delegated source: the flash-borrow
+        // its destination, the cleared-check its checked account.
+        let tied = instruction
+            .accounts
+            .get(account_index)
+            .ok_or(ProgramError::from(RoshiError::AccountIndexOutOfBounds))?
+            .pubkey;
+        if &tied != source {
+            return Err(RoshiError::FlashDestinationMismatch.into());
+        }
 
-    Ok((amount, destination))
+        if instruction.program_id == crate::ID {
+            // The assert_delegate_cleared backstop — required present, no amount.
+            if cleared_check_seen {
+                return Err(RoshiError::InvalidOp.into());
+            }
+            cleared_check_seen = true;
+        } else {
+            // The flash-borrow — read `F` immediately after the committed selector.
+            if flash_amount.is_some() {
+                return Err(RoshiError::InvalidOp.into());
+            }
+            let end = amount_offset
+                .checked_add(8)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let bytes = instruction
+                .data
+                .get(amount_offset..end)
+                .ok_or(ProgramError::from(RoshiError::InstructionSliceOutOfBounds))?;
+            flash_amount = Some(u64::from_le_bytes(bytes.try_into().unwrap()));
+        }
+    }
+
+    match (flash_amount, cleared_check_seen) {
+        (Some(amount), true) => Ok(amount),
+        _ => Err(RoshiError::RequiredSiblingMissing.into()),
+    }
 }

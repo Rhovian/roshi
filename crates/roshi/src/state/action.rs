@@ -19,6 +19,13 @@ pub struct Action {
     pub vault: [u8; 32],
     pub action_hash: [u8; 32],
     pub ops: Ops,
+    /// `FlashApprove` flash-fee rate as an opaque committed fraction
+    /// `fee_num / fee_den` (#21). Like `scope`/`redeem_amount_offset`, this is
+    /// stored config that is **not** folded into `action_hash`, so the PDA is
+    /// independent of the rate and the gated update instructions (#22) can
+    /// mutate it in place. `fee_num == 0` is a fee-free action.
+    pub fee_num: u64,
+    pub fee_den: u64,
     pub scope: ActionScope,
     pub redeem_amount_offset: u16,
     pub bump: u8,
@@ -170,7 +177,7 @@ mod tests {
     fn action_layout_is_fixed_size() {
         assert_eq!(std::mem::size_of::<StoredOp>(), 4);
         assert_eq!(std::mem::size_of::<Ops>(), MAX_ACTION_OPS * 4 + 1);
-        assert_eq!(std::mem::size_of::<Action>(), 198);
-        assert_eq!(Action::SPACE, 199);
+        assert_eq!(std::mem::size_of::<Action>(), 224);
+        assert_eq!(Action::SPACE, 225);
     }
 }

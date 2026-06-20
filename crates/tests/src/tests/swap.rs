@@ -108,6 +108,8 @@ impl SwapFixture {
                     action_hash: self.action_hash,
                     ops: self.ops,
                     scope: ActionScope::Swap,
+                    fee_num: 0,
+                    fee_den: 0,
                     redeem_amount_offset: 0,
                     bump: action_bump,
                 }))
@@ -459,6 +461,8 @@ fn install_transfer_action(
                 action_hash: hash,
                 ops: fixture.ops,
                 scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump,
             }))
@@ -703,6 +707,8 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
                 action_hash: hash,
                 ops: fixture.ops,
                 scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump,
             }))
@@ -826,6 +832,8 @@ fn test_swap_value_bound_prices_routed_asset_output() {
                 action_hash: hash,
                 ops,
                 scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump,
             }))
@@ -963,6 +971,8 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
                 action_hash: hash,
                 ops,
                 scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
                 redeem_amount_offset: 0,
                 bump,
             }))

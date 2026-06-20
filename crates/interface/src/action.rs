@@ -1,6 +1,6 @@
 use solana_instruction::AccountMeta;
 use solana_pubkey::Pubkey;
-use solana_sha256_hasher::hashv;
+use solana_sha256_hasher::hash;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Maximum number of authorization predicates stored on one Action account.
@@ -168,6 +168,73 @@ pub struct Ops {
 mod tests {
     use super::*;
     use wincode::serialize;
+
+    // The single-buffer preimage must hash bit-for-bit identically to the old
+    // `Vec<Vec<u8>>` + `hashv(&refs)` approach (#24). Reproduce that reference
+    // independently here, exercising every op arm, so any divergence is caught.
+    #[test]
+    fn streamed_hash_matches_chunked_reference() {
+        let program_id = Pubkey::new_unique();
+        let ix_data = (0u8..40).collect::<Vec<_>>();
+        let account = AccountMeta::new(Pubkey::new_unique(), true);
+        let sibling_accounts = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let sibling_data = (10u8..30).collect::<Vec<_>>();
+        let siblings = [ResolvedSibling {
+            relative_index: -1,
+            program_id: Pubkey::new_unique(),
+            data: &sibling_data,
+            accounts: &sibling_accounts,
+        }];
+        let ops = Ops::new([
+            Op::Noop,
+            Op::IngestInstruction { offset: 5, len: 7 },
+            Op::IngestAccount { index: 0 },
+            Op::IngestInstructionDataSize,
+            Op::IngestSiblingInstruction {
+                relative_index: -1,
+                offset: 2,
+                len: 8,
+            },
+            Op::IngestSiblingAccount {
+                relative_index: -1,
+                index: 1,
+            },
+        ])
+        .unwrap();
+
+        // Reference: the pre-#24 chunked algorithm, byte-for-byte.
+        let mut chunks: Vec<Vec<u8>> = vec![program_id.to_bytes().to_vec()];
+        chunks.push(vec![0]);
+        chunks.push(vec![1]);
+        chunks.push(5u16.to_le_bytes().to_vec());
+        chunks.push(vec![7]);
+        chunks.push(ix_data[5..12].to_vec());
+        chunks.push(vec![2]);
+        chunks.push(vec![0]);
+        chunks.push(account.pubkey.to_bytes().to_vec());
+        chunks.push(vec![1]);
+        chunks.push(vec![1]);
+        chunks.push(vec![3]);
+        chunks.push((ix_data.len() as u32).to_le_bytes().to_vec());
+        chunks.push(vec![4]);
+        chunks.push(vec![(-1i8) as u8]);
+        chunks.push(siblings[0].program_id.to_bytes().to_vec());
+        chunks.push(vec![2]);
+        chunks.push(vec![8]);
+        chunks.push(sibling_data[2..10].to_vec());
+        chunks.push(vec![5]);
+        chunks.push(vec![(-1i8) as u8]);
+        chunks.push(vec![1]);
+        chunks.push(sibling_accounts[1].to_bytes().to_vec());
+        let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let reference = solana_sha256_hasher::hashv(&refs).to_bytes();
+
+        let streamed =
+            compute_action_hash_from_metas(&program_id, &ops, &[account], &ix_data, &siblings)
+                .unwrap();
+
+        assert_eq!(streamed, reference);
+    }
 
     #[test]
     fn stored_ops_are_compact() {
@@ -367,43 +434,43 @@ pub fn compute_action_hash_from_metas(
     ix_data: &[u8],
     siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ActionHashError> {
-    let mut chunks = vec![program_id.to_bytes().to_vec()];
+    // Build the hash preimage in one pre-sized buffer and hash it in a single
+    // syscall, rather than collecting a `Vec<Vec<u8>>` of pieces. The on-chain
+    // bump allocator never frees within an instruction, so the old per-piece
+    // allocations accumulated across a large `manage_batch` and crossed the
+    // default heap (#24). The bytes — and therefore the hash — are identical:
+    // `hashv` already concatenates these same pieces. (An incremental hasher is
+    // native-only in `solana-sha256-hasher`, so streaming isn't an option here.)
+    let mut preimage = Vec::with_capacity(preimage_len(ops)?);
+    preimage.extend_from_slice(&program_id.to_bytes());
 
     for op in ops.iter()? {
         match op? {
-            Op::Noop => chunks.push(vec![0]),
+            Op::Noop => preimage.push(0),
             Op::IngestInstruction { offset, len } => {
-                let start = usize::from(offset);
-                let length = usize::from(len);
-                let end = start
-                    .checked_add(length)
-                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
-                let slice = ix_data
-                    .get(start..end)
-                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
-
-                chunks.push(vec![1]);
-                chunks.push(offset.to_le_bytes().to_vec());
-                chunks.push(vec![len]);
-                chunks.push(slice.to_vec());
+                let slice = instruction_slice(ix_data, usize::from(offset), len)?;
+                preimage.push(1);
+                preimage.extend_from_slice(&offset.to_le_bytes());
+                preimage.push(len);
+                preimage.extend_from_slice(slice);
             }
             Op::IngestAccount { index } => {
                 let account = accounts
                     .get(usize::from(index))
                     .ok_or(ActionHashError::AccountIndexOutOfBounds)?;
 
-                chunks.push(vec![2]);
-                chunks.push(vec![index]);
-                chunks.push(account.pubkey.to_bytes().to_vec());
-                chunks.push(vec![u8::from(account.is_signer)]);
-                chunks.push(vec![u8::from(account.is_writable)]);
+                preimage.push(2);
+                preimage.push(index);
+                preimage.extend_from_slice(&account.pubkey.to_bytes());
+                preimage.push(u8::from(account.is_signer));
+                preimage.push(u8::from(account.is_writable));
             }
             Op::IngestInstructionDataSize => {
                 let data_len = u32::try_from(ix_data.len())
                     .map_err(|_| ActionHashError::InvalidInstructionData)?;
 
-                chunks.push(vec![3]);
-                chunks.push(data_len.to_le_bytes().to_vec());
+                preimage.push(3);
+                preimage.extend_from_slice(&data_len.to_le_bytes());
             }
             Op::IngestSiblingInstruction {
                 relative_index,
@@ -411,21 +478,14 @@ pub fn compute_action_hash_from_metas(
                 len,
             } => {
                 let sibling = resolve_sibling(siblings, relative_index)?;
-                let start = usize::from(offset);
-                let end = start
-                    .checked_add(usize::from(len))
-                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
-                let slice = sibling
-                    .data
-                    .get(start..end)
-                    .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
+                let slice = instruction_slice(sibling.data, usize::from(offset), len)?;
 
-                chunks.push(vec![4]);
-                chunks.push(vec![relative_index as u8]);
-                chunks.push(sibling.program_id.to_bytes().to_vec());
-                chunks.push(vec![offset]);
-                chunks.push(vec![len]);
-                chunks.push(slice.to_vec());
+                preimage.push(4);
+                preimage.push(relative_index as u8);
+                preimage.extend_from_slice(&sibling.program_id.to_bytes());
+                preimage.push(offset);
+                preimage.push(len);
+                preimage.extend_from_slice(slice);
             }
             Op::IngestSiblingAccount {
                 relative_index,
@@ -437,16 +497,43 @@ pub fn compute_action_hash_from_metas(
                     .get(usize::from(index))
                     .ok_or(ActionHashError::AccountIndexOutOfBounds)?;
 
-                chunks.push(vec![5]);
-                chunks.push(vec![relative_index as u8]);
-                chunks.push(vec![index]);
-                chunks.push(account.to_bytes().to_vec());
+                preimage.push(5);
+                preimage.push(relative_index as u8);
+                preimage.push(index);
+                preimage.extend_from_slice(&account.to_bytes());
             }
         }
     }
 
-    let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    Ok(hashv(&refs).to_bytes())
+    Ok(hash(&preimage).to_bytes())
+}
+
+/// Exact byte length of the hash preimage for `ops`, so the buffer is allocated
+/// once with no reallocation (each realloc would leak under the bump allocator).
+/// Mirrors the per-op layout in [`compute_action_hash_from_metas`]; slice bounds
+/// are validated there, so this uses the committed `len` as-is.
+fn preimage_len(ops: &Ops) -> Result<usize, ActionHashError> {
+    let mut len = 32; // program id
+    for op in ops.iter()? {
+        len += match op? {
+            Op::Noop => 1,
+            Op::IngestInstruction { len, .. } => 4 + usize::from(len),
+            Op::IngestAccount { .. } => 36,
+            Op::IngestInstructionDataSize => 5,
+            Op::IngestSiblingInstruction { len, .. } => 36 + usize::from(len),
+            Op::IngestSiblingAccount { .. } => 35,
+        };
+    }
+
+    Ok(len)
+}
+
+fn instruction_slice(data: &[u8], offset: usize, len: u8) -> Result<&[u8], ActionHashError> {
+    let end = offset
+        .checked_add(usize::from(len))
+        .ok_or(ActionHashError::InstructionSliceOutOfBounds)?;
+    data.get(offset..end)
+        .ok_or(ActionHashError::InstructionSliceOutOfBounds)
 }
 
 fn resolve_sibling<'a, 'b>(

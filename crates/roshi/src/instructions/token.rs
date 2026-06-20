@@ -374,6 +374,38 @@ pub(crate) fn verify_flash_delegate(
     Ok(())
 }
 
+/// Assert a token account carries no delegate and zero delegated amount — the
+/// post-bundle backstop for `FlashApprove` (#21). Bound as a sibling after the
+/// top-level `flash_repay`, it makes an over-high committed fee fail loudly: SPL
+/// only clears a delegate when `delegated_amount` reaches 0, so a residual
+/// allowance (Roshi's fee > the lender's) leaves the delegate set and trips this.
+pub(crate) fn assert_delegate_cleared(account: &AccountInfo) -> ProgramResult {
+    if !is_token_program(account.owner) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let delegate_tag = u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATE..TOKEN_ACCOUNT_DELEGATE + 4]
+            .try_into()
+            .unwrap(),
+    );
+    let delegated_amount = u64::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATED_AMOUNT..TOKEN_ACCOUNT_DELEGATED_AMOUNT + 8]
+            .try_into()
+            .unwrap(),
+    );
+    if delegate_tag != 0 || delegated_amount != 0 {
+        return Err(RoshiError::DelegateNotCleared.into());
+    }
+
+    Ok(())
+}
+
 fn has_transfer_authority(data: &[u8]) -> bool {
     let delegate_tag = u32::from_le_bytes(
         data[TOKEN_ACCOUNT_DELEGATE..TOKEN_ACCOUNT_DELEGATE + 4]

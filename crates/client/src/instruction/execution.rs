@@ -1,9 +1,21 @@
-use roshi_interface::instructions::{AtomicRedeemArgs, ManageArgs, ManageBatchArgs, SwapArgs};
+use roshi_interface::instructions::{
+    AssertDelegateClearedArgs, AtomicRedeemArgs, ManageArgs, ManageBatchArgs, SwapArgs,
+};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
 use super::TOKEN_PROGRAM_ID;
 use super::{new, Result};
+
+/// Permissionless backstop: assert `token_account` carries no delegate and zero
+/// delegated amount. `FlashApprove` (#21) binds this as a committed sibling after
+/// the top-level `flash_repay` over the delegated sub-account ATA.
+pub fn assert_delegate_cleared(token_account: Pubkey) -> Result<Instruction> {
+    new(
+        vec![AccountMeta::new_readonly(token_account, false)],
+        &AssertDelegateClearedArgs,
+    )
+}
 
 pub fn manage(
     executor: Pubkey,
@@ -82,7 +94,6 @@ pub fn atomic_redeem(
     new(accounts, &args)
 }
 
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 pub fn swap(
     swap_authority: Pubkey,

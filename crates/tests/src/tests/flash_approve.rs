@@ -1,11 +1,16 @@
 //! `ActionScope::FlashApprove` relays an SPL `approve` that grants a one-shot
-//! delegate on a sub-account custody account, exempt from the standard custody
-//! reverify but bound at relay so `delegated_amount == F` — the flash-borrowed
-//! amount read from the `flash_borrow` sibling the action commits (#18). The
-//! relayed CPI here is a real SPL `approve`; the sibling is a top-level System
-//! transfer of `F` lamports (its program + selector are committed, and `F`
-//! sits right after the 4-byte selector — the same shape klend's
-//! `flash_borrow(liquidity_amount)` has after its discriminator).
+//! delegate on a sub-account custody account, bound at relay to
+//! `delegated_amount == F + round_with_min1(F, fee_num, fee_den)` — `F` read from the
+//! bound `flash_borrow` sibling (#18/#19), the fee from the action's committed
+//! opaque rate (#21). A second committed sibling — a Roshi `assert_delegate_cleared`
+//! after the (simulated) `flash_repay` — makes an over-high fee fail loudly
+//! rather than leave a residual delegate.
+//!
+//! Test transaction layout, relative to the `manage` call (index 1):
+//!   ix0  flash_borrow stand-in (System transfer F -> sub-ATA)          (-1)
+//!   ix1  manage(approve sub-ATA, delegate=strategist, F+fee)            (0)
+//!   ix2  simulated flash_repay (delegated SPL transfer, drains allowance)(+1)
+//!   ix3  assert_delegate_cleared(sub-ATA)                               (+2)
 
 use litesvm::types::TransactionResult;
 use roshi::{
@@ -32,40 +37,40 @@ use crate::helpers::{
 
 /// The flash-borrowed amount the delegate is bound to.
 const FLASH_AMOUNT: u64 = 1_000;
-/// System transfer tag (`2u32` LE) — the committed selector of the sibling.
+/// System transfer tag (`2u32` LE) — the committed selector of the borrow sibling.
 const SYSTEM_TRANSFER_SELECTOR: [u8; 4] = [2, 0, 0, 0];
-/// SPL Token `Approve` discriminator.
+/// SPL Token `Approve` / `Transfer` discriminators.
 const SPL_APPROVE_TAG: u8 = 4;
+const SPL_TRANSFER_TAG: u8 = 3;
+/// `assert_delegate_cleared` instruction discriminator (tag 31, no args).
+const ASSERT_DELEGATE_CLEARED_TAG: u8 = 31;
 
 fn instructions_sysvar_id() -> Pubkey {
     solana_sdk::sysvar::instructions::ID
 }
 
-/// A top-level System transfer of `lamports` — stands in for `flash_borrow`:
-/// program + 4-byte selector are committed, and the amount `F` is the `u64`
-/// right after the selector (offset 4).
-fn flash_sibling_ix(from: Pubkey, to: Pubkey, lamports: u64) -> Instruction {
-    let mut data = SYSTEM_TRANSFER_SELECTOR.to_vec();
-    data.extend_from_slice(&lamports.to_le_bytes());
-    Instruction {
-        program_id: system_program::ID,
-        accounts: vec![AccountMeta::new(from, true), AccountMeta::new(to, false)],
-        data,
+/// `round_half_up(value * num / den)` floored at one atom, mirroring the
+/// program's `round_with_min1` (klend's flash fee).
+fn round_fee(value: u64, num: u64, den: u64) -> u64 {
+    if num == 0 || value == 0 {
+        return 0;
     }
-}
-
-fn approve_data(amount: u64) -> Vec<u8> {
-    let mut data = vec![SPL_APPROVE_TAG];
-    data.extend_from_slice(&amount.to_le_bytes());
-    data
+    let numerator = u128::from(value) * u128::from(num);
+    let denominator = u128::from(den);
+    let rounded = if 2 * (numerator % denominator) >= denominator {
+        numerator / denominator + 1
+    } else {
+        numerator / denominator
+    };
+    u64::try_from(rounded.max(1)).unwrap()
 }
 
 struct FlashFixture {
     vault: TestVault,
     sub_account_pda: Pubkey,
     sub_ata: Pubkey,
-    sibling_dest: Pubkey,
-    /// Strategist, fee payer, sibling `from`, and the approve's delegate.
+    repay_dest: Pubkey,
+    /// Strategist, fee payer, borrow `from`, approve delegate, repay authority.
     executor: Pubkey,
 }
 
@@ -78,28 +83,26 @@ impl FlashFixture {
 
         let (sub_account_pda, _) = VaultSubAccount::find_address(&vault.address, 0);
 
-        // Custody token account owned by the sub-account, balance > F.
+        // Custody token account owned by the sub-account, balance >> F + fee.
         let mint = Pubkey::new_unique();
         let sub_ata = Pubkey::new_unique();
-        set_token_account(svm, sub_ata, &mint, &sub_account_pda, 2 * FLASH_AMOUNT);
-
-        // Rent-exempt so the incidental sibling transfer leaves a valid account.
-        let sibling_dest = Pubkey::new_unique();
-        set_system_account(svm, sibling_dest, svm.minimum_balance_for_rent_exemption(0));
+        set_token_account(svm, sub_ata, &mint, &sub_account_pda, 100 * FLASH_AMOUNT);
+        // Destination for the simulated flash_repay transfer.
+        let repay_dest = Pubkey::new_unique();
+        set_token_account(svm, repay_dest, &mint, &authority.pubkey(), 0);
 
         Self {
             vault,
             sub_account_pda,
             sub_ata,
-            sibling_dest,
+            repay_dest,
             executor: authority.pubkey(),
         }
     }
 
-    /// The committed ops: a `flash_borrow`-shaped sibling at relative index -1
-    /// whose 4-byte selector is committed (F sits at offset 4, right after it),
-    /// plus its destination account (the transfer's `to`, index 1) — which the
-    /// relay ties to the approve's source.
+    /// The two committed siblings: the `flash_borrow` at -1 (System transfer,
+    /// destination `borrow_dest`) and the `assert_delegate_cleared` at +2 (Roshi
+    /// program, checking the sub-ATA).
     fn ops() -> Ops {
         Ops::new([
             Op::IngestSiblingInstruction {
@@ -111,28 +114,46 @@ impl FlashFixture {
                 relative_index: -1,
                 index: 1,
             },
+            Op::IngestSiblingInstruction {
+                relative_index: 2,
+                offset: 0,
+                len: 1,
+            },
+            Op::IngestSiblingAccount {
+                relative_index: 2,
+                index: 0,
+            },
         ])
         .unwrap()
     }
 
-    fn sibling(&self, dest: Pubkey, flash_amount: u64) -> Instruction {
-        flash_sibling_ix(self.executor, dest, flash_amount)
-    }
-
-    /// Authorize a `FlashApprove` action whose hash commits the System-program
-    /// sibling, its selector, and its destination account (`committed_dest`).
-    /// The amount itself is never committed.
-    fn install_action(&self, svm: &mut litesvm::LiteSVM, committed_dest: Pubkey) -> Pubkey {
+    /// Authorize a `FlashApprove` action committing both siblings and the opaque
+    /// fee rate. `borrow_dest` is the flash-borrow destination folded into the
+    /// hash (the sub-ATA for an honest action).
+    fn install_action(
+        &self,
+        svm: &mut litesvm::LiteSVM,
+        fee_num: u64,
+        fee_den: u64,
+        borrow_dest: Pubkey,
+    ) -> Pubkey {
         let ops = Self::ops();
-        let accounts = [self.executor, committed_dest];
-        let siblings = [ResolvedSibling {
-            relative_index: -1,
-            program_id: system_program::ID,
-            // Selector bytes are all the data the hash folds; trailing amount
-            // is read at relay, not committed.
-            data: &SYSTEM_TRANSFER_SELECTOR,
-            accounts: &accounts,
-        }];
+        let borrow_accounts = [self.executor, borrow_dest];
+        let cleared_accounts = [self.sub_ata];
+        let siblings = [
+            ResolvedSibling {
+                relative_index: -1,
+                program_id: system_program::ID,
+                data: &SYSTEM_TRANSFER_SELECTOR,
+                accounts: &borrow_accounts,
+            },
+            ResolvedSibling {
+                relative_index: 2,
+                program_id: ID,
+                data: &[ASSERT_DELEGATE_CLEARED_TAG],
+                accounts: &cleared_accounts,
+            },
+        ];
         let action_hash =
             compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &[], &[], &siblings).unwrap();
 
@@ -145,6 +166,8 @@ impl FlashFixture {
                     vault: self.vault.address.to_bytes(),
                     action_hash,
                     ops,
+                    fee_num,
+                    fee_den,
                     scope: ActionScope::FlashApprove,
                     redeem_amount_offset: 0,
                     bump: action_bump,
@@ -160,10 +183,21 @@ impl FlashFixture {
         action_pda
     }
 
-    /// `manage` relaying `approve(sub_ata, delegate=strategist, amount)` with the
-    /// sub-account as the (promoted) authority. `with_sysvar` appends the
-    /// instructions sysvar to the relay accounts.
-    fn manage_ix(&self, action_pda: Pubkey, amount: u64, with_sysvar: bool) -> Instruction {
+    fn flash_borrow_ix(&self, dest: Pubkey, lamports: u64) -> Instruction {
+        let mut data = SYSTEM_TRANSFER_SELECTOR.to_vec();
+        data.extend_from_slice(&lamports.to_le_bytes());
+        Instruction {
+            program_id: system_program::ID,
+            accounts: vec![
+                AccountMeta::new(self.executor, true),
+                AccountMeta::new(dest, false),
+            ],
+            data,
+        }
+    }
+
+    /// `manage` relaying `approve(sub_ata, delegate=strategist, approve_amount)`.
+    fn manage_ix(&self, action_pda: Pubkey, approve_amount: u64, with_sysvar: bool) -> Instruction {
         let mut cpi_accounts = vec![
             AccountMeta::new(self.sub_ata, false),
             AccountMeta::new_readonly(self.executor, false), // delegate
@@ -173,6 +207,9 @@ impl FlashFixture {
         if with_sysvar {
             cpi_accounts.push(AccountMeta::new_readonly(instructions_sysvar_id(), false));
         }
+
+        let mut ix_data = vec![SPL_APPROVE_TAG];
+        ix_data.extend_from_slice(&approve_amount.to_le_bytes());
 
         roshi_client::instruction::manage(
             self.executor,
@@ -199,10 +236,35 @@ impl FlashFixture {
                         is_writable: false,
                     },
                 ],
-                ix_data: approve_data(amount),
+                ix_data,
             },
         )
         .unwrap()
+    }
+
+    /// Simulated top-level `flash_repay`: a delegated SPL transfer that pulls
+    /// `amount` from the sub-ATA, consuming the allowance.
+    fn repay_ix(&self, amount: u64) -> Instruction {
+        let mut data = vec![SPL_TRANSFER_TAG];
+        data.extend_from_slice(&amount.to_le_bytes());
+        Instruction {
+            program_id: TOKEN_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(self.sub_ata, false),
+                AccountMeta::new(self.repay_dest, false),
+                AccountMeta::new_readonly(self.executor, true),
+            ],
+            data,
+        }
+    }
+
+    fn cleared_ix(&self) -> Instruction {
+        roshi_client::instruction::assert_delegate_cleared(self.sub_ata).unwrap()
+    }
+
+    fn delegated_amount(&self, svm: &litesvm::LiteSVM) -> u64 {
+        let data = svm.get_account(&self.sub_ata).unwrap().data;
+        u64::from_le_bytes(data[121..129].try_into().unwrap())
     }
 
     fn send(
@@ -220,114 +282,143 @@ impl FlashFixture {
         );
         svm.send_transaction(tx)
     }
-
-    fn delegate_state(&self, svm: &litesvm::LiteSVM) -> (u32, Pubkey, u64) {
-        let data = svm.get_account(&self.sub_ata).unwrap().data;
-        let tag = u32::from_le_bytes(data[72..76].try_into().unwrap());
-        let delegate = Pubkey::try_from(&data[76..108]).unwrap();
-        let delegated_amount = u64::from_le_bytes(data[121..129].try_into().unwrap());
-        (tag, delegate, delegated_amount)
-    }
-}
-
-fn set_system_account(svm: &mut litesvm::LiteSVM, address: Pubkey, lamports: u64) {
-    svm.set_account(
-        address,
-        Account {
-            lamports,
-            data: vec![],
-            owner: system_program::ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
 }
 
 #[test]
-fn test_flash_approve_binds_delegate_to_flash_amount() {
+fn test_flash_approve_settles_fee_bearing_entry() {
     let Some((mut svm, authority, _config_pda)) = setup_program() else {
         return;
     };
 
     let fixture = FlashFixture::install(&mut svm, &authority);
-    let action_pda = fixture.install_action(&mut svm, fixture.sub_ata);
+    let (fee_num, fee_den) = (1, 10);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let allowance = FLASH_AMOUNT + fee;
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
 
-    // approve delegates exactly F, and a F-lamport flash sibling sits at -1.
-    let manage_ix = fixture.manage_ix(action_pda, FLASH_AMOUNT, true);
+    // Committed rate == the (simulated) actual fee: the repay drains the
+    // allowance to zero and the bound cleared-check passes.
     fixture
         .send(
             &mut svm,
             &authority,
-            &[fixture.sibling(fixture.sub_ata, FLASH_AMOUNT), manage_ix],
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
         )
-        .expect("flash approve bound to F should relay");
-
-    let (tag, delegate, delegated_amount) = fixture.delegate_state(&svm);
-    assert_eq!(tag, 1, "delegate must be set");
-    assert_eq!(
-        delegate, fixture.executor,
-        "delegate must be the strategist"
-    );
-    assert_eq!(delegated_amount, FLASH_AMOUNT, "allowance must equal F");
+        .expect("exact-rate fee-bearing entry should settle");
+    assert_eq!(fixture.delegated_amount(&svm), 0, "delegate must clear");
 }
 
 #[test]
-fn test_flash_approve_rejects_over_grant() {
+fn test_flash_approve_zero_rate_matches_f() {
     let Some((mut svm, authority, _config_pda)) = setup_program() else {
         return;
     };
 
     let fixture = FlashFixture::install(&mut svm, &authority);
-    let action_pda = fixture.install_action(&mut svm, fixture.sub_ata);
+    // fee_num == 0 reproduces #19: allowance == F.
+    let action_pda = fixture.install_action(&mut svm, 0, 0, fixture.sub_ata);
 
-    // Sibling borrows F, but the approve over-grants (F + 1) → unbounded.
-    let manage_ix = fixture.manage_ix(action_pda, FLASH_AMOUNT + 1, true);
+    fixture
+        .send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, FLASH_AMOUNT, true),
+                fixture.repay_ix(FLASH_AMOUNT),
+                fixture.cleared_ix(),
+            ],
+        )
+        .expect("fee-free entry should settle with allowance == F");
+    assert_eq!(fixture.delegated_amount(&svm), 0);
+}
+
+#[test]
+fn test_flash_approve_rejects_wrong_allowance() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    let (fee_num, fee_den) = (1, 10);
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
+
+    // Approve one more than F + fee: the relay's bind check fails at manage time.
     assert_roshi_error(
         fixture.send(
             &mut svm,
             &authority,
-            &[fixture.sibling(fixture.sub_ata, FLASH_AMOUNT), manage_ix],
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance + 1, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
         ),
         RoshiError::FlashDelegateUnbounded,
     );
 }
 
 #[test]
-fn test_flash_approve_rejects_absent_sibling() {
+fn test_flash_approve_over_high_rate_leaves_residual() {
     let Some((mut svm, authority, _config_pda)) = setup_program() else {
         return;
     };
 
     let fixture = FlashFixture::install(&mut svm, &authority);
-    let action_pda = fixture.install_action(&mut svm, fixture.sub_ata);
+    // Committed rate (10%) is above the actual fee the lender charges (5%):
+    // the approve binds F + committed_fee and passes the manage-time check, but
+    // the repay only consumes F + actual_fee, leaving a residual delegate that
+    // the bound assert_delegate_cleared catches.
+    let (fee_num, fee_den) = (1, 10);
+    let committed_allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let actual_allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 20);
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
 
-    // No sibling: `manage` is the only instruction, so relative -1 is out of range.
-    let manage_ix = fixture.manage_ix(action_pda, FLASH_AMOUNT, true);
-    assert_roshi_error(
-        fixture.send(&mut svm, &authority, &[manage_ix]),
-        RoshiError::RequiredSiblingMissing,
-    );
-}
-
-#[test]
-fn test_flash_approve_rejects_missing_sysvar() {
-    let Some((mut svm, authority, _config_pda)) = setup_program() else {
-        return;
-    };
-
-    let fixture = FlashFixture::install(&mut svm, &authority);
-    let action_pda = fixture.install_action(&mut svm, fixture.sub_ata);
-
-    // Sibling present, but the relay is not given the instructions sysvar.
-    let manage_ix = fixture.manage_ix(action_pda, FLASH_AMOUNT, false);
     assert_roshi_error(
         fixture.send(
             &mut svm,
             &authority,
-            &[fixture.sibling(fixture.sub_ata, FLASH_AMOUNT), manage_ix],
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, committed_allowance, true),
+                fixture.repay_ix(actual_allowance),
+                fixture.cleared_ix(),
+            ],
         ),
-        RoshiError::MissingInstructionsSysvar,
+        RoshiError::DelegateNotCleared,
+    );
+}
+
+#[test]
+fn test_flash_approve_rejects_missing_cleared_sibling() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 10);
+    let action_pda = fixture.install_action(&mut svm, 1, 10, fixture.sub_ata);
+
+    // The action commits a cleared-check at +2, but the tx omits it: the relay
+    // can't resolve the sibling and rejects.
+    assert_roshi_error(
+        fixture.send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+            ],
+        ),
+        RoshiError::RequiredSiblingMissing,
     );
 }
 
@@ -338,23 +429,113 @@ fn test_flash_approve_rejects_borrow_into_other_account() {
     };
 
     let fixture = FlashFixture::install(&mut svm, &authority);
-    // The committed flash-borrow destination is a throwaway account, NOT the
-    // delegated sub-ATA. The flash funds that account (so the hash matches), but
-    // the approve delegates the sub-ATA — so the borrowed F never lands in the
-    // account being delegated. This is the standing-delegate drain the tie
-    // closes.
-    let action_pda = fixture.install_action(&mut svm, fixture.sibling_dest);
+    // The committed flash-borrow destination is a throwaway account, not the
+    // delegated sub-ATA — the borrowed F never lands where it's delegated.
+    let elsewhere = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        elsewhere,
+        &Pubkey::new_unique(),
+        &authority.pubkey(),
+        0,
+    );
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 10);
+    let action_pda = fixture.install_action(&mut svm, 1, 10, elsewhere);
 
-    let manage_ix = fixture.manage_ix(action_pda, FLASH_AMOUNT, true);
     assert_roshi_error(
         fixture.send(
             &mut svm,
             &authority,
             &[
-                fixture.sibling(fixture.sibling_dest, FLASH_AMOUNT),
-                manage_ix,
+                fixture.flash_borrow_ix(elsewhere, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
             ],
         ),
         RoshiError::FlashDestinationMismatch,
     );
+}
+
+#[test]
+fn test_assert_delegate_cleared_rejects_live_delegate() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    // Set a delegate directly on the sub-ATA, then call the bare instruction.
+    let mut account = svm.get_account(&fixture.sub_ata).unwrap();
+    account.data[72..76].copy_from_slice(&1u32.to_le_bytes());
+    account.data[76..108].copy_from_slice(fixture.executor.as_ref());
+    account.data[121..129].copy_from_slice(&500u64.to_le_bytes());
+    svm.set_account(fixture.sub_ata, account).unwrap();
+
+    assert_roshi_error(
+        fixture.send(&mut svm, &authority, &[fixture.cleared_ix()]),
+        RoshiError::DelegateNotCleared,
+    );
+}
+
+#[test]
+fn test_flash_approve_rounds_fee_down_like_klend() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    // F * rate = 1000/3 = 333.33: klend rounds to 333; the pre-#25 ceil bound
+    // F + 334 and the honest F + 333 repay stranded a residual delegate, so the
+    // entry reverted. The repay consuming exactly F + 333 and the delegate
+    // clearing proves the bind now rounds.
+    let (fee_num, fee_den) = (1, 3);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    assert_eq!(fee, 333);
+    let allowance = FLASH_AMOUNT + fee;
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
+
+    fixture
+        .send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
+        )
+        .expect("rounded-fee entry should settle");
+    assert_eq!(fixture.delegated_amount(&svm), 0, "delegate must clear");
+}
+
+#[test]
+fn test_flash_approve_charges_minimum_one_atom() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    // F * rate = 1000/4000 = 0.25 rounds to 0, but klend's minimum is one atom:
+    // the bind is F + 1, and the honest F + 1 repay clears. A no-floor bind of F
+    // would leave the repay short of allowance.
+    let (fee_num, fee_den) = (1, 4 * FLASH_AMOUNT);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    assert_eq!(fee, 1);
+    let allowance = FLASH_AMOUNT + fee;
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
+
+    fixture
+        .send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
+        )
+        .expect("min-1 fee entry should settle");
+    assert_eq!(fixture.delegated_amount(&svm), 0, "delegate must clear");
 }
