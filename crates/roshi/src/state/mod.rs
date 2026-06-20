@@ -28,8 +28,11 @@ use roshi_interface::error::RoshiError;
 #[wincode(tag_encoding = "u8")]
 #[allow(clippy::large_enum_variant)]
 pub enum Account {
-    #[wincode(tag = 0)]
-    ProgramConfig(ProgramConfig),
+    // Tag 0 is reserved and unmapped: a zeroed (freshly-allocated, uninitialized)
+    // roshi-owned account must never deserialize to a valid typed account. The
+    // wincode read path errors on an unmapped tag, so `Account::load` rejects it
+    // rather than decoding it as an all-zero `ProgramConfig` — the invariant is
+    // held by the encoding, not by every call site remembering a PDA check.
     #[wincode(tag = 1)]
     Vault(Vault),
     #[wincode(tag = 2)]
@@ -40,6 +43,8 @@ pub enum Account {
     Asset(Asset),
     #[wincode(tag = 5)]
     ExternalDestination(ExternalDestination),
+    #[wincode(tag = 6)]
+    ProgramConfig(ProgramConfig),
 }
 
 pub trait AccountData: Sized {
@@ -123,6 +128,41 @@ impl AccountData for Asset {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_pubkey::Pubkey;
+    use wincode::serialize;
+
+    #[test]
+    fn zeroed_account_does_not_decode_to_a_valid_type() {
+        // A freshly-allocated roshi-owned account is all zeros. Tag 0 is reserved
+        // and unmapped, so it must fail to deserialize rather than decoding as a
+        // valid all-zero `ProgramConfig` (the #17 footgun).
+        let zeroed = [0u8; ProgramConfig::SPACE];
+        assert!(deserialize::<Account>(&zeroed).is_err());
+
+        // And through the on-chain entry point: a zeroed, roshi-owned account is
+        // rejected as `InvalidAccountData`, not loaded as a `ProgramConfig`.
+        let key = Pubkey::new_unique();
+        let owner = crate::ID;
+        let mut lamports = 1;
+        let mut data = [0u8; ProgramConfig::SPACE];
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+        assert_eq!(
+            Account::load_as::<ProgramConfig>(&account),
+            Err(ProgramError::InvalidAccountData)
+        );
+    }
+
+    #[test]
+    fn program_config_round_trips_through_its_reserved_tag() {
+        // The retag (0 -> 6) still serializes and loads cleanly.
+        let config = ProgramConfig::new(Pubkey::new_unique());
+        let bytes = serialize(&Account::ProgramConfig(config)).unwrap();
+        assert_eq!(bytes[0], 6, "ProgramConfig now lives at tag 6");
+        match deserialize::<Account>(&bytes).unwrap() {
+            Account::ProgramConfig(decoded) => assert_eq!(decoded, config),
+            _ => panic!("expected a ProgramConfig"),
+        }
+    }
 
     #[test]
     fn tagged_account_payloads_are_not_loaded_by_zero_copy_yet() {
