@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use roshi_interface::error::RoshiError;
-use roshi_interface::math::{ceil_mul, checked_u64};
+use roshi_interface::math::round_with_min1;
 
 /// SPL Token `Approve` instruction discriminator (shared by Token and
 /// Token-2022; `Transfer` is 3, `Approve` is 4). A `FlashApprove` action must
@@ -363,14 +363,12 @@ pub(crate) fn settle_authorized_cpi(
             // Tie the flash-borrow's destination and the cleared-check's target
             // to the delegated account, and read the borrowed `F`.
             let flash_amount = bind_flash_siblings(&action.ops, cpi_accounts, &source_key)?;
-            // Bind the allowance to `F + ceil(F * fee_num / fee_den)` — the
-            // committed opaque rate covers the lender's proportional flash fee.
-            let fee = ceil_mul(flash_amount, action.fee_num, action.fee_den)?;
-            let expected = checked_u64(
-                u128::from(flash_amount)
-                    .checked_add(fee)
-                    .ok_or(RoshiError::Overflow)?,
-            )?;
+            // Bind the allowance to `F + round_half_up(F * fee_num / fee_den)`
+            // floored at one atom — the committed opaque rate reproduces the
+            // lender's proportional flash fee bit-for-bit (klend rounds, not
+            // ceils; see #25), so the forced `flash_repay` clears the delegate.
+            let fee = round_with_min1(flash_amount, action.fee_num, action.fee_den)?;
+            let expected = flash_amount.checked_add(fee).ok_or(RoshiError::Overflow)?;
             let custody = authorized_cpi.scan_subaccount_custody()?;
             invoke_authorized_cpi(authorized_cpi)?;
             authorized_cpi.reverify_subaccount_custody_except(&custody, Some(&source_key))?;

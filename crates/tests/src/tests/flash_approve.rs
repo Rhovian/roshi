@@ -1,6 +1,6 @@
 //! `ActionScope::FlashApprove` relays an SPL `approve` that grants a one-shot
 //! delegate on a sub-account custody account, bound at relay to
-//! `delegated_amount == F + ceil_mul(F, fee_num, fee_den)` — `F` read from the
+//! `delegated_amount == F + round_with_min1(F, fee_num, fee_den)` — `F` read from the
 //! bound `flash_borrow` sibling (#18/#19), the fee from the action's committed
 //! opaque rate (#21). A second committed sibling — a Roshi `assert_delegate_cleared`
 //! after the (simulated) `flash_repay` — makes an over-high fee fail loudly
@@ -49,13 +49,20 @@ fn instructions_sysvar_id() -> Pubkey {
     solana_sdk::sysvar::instructions::ID
 }
 
-/// `ceil(value * num / den)`, mirroring the program's `ceil_mul`.
-fn ceil_fee(value: u64, num: u64, den: u64) -> u64 {
-    if num == 0 {
+/// `round_half_up(value * num / den)` floored at one atom, mirroring the
+/// program's `round_with_min1` (klend's flash fee).
+fn round_fee(value: u64, num: u64, den: u64) -> u64 {
+    if num == 0 || value == 0 {
         return 0;
     }
-    let product = u128::from(value) * u128::from(num);
-    u64::try_from(product.div_ceil(u128::from(den))).unwrap()
+    let numerator = u128::from(value) * u128::from(num);
+    let denominator = u128::from(den);
+    let rounded = if 2 * (numerator % denominator) >= denominator {
+        numerator / denominator + 1
+    } else {
+        numerator / denominator
+    };
+    u64::try_from(rounded.max(1)).unwrap()
 }
 
 struct FlashFixture {
@@ -285,7 +292,7 @@ fn test_flash_approve_settles_fee_bearing_entry() {
 
     let fixture = FlashFixture::install(&mut svm, &authority);
     let (fee_num, fee_den) = (1, 10);
-    let fee = ceil_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
     let allowance = FLASH_AMOUNT + fee;
     let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
 
@@ -339,7 +346,7 @@ fn test_flash_approve_rejects_wrong_allowance() {
 
     let fixture = FlashFixture::install(&mut svm, &authority);
     let (fee_num, fee_den) = (1, 10);
-    let allowance = FLASH_AMOUNT + ceil_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, fee_num, fee_den);
     let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
 
     // Approve one more than F + fee: the relay's bind check fails at manage time.
@@ -370,8 +377,8 @@ fn test_flash_approve_over_high_rate_leaves_residual() {
     // the repay only consumes F + actual_fee, leaving a residual delegate that
     // the bound assert_delegate_cleared catches.
     let (fee_num, fee_den) = (1, 10);
-    let committed_allowance = FLASH_AMOUNT + ceil_fee(FLASH_AMOUNT, fee_num, fee_den);
-    let actual_allowance = FLASH_AMOUNT + ceil_fee(FLASH_AMOUNT, 1, 20);
+    let committed_allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    let actual_allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 20);
     let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
 
     assert_roshi_error(
@@ -396,7 +403,7 @@ fn test_flash_approve_rejects_missing_cleared_sibling() {
     };
 
     let fixture = FlashFixture::install(&mut svm, &authority);
-    let allowance = FLASH_AMOUNT + ceil_fee(FLASH_AMOUNT, 1, 10);
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 10);
     let action_pda = fixture.install_action(&mut svm, 1, 10, fixture.sub_ata);
 
     // The action commits a cleared-check at +2, but the tx omits it: the relay
@@ -432,7 +439,7 @@ fn test_flash_approve_rejects_borrow_into_other_account() {
         &authority.pubkey(),
         0,
     );
-    let allowance = FLASH_AMOUNT + ceil_fee(FLASH_AMOUNT, 1, 10);
+    let allowance = FLASH_AMOUNT + round_fee(FLASH_AMOUNT, 1, 10);
     let action_pda = fixture.install_action(&mut svm, 1, 10, elsewhere);
 
     assert_roshi_error(
@@ -468,4 +475,67 @@ fn test_assert_delegate_cleared_rejects_live_delegate() {
         fixture.send(&mut svm, &authority, &[fixture.cleared_ix()]),
         RoshiError::DelegateNotCleared,
     );
+}
+
+#[test]
+fn test_flash_approve_rounds_fee_down_like_klend() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    // F * rate = 1000/3 = 333.33: klend rounds to 333; the pre-#25 ceil bound
+    // F + 334 and the honest F + 333 repay stranded a residual delegate, so the
+    // entry reverted. The repay consuming exactly F + 333 and the delegate
+    // clearing proves the bind now rounds.
+    let (fee_num, fee_den) = (1, 3);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    assert_eq!(fee, 333);
+    let allowance = FLASH_AMOUNT + fee;
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
+
+    fixture
+        .send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
+        )
+        .expect("rounded-fee entry should settle");
+    assert_eq!(fixture.delegated_amount(&svm), 0, "delegate must clear");
+}
+
+#[test]
+fn test_flash_approve_charges_minimum_one_atom() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = FlashFixture::install(&mut svm, &authority);
+    // F * rate = 1000/4000 = 0.25 rounds to 0, but klend's minimum is one atom:
+    // the bind is F + 1, and the honest F + 1 repay clears. A no-floor bind of F
+    // would leave the repay short of allowance.
+    let (fee_num, fee_den) = (1, 4 * FLASH_AMOUNT);
+    let fee = round_fee(FLASH_AMOUNT, fee_num, fee_den);
+    assert_eq!(fee, 1);
+    let allowance = FLASH_AMOUNT + fee;
+    let action_pda = fixture.install_action(&mut svm, fee_num, fee_den, fixture.sub_ata);
+
+    fixture
+        .send(
+            &mut svm,
+            &authority,
+            &[
+                fixture.flash_borrow_ix(fixture.sub_ata, FLASH_AMOUNT),
+                fixture.manage_ix(action_pda, allowance, true),
+                fixture.repay_ix(allowance),
+                fixture.cleared_ix(),
+            ],
+        )
+        .expect("min-1 fee entry should settle");
+    assert_eq!(fixture.delegated_amount(&svm), 0, "delegate must clear");
 }

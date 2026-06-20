@@ -52,17 +52,45 @@ pub fn mul_div_ceil_u64(lhs: u64, rhs: u64, denominator: u64) -> MathResult<u64>
     checked_u64(value)
 }
 
-/// Ceiling of `value * num / den` as `u128` — a committed proportional rate
-/// applied to an amount (e.g. a flash-loan `num/den` fee on a borrow). `num == 0`
-/// yields `0` without dividing, so a zero rate needs no valid denominator; a
-/// non-zero `num` over `den == 0` is `DivisionByZero`. Returns `u128` so the
-/// caller checks the `value + fee` sum against its own bound.
-pub fn ceil_mul(value: u64, num: u64, den: u64) -> MathResult<u128> {
-    if num == 0 {
+/// klend's flash-loan fee for borrowing `value` at a committed `num/den` rate:
+/// `round_half_up(value * num / den)`, floored at one atom. This reproduces
+/// klend's `calculate_flash_loan_fees` — `origination_fee = round(max(amount *
+/// rate, 1))` over a `fixed::U68F60` rate, with ties rounding away from zero —
+/// rather than merely bounding it. The `FlashApprove` delegate is bound to
+/// `F + fee` and a trailing `assert_delegate_cleared` requires the forced
+/// `flash_repay` to consume it to zero, so the fee must equal klend's bit-for-bit
+/// (a `ceil` over-charges and strands a residual delegate on every non-integer
+/// product — see #25). The rate stays opaque: the admin commits `num/den` to
+/// match the reserve's fee; Roshi never reads the reserve.
+///
+/// `num == 0` (or `value == 0`) is a zero fee without dividing, so a zero rate
+/// needs no valid denominator, reproducing #19's fee-free `delegated == F`. A
+/// non-zero `num` over `den == 0` is `DivisionByZero`. The min-1 floor applies
+/// only when a fee is actually charged (`num > 0 && value > 0`), as in klend.
+pub fn round_with_min1(value: u64, num: u64, den: u64) -> MathResult<u64> {
+    if num == 0 || value == 0 {
         return Ok(0);
     }
+    if den == 0 {
+        return Err(RoshiError::DivisionByZero);
+    }
 
-    mul_div_ceil(u128::from(value), u128::from(num), u128::from(den))
+    let numerator = u128::from(value)
+        .checked_mul(u128::from(num))
+        .ok_or(RoshiError::Overflow)?;
+    let denominator = u128::from(den);
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+
+    // Round half away from zero (ties up), matching `fixed::U68F60::round`. The
+    // remainder is below the denominator (a `u64`), so doubling it stays in `u128`.
+    let rounded = if 2 * remainder >= denominator {
+        quotient + 1
+    } else {
+        quotient
+    };
+
+    checked_u64(rounded.max(1))
 }
 
 pub fn bps_floor(amount: u64, bps: u16) -> MathResult<u64> {
@@ -307,23 +335,70 @@ mod tests {
         );
     }
 
+    /// klend's flash-loan fee, recomputed independently through the *same*
+    /// `fixed::U68F60` arithmetic klend uses (`round(max(amount * rate, 1))`,
+    /// ties away from zero), as the cross-check oracle for [`round_with_min1`].
+    /// `None` mirrors klend's `BorrowTooSmall` (fee ≥ amount), where no flash
+    /// settles and so no fee is bound.
+    fn klend_flash_fee(amount: u64, flash_loan_fee_sf: u64) -> Option<u64> {
+        use fixed::traits::FromFixed;
+        use fixed::types::U68F60 as Fraction;
+
+        let rate = Fraction::from_bits(u128::from(flash_loan_fee_sf));
+        if rate > Fraction::ZERO && amount > 0 {
+            let amount_f = Fraction::from_num(amount);
+            let fee_f = amount_f.checked_mul(rate)?.max(Fraction::from_num(1u64));
+            if fee_f >= amount_f {
+                return None;
+            }
+            Some(u64::from_fixed(fee_f.round()))
+        } else {
+            Some(0)
+        }
+    }
+
     #[test]
-    fn ceil_mul_applies_a_proportional_rate() {
-        // Kamino USDC example from #21: rate 0.00001 (sf 11529215046068 / 2^60)
-        // on a 1_000_000 borrow ceils to a fee of 10.
-        assert_eq!(ceil_mul(1_000_000, 11_529_215_046_068, 1 << 60), Ok(10));
-        // Ceil, not floor: any remainder rounds up (in the lender's favour).
-        assert_eq!(ceil_mul(1_000_000, 1, 1_000_001), Ok(1));
+    fn round_with_min1_rounds_half_up_with_a_one_atom_floor() {
+        // Round-to-nearest, not ceil: a fractional part below 0.5 rounds down
+        // (1000/3 = 333.33 -> 333, where ceil would over-charge 334 and strand a
+        // residual delegate — the #25 bug).
+        assert_eq!(round_with_min1(1_000, 1, 3), Ok(333));
+        // At or above 0.5 it rounds up; an exact half ties away from zero.
+        assert_eq!(round_with_min1(2_000, 1, 3), Ok(667));
+        assert_eq!(round_with_min1(3, 1, 2), Ok(2));
+        // Min-1 floor: a sub-atom product still charges one atom (klend's minimum).
+        assert_eq!(round_with_min1(1, 1, 1_000), Ok(1));
         // A zero numerator is a zero fee regardless of the denominator (incl. 0),
-        // reproducing #19's fee-free `delegated == F`.
-        assert_eq!(ceil_mul(1_000_000, 0, 0), Ok(0));
+        // reproducing #19's fee-free `delegated == F` — the floor does not apply.
+        assert_eq!(round_with_min1(1_000_000, 0, 0), Ok(0));
+        // Likewise a zero borrow.
+        assert_eq!(round_with_min1(0, 1, 10), Ok(0));
         // A non-zero rate over a zero denominator is rejected, not silently zero.
-        assert_eq!(ceil_mul(1, 1, 0), Err(RoshiError::DivisionByZero));
-        // Overflow propagates rather than wrapping.
+        assert_eq!(round_with_min1(1, 1, 0), Err(RoshiError::DivisionByZero));
+        // A result past u64 propagates rather than wrapping.
         assert_eq!(
-            ceil_mul(u64::MAX, u64::MAX, 1),
-            Ok(u128::from(u64::MAX) * u128::from(u64::MAX))
+            round_with_min1(u64::MAX, u64::MAX, 1),
+            Err(RoshiError::ResultDoesNotFit)
         );
+    }
+
+    #[test]
+    fn round_with_min1_matches_klend_at_the_kamino_usdc_rate() {
+        // Kamino main-market USDC: rate 0.00001 (sf 11529215046068 / 2^60). The
+        // aquila e2e's F = 5_000_000 lands on an integer product (49.9999.. -> 50)
+        // where ceil and round agree; nearby sizes do not.
+        let sf = 11_529_215_046_068u64;
+        let den = 1u64 << 60;
+        // A borrow of 1 is klend's `BorrowTooSmall` (the 1-atom fee equals it),
+        // so it never settles and binds no fee; compare only where klend charges.
+        for f in [5_000_000u64, 4_999_999, 5_000_001, 7, 123_456_789] {
+            let expected = klend_flash_fee(f, sf).expect("klend charges a fee at this F");
+            assert_eq!(
+                round_with_min1(f, sf, den),
+                Ok(expected),
+                "fee mismatch at F = {f}"
+            );
+        }
     }
 
     #[test]
@@ -694,6 +769,22 @@ mod tests {
             prop_assert!(floor * denominator <= product);
             prop_assert!(product < (floor + 1) * denominator);
             prop_assert!(ceil * denominator >= product);
+        }
+
+        #[test]
+        fn prop_round_with_min1_matches_klend_flash_fee(
+            // Sized so `amount * sf` stays well inside u128 and the U68F60 mul
+            // never overflows; spans fractional parts in (0, 0.5) and [0.5, 1)
+            // and tiny amounts that hit the 1-atom floor.
+            amount in 0u64..=1_000_000_000_000,
+            flash_loan_fee_sf in 0u64..=(1u64 << 50),
+        ) {
+            let den = 1u64 << 60;
+            // Compare only where klend actually charges a fee (not BorrowTooSmall);
+            // there Roshi must agree bit-for-bit, since the cleared-check demands it.
+            if let Some(expected) = klend_flash_fee(amount, flash_loan_fee_sf) {
+                prop_assert_eq!(round_with_min1(amount, flash_loan_fee_sf, den), Ok(expected));
+            }
         }
 
         #[test]
