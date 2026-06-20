@@ -133,7 +133,7 @@ impl AtomicRedeemFixture {
         let ops = Ops::empty();
         let action_metas = token_transfer_metas(venue_account, custody, sub_account);
         let action_hash =
-            compute_action_hash_from_metas(&base_token_program, &ops, &action_metas, &ix_data)
+            compute_action_hash_from_metas(&base_token_program, &ops, &action_metas, &ix_data, &[])
                 .unwrap();
         let action_pda = Action::find_address(&vault.address, &action_hash).0;
 
@@ -165,6 +165,8 @@ impl AtomicRedeemFixture {
                     action_hash: self.action_hash,
                     ops: self.ops,
                     scope: ActionScope::AtomicRedeem,
+                    fee_num: 0,
+                    fee_den: 0,
                     redeem_amount_offset: amount_offset,
                     bump: action_bump,
                 }))
@@ -462,6 +464,7 @@ fn test_atomic_redeem_rejects_realized_output_above_entitlement() {
         &fixture.ops,
         &token_transfer_metas(fixture.venue_account, fixture.custody, fixture.sub_account),
         &ix_data,
+        &[],
     )
     .unwrap();
     fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;
@@ -548,6 +551,7 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
         &fixture.ops,
         &malicious_metas,
         &ix_data,
+        &[],
     )
     .unwrap();
     fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;
@@ -622,6 +626,7 @@ fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
         &fixture.ops,
         &set_account_owner_metas(fixture.custody, fixture.sub_account),
         &ix_data,
+        &[],
     )
     .unwrap();
     fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;

@@ -38,6 +38,11 @@ pub struct AuthorizeActionArgs {
     pub scope: ActionScope,
     pub ops: Ops,
     pub redeem_amount_offset: u16,
+    /// `FlashApprove` flash-fee rate as an opaque committed fraction (#21);
+    /// stored on the `Action` but not part of `action_hash`. `fee_num == 0` is
+    /// a fee-free action (any other scope ignores these).
+    pub fee_num: u64,
+    pub fee_den: u64,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
@@ -236,6 +241,21 @@ pub struct WriteDownFeesArgs {
     /// Fee liability to forgive: `0 < amount <= fees_payable`. No tokens
     /// move; gross NAV is unchanged and liabilities shrink.
     pub amount: u64,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct AssertDelegateClearedArgs;
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct AdminSetFlashFeeRateArgs {
+    pub fee_num: u64,
+    pub fee_den: u64,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct StrategistLowerFlashFeeRateArgs {
+    pub fee_num: u64,
+    pub fee_den: u64,
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]

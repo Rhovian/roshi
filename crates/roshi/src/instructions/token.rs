@@ -28,6 +28,7 @@ const TOKEN_ACCOUNT_OWNER: usize = 32;
 const TOKEN_ACCOUNT_AMOUNT: usize = 64;
 const TOKEN_ACCOUNT_DELEGATE: usize = 72;
 const TOKEN_ACCOUNT_STATE: usize = 108;
+const TOKEN_ACCOUNT_DELEGATED_AMOUNT: usize = 121;
 const TOKEN_ACCOUNT_CLOSE_AUTHORITY: usize = 129;
 const TOKEN_ACCOUNT_LEN: usize = 165;
 const TRANSFER_INSTRUCTION: u8 = 3;
@@ -319,6 +320,90 @@ pub(crate) fn is_clean_custody(
     }
 
     Ok(true)
+}
+
+/// Verify a sub-account custody token account carries the intended one-shot
+/// flash delegate: owned by `subaccount`, `delegated_amount == expected_amount`
+/// (the bound flash borrow), and no close authority. This replaces the generic
+/// "no delegate" reverify for a `FlashApprove` action's approved account — the
+/// delegate is the intended effect, but it is bounded so a forced `flash_repay`
+/// consumes it exactly. The delegate *identity* is not checked: the borrowed `F`
+/// is tied to this account (`flash_borrow.destination == approve.source`), so
+/// whatever the allowance moves is money the flash deposited here and owes back
+/// — the holder of the allowance is irrelevant to soundness.
+pub(crate) fn verify_flash_delegate(
+    account: &AccountInfo,
+    subaccount: &Pubkey,
+    expected_amount: u64,
+) -> ProgramResult {
+    if !is_token_program(account.owner) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &owner != subaccount {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    // A close authority would survive the bundle as standing control over the
+    // account, so it is rejected.
+    let close_tag = u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_CLOSE_AUTHORITY..TOKEN_ACCOUNT_CLOSE_AUTHORITY + 4]
+            .try_into()
+            .unwrap(),
+    );
+    if close_tag != 0 {
+        return Err(RoshiError::FlashDelegateMismatch.into());
+    }
+
+    let delegated_amount = u64::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATED_AMOUNT..TOKEN_ACCOUNT_DELEGATED_AMOUNT + 8]
+            .try_into()
+            .unwrap(),
+    );
+    if delegated_amount != expected_amount {
+        return Err(RoshiError::FlashDelegateUnbounded.into());
+    }
+
+    Ok(())
+}
+
+/// Assert a token account carries no delegate and zero delegated amount — the
+/// post-bundle backstop for `FlashApprove` (#21). Bound as a sibling after the
+/// top-level `flash_repay`, it makes an over-high committed fee fail loudly: SPL
+/// only clears a delegate when `delegated_amount` reaches 0, so a residual
+/// allowance (Roshi's fee > the lender's) leaves the delegate set and trips this.
+pub(crate) fn assert_delegate_cleared(account: &AccountInfo) -> ProgramResult {
+    if !is_token_program(account.owner) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let delegate_tag = u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATE..TOKEN_ACCOUNT_DELEGATE + 4]
+            .try_into()
+            .unwrap(),
+    );
+    let delegated_amount = u64::from_le_bytes(
+        data[TOKEN_ACCOUNT_DELEGATED_AMOUNT..TOKEN_ACCOUNT_DELEGATED_AMOUNT + 8]
+            .try_into()
+            .unwrap(),
+    );
+    if delegate_tag != 0 || delegated_amount != 0 {
+        return Err(RoshiError::DelegateNotCleared.into());
+    }
+
+    Ok(())
 }
 
 fn has_transfer_authority(data: &[u8]) -> bool {

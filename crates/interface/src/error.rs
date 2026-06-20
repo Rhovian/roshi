@@ -37,6 +37,14 @@ pub enum RoshiError {
     DepositCapExceeded = 31,
     ExternalDestinationNotRegistered = 32,
     UnpriceableSwapLeg = 33,
+    MissingInstructionsSysvar = 34,
+    RequiredSiblingMissing = 35,
+    FlashDelegateUnbounded = 36,
+    FlashDelegateMismatch = 37,
+    FlashDestinationMismatch = 38,
+    SiblingsRequireTopLevel = 39,
+    DelegateNotCleared = 40,
+    FlashFeeRateNotLower = 41,
 }
 
 impl From<RoshiError> for ProgramError {

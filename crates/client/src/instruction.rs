@@ -784,6 +784,8 @@ mod tests {
             ActionScope::Manager,
             Ops::empty(),
             7,
+            0,
+            0,
         )
         .unwrap();
 

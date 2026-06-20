@@ -9,7 +9,9 @@ use roshi_interface::action::{
 };
 use roshi_interface::error::RoshiError;
 
-pub use roshi_interface::action::{ActionScope, Op, Ops, StoredOp, MAX_ACTION_OPS};
+pub use roshi_interface::action::{
+    ActionScope, Op, Ops, ResolvedSibling, StoredOp, MAX_ACTION_OPS,
+};
 
 #[derive(Clone, Copy, SchemaWrite, SchemaRead)]
 #[repr(C)]
@@ -17,6 +19,13 @@ pub struct Action {
     pub vault: [u8; 32],
     pub action_hash: [u8; 32],
     pub ops: Ops,
+    /// `FlashApprove` flash-fee rate as an opaque committed fraction
+    /// `fee_num / fee_den` (#21). Like `scope`/`redeem_amount_offset`, this is
+    /// stored config that is **not** folded into `action_hash`, so the PDA is
+    /// independent of the rate and the gated update instructions (#22) can
+    /// mutate it in place. `fee_num == 0` is a fee-free action.
+    pub fee_num: u64,
+    pub fee_den: u64,
     pub scope: ActionScope,
     pub redeem_amount_offset: u16,
     pub bump: u8,
@@ -58,6 +67,7 @@ pub fn compute_action_hash(
     ops: &Ops,
     accounts: &[AccountInfo],
     ix_data: &[u8],
+    siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ProgramError> {
     let account_metas = accounts
         .iter()
@@ -68,7 +78,7 @@ pub fn compute_action_hash(
         })
         .collect::<Vec<_>>();
 
-    compute_action_hash_from_metas(program_id, ops, &account_metas, ix_data)
+    compute_action_hash_from_metas(program_id, ops, &account_metas, ix_data, siblings)
 }
 
 pub fn compute_action_hash_from_metas(
@@ -76,8 +86,9 @@ pub fn compute_action_hash_from_metas(
     ops: &Ops,
     accounts: &[AccountMeta],
     ix_data: &[u8],
+    siblings: &[ResolvedSibling],
 ) -> Result<[u8; 32], ProgramError> {
-    compute_interface_action_hash_from_metas(program_id, ops, accounts, ix_data)
+    compute_interface_action_hash_from_metas(program_id, ops, accounts, ix_data, siblings)
         .map_err(action_hash_error_to_program_error)
 }
 
@@ -100,6 +111,7 @@ fn action_hash_error_to_program_error(error: ActionHashError) -> ProgramError {
         }
         ActionHashError::AccountIndexOutOfBounds => RoshiError::AccountIndexOutOfBounds.into(),
         ActionHashError::InvalidInstructionData => ProgramError::InvalidInstructionData,
+        ActionHashError::MissingSibling => RoshiError::RequiredSiblingMissing.into(),
     }
 }
 
@@ -127,7 +139,7 @@ mod tests {
             false,
         );
         let readonly_hash =
-            compute_action_hash(&program_id, &ops, &[readonly_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[readonly_account], &ix_data, &[]).unwrap();
 
         let mut lamports = 0;
         let mut data = [];
@@ -141,7 +153,7 @@ mod tests {
             false,
         );
         let writable_hash =
-            compute_action_hash(&program_id, &ops, &[writable_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[writable_account], &ix_data, &[]).unwrap();
 
         let mut lamports = 0;
         let mut data = [];
@@ -155,7 +167,7 @@ mod tests {
             false,
         );
         let signer_hash =
-            compute_action_hash(&program_id, &ops, &[signer_account], &ix_data).unwrap();
+            compute_action_hash(&program_id, &ops, &[signer_account], &ix_data, &[]).unwrap();
 
         assert_ne!(readonly_hash, writable_hash);
         assert_ne!(readonly_hash, signer_hash);
@@ -165,7 +177,7 @@ mod tests {
     fn action_layout_is_fixed_size() {
         assert_eq!(std::mem::size_of::<StoredOp>(), 4);
         assert_eq!(std::mem::size_of::<Ops>(), MAX_ACTION_OPS * 4 + 1);
-        assert_eq!(std::mem::size_of::<Action>(), 198);
-        assert_eq!(Action::SPACE, 199);
+        assert_eq!(std::mem::size_of::<Action>(), 224);
+        assert_eq!(Action::SPACE, 225);
     }
 }

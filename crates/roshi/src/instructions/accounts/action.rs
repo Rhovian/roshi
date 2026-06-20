@@ -64,12 +64,15 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
 
     /// Creates the rent-exempt Action PDA (funded by the admin) and stores the
     /// vault scope, approved `action_hash`, `ops`, and bump.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_and_store(
         &self,
         action_hash: [u8; 32],
         scope: ActionScope,
         ops: Ops,
         redeem_amount_offset: u16,
+        fee_num: u64,
+        fee_den: u64,
     ) -> ProgramResult {
         validate_ops(&ops)?;
 
@@ -98,6 +101,8 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
             vault: self.vault_key.to_bytes(),
             action_hash,
             ops,
+            fee_num,
+            fee_den,
             scope,
             redeem_amount_offset,
             bump: self.action_bump,
