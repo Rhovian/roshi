@@ -29,10 +29,6 @@ fn test_initialize_vault() {
     assert_eq!(state.admin, vault.roles.admin.pubkey().to_bytes());
     assert_eq!(state.strategist, vault.roles.strategist.pubkey().to_bytes());
     assert_eq!(
-        state.swap_authority,
-        vault.roles.swap_authority.pubkey().to_bytes()
-    );
-    assert_eq!(
         state.nav_authority,
         vault.roles.nav_authority.pubkey().to_bytes()
     );

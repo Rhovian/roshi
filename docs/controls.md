@@ -10,7 +10,6 @@ Each vault stores named authorities:
 ```rust
 admin: Pubkey,
 strategist: Pubkey,
-swap_authority: Pubkey,
 nav_authority: Pubkey,
 withdrawal_authority: Pubkey,
 ```
@@ -29,9 +28,8 @@ withdrawal_authority: Pubkey,
 - set the share mint's display metadata (Metaplex).
 
 `strategist` executes authorized strategy CPIs through `manage` and
-`manage_batch`.
-
-`swap_authority` executes pre-authorized swap CPIs between vault custodies.
+`manage_batch`, and pre-authorized swap CPIs between vault custodies through
+`swap` (value-bounded by the oracle slippage control).
 
 `nav_authority` submits gross NAV reports and report commitments.
 

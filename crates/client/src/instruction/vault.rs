@@ -2,7 +2,7 @@ use roshi_interface::instructions::{
     CollectFeesArgs, InitializeVaultArgs, InvestExternalArgs, ProcessWithdrawalsArgs,
     RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
     RevokeExternalDestinationArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetShareMetadataArgs,
-    SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
+    SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
     WriteDownFeesArgs,
 };
@@ -82,19 +82,6 @@ pub fn set_strategist(admin: Pubkey, vault: Pubkey, strategist: Pubkey) -> Resul
         vault_admin_accounts(admin, vault),
         &SetStrategistArgs {
             strategist: strategist.to_bytes(),
-        },
-    )
-}
-
-pub fn set_swap_authority(
-    admin: Pubkey,
-    vault: Pubkey,
-    swap_authority: Pubkey,
-) -> Result<Instruction> {
-    new(
-        vault_admin_accounts(admin, vault),
-        &SetSwapAuthorityArgs {
-            swap_authority: swap_authority.to_bytes(),
         },
     )
 }

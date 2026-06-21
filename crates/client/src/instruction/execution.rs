@@ -96,7 +96,7 @@ pub fn atomic_redeem(
 
 #[allow(clippy::too_many_arguments)]
 pub fn swap(
-    swap_authority: Pubkey,
+    strategist: Pubkey,
     vault: Pubkey,
     sub_account_pda: Pubkey,
     input_custody: Pubkey,
@@ -107,7 +107,7 @@ pub fn swap(
     args: SwapArgs,
 ) -> Result<Instruction> {
     let mut accounts = vec![
-        AccountMeta::new_readonly(swap_authority, true),
+        AccountMeta::new_readonly(strategist, true),
         AccountMeta::new_readonly(vault, false),
         AccountMeta::new_readonly(sub_account_pda, false),
         AccountMeta::new(input_custody, false),

@@ -33,7 +33,7 @@ pub mod tags {
     pub const COLLECT_FEES: u8 = 21;
     pub const INVEST_EXTERNAL: u8 = 22;
     pub const RETURN_EXTERNAL: u8 = 23;
-    pub const SET_SWAP_AUTHORITY: u8 = 24;
+    // 24 retired (was the swap-authority setter, #30); reserved, do not reuse lightly.
     pub const ATOMIC_REDEEM: u8 = 25;
     pub const SWAP: u8 = 26;
     pub const WRITE_DOWN_FEES: u8 = 27;
@@ -207,10 +207,7 @@ pub enum RoshiInstruction {
     #[codama(account(name = "token_program", default_value = program("token")))]
     ReturnExternal(#[codama(name = "args")] ReturnExternalArgs) = 23,
 
-    #[codama(account(name = "admin", signer))]
-    #[codama(account(name = "vault", writable))]
-    SetSwapAuthority(#[codama(name = "args")] SetSwapAuthorityArgs) = 24,
-
+    // 24 retired (was the swap-authority setter, #30).
     #[codama(account(name = "owner", signer, writable))]
     #[codama(account(name = "vault", writable))]
     #[codama(account(name = "user_share_account", writable))]
@@ -223,7 +220,7 @@ pub enum RoshiInstruction {
     #[codama(account(name = "token_program", default_value = program("token")))]
     AtomicRedeem(#[codama(name = "args")] AtomicRedeemArgs) = 25,
 
-    #[codama(account(name = "swap_authority", signer))]
+    #[codama(account(name = "strategist", signer))]
     #[codama(account(name = "vault"))]
     #[codama(account(name = "sub_account"))]
     #[codama(account(name = "input_custody", writable))]
@@ -293,7 +290,6 @@ impl RoshiInstruction {
             Self::TransferProgramAuthority(_) => tags::TRANSFER_PROGRAM_AUTHORITY,
             Self::TransferVaultAuthority(_) => tags::TRANSFER_VAULT_AUTHORITY,
             Self::SetStrategist(_) => tags::SET_STRATEGIST,
-            Self::SetSwapAuthority(_) => tags::SET_SWAP_AUTHORITY,
             Self::SetNavAuthority(_) => tags::SET_NAV_AUTHORITY,
             Self::SetWithdrawalAuthority(_) => tags::SET_WITHDRAWAL_AUTHORITY,
             Self::CollectFees(_) => tags::COLLECT_FEES,
@@ -342,7 +338,6 @@ impl RoshiInstruction {
                 Ok(Self::TransferVaultAuthority(decode_payload(payload)?))
             }
             tags::SET_STRATEGIST => Ok(Self::SetStrategist(decode_payload(payload)?)),
-            tags::SET_SWAP_AUTHORITY => Ok(Self::SetSwapAuthority(decode_payload(payload)?)),
             tags::SET_NAV_AUTHORITY => Ok(Self::SetNavAuthority(decode_payload(payload)?)),
             tags::SET_WITHDRAWAL_AUTHORITY => {
                 Ok(Self::SetWithdrawalAuthority(decode_payload(payload)?))
@@ -401,7 +396,6 @@ impl RoshiInstruction {
             Self::TransferProgramAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::TransferVaultAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetStrategist(args) => wincode::serialize_into(&mut data, args)?,
-            Self::SetSwapAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetNavAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::SetWithdrawalAuthority(args) => wincode::serialize_into(&mut data, args)?,
             Self::CollectFees(args) => wincode::serialize_into(&mut data, args)?,
@@ -475,7 +469,6 @@ impl_instruction_args! {
     CollectFeesArgs = tags::COLLECT_FEES,
     InvestExternalArgs = tags::INVEST_EXTERNAL,
     ReturnExternalArgs = tags::RETURN_EXTERNAL,
-    SetSwapAuthorityArgs = tags::SET_SWAP_AUTHORITY,
     AtomicRedeemArgs = tags::ATOMIC_REDEEM,
     SwapArgs = tags::SWAP,
     WriteDownFeesArgs = tags::WRITE_DOWN_FEES,
@@ -506,11 +499,12 @@ mod tests {
 
     #[test]
     fn instruction_args_tags_match_canonical_tags() {
+        // 24 is a reserved gap (retired swap-authority setter, #30).
         assert_eq!(
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
+                23, 25, 26, 27, 28, 29, 30, 31, 32, 33
             ]
         );
         assert_eq!(
@@ -647,7 +641,6 @@ mod tests {
         ("collectFees", tags::COLLECT_FEES),
         ("investExternal", tags::INVEST_EXTERNAL),
         ("returnExternal", tags::RETURN_EXTERNAL),
-        ("setSwapAuthority", tags::SET_SWAP_AUTHORITY),
         ("atomicRedeem", tags::ATOMIC_REDEEM),
         ("swap", tags::SWAP),
         ("writeDownFees", tags::WRITE_DOWN_FEES),

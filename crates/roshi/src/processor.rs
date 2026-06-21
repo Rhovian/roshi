@@ -6,11 +6,10 @@ use crate::{
             try_invest_external, try_process_withdrawals, try_register_external_destination,
             try_report_nav, try_return_external, try_revoke_action,
             try_revoke_external_destination, try_set_nav_authority, try_set_pause_flags,
-            try_set_share_metadata, try_set_strategist, try_set_swap_authority,
-            try_set_vault_access, try_set_withdrawal_authority,
-            try_strategist_lower_flash_fee_rate, try_transfer_program_authority,
-            try_transfer_vault_authority, try_update_asset, try_update_vault_config,
-            try_write_down_fees,
+            try_set_share_metadata, try_set_strategist, try_set_vault_access,
+            try_set_withdrawal_authority, try_strategist_lower_flash_fee_rate,
+            try_transfer_program_authority, try_transfer_vault_authority, try_update_asset,
+            try_update_vault_config, try_write_down_fees,
         },
         execution::{
             try_assert_delegate_cleared, try_atomic_redeem, try_manage, try_manage_batch, try_swap,
@@ -74,7 +73,6 @@ fn try_process_instruction<'info>(
             try_transfer_vault_authority(accounts, args)
         }
         RoshiInstruction::SetStrategist(args) => try_set_strategist(accounts, args),
-        RoshiInstruction::SetSwapAuthority(args) => try_set_swap_authority(accounts, args),
         RoshiInstruction::SetNavAuthority(args) => try_set_nav_authority(accounts, args),
         RoshiInstruction::SetWithdrawalAuthority(args) => {
             try_set_withdrawal_authority(accounts, args)

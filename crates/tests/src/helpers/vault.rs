@@ -18,18 +18,16 @@ use super::{token::set_mint, transaction::send_ok};
 pub struct VaultRoles {
     pub admin: Keypair,
     pub strategist: Keypair,
-    pub swap_authority: Keypair,
     pub nav_authority: Keypair,
     pub withdrawal_authority: Keypair,
 }
 
 impl VaultRoles {
-    /// Generate four independent role keypairs.
+    /// Generate independent role keypairs.
     pub fn generate() -> Self {
         Self {
             admin: Keypair::new(),
             strategist: Keypair::new(),
-            swap_authority: Keypair::new(),
             nav_authority: Keypair::new(),
             withdrawal_authority: Keypair::new(),
         }
@@ -41,7 +39,6 @@ impl VaultRoles {
         Self {
             admin: keypair.insecure_clone(),
             strategist: keypair.insecure_clone(),
-            swap_authority: keypair.insecure_clone(),
             nav_authority: keypair.insecure_clone(),
             withdrawal_authority: keypair.insecure_clone(),
         }
@@ -177,7 +174,6 @@ impl VaultBuilder {
             tag_len: self.tag.len() as u8,
             admin: self.roles.admin.pubkey().to_bytes(),
             strategist: self.roles.strategist.pubkey().to_bytes(),
-            swap_authority: self.roles.swap_authority.pubkey().to_bytes(),
             nav_authority: self.roles.nav_authority.pubkey().to_bytes(),
             withdrawal_authority: self.roles.withdrawal_authority.pubkey().to_bytes(),
             base_mint: self.base_mint.to_bytes(),
@@ -271,7 +267,6 @@ impl VaultBuilder {
             &self.tag,
             self.roles.admin.pubkey().to_bytes(),
             self.roles.strategist.pubkey().to_bytes(),
-            self.roles.swap_authority.pubkey().to_bytes(),
             self.roles.nav_authority.pubkey().to_bytes(),
             self.roles.withdrawal_authority.pubkey().to_bytes(),
             self.base_mint.to_bytes(),

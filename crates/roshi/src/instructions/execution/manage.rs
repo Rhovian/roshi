@@ -8,9 +8,8 @@ use crate::instructions::{accounts::ManageContext, ManageArgs};
 ///
 /// # Accounts
 ///
-/// 0. `[]` Action executor. Must be the vault strategist for manager actions
-///    or swap authority for swap actions; public actions do not require an
-///    executor role.
+/// 0. `[]` Action executor. Must be the vault strategist for manager actions;
+///    public actions do not require an executor role.
 /// 1. `[]` Vault account.
 /// 2. `[]` Subaccount PDA derived from `(vault, sub_account)`.
 /// 3. `[]` Action PDA derived from `(vault, recomputed_action_hash)`.

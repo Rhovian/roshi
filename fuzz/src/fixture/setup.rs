@@ -9,8 +9,6 @@
         let vault_authority_alt = Rc::new(Keypair::new());
         let strategist = Rc::new(Keypair::new());
         let strategist_alt = Rc::new(Keypair::new());
-        let swap_authority = Rc::new(Keypair::new());
-        let swap_authority_alt = Rc::new(Keypair::new());
         let nav_authority = Rc::new(Keypair::new());
         let nav_authority_alt = Rc::new(Keypair::new());
         let withdrawal_authority = Rc::new(Keypair::new());
@@ -22,8 +20,6 @@
             &vault_authority_alt,
             &strategist,
             &strategist_alt,
-            &swap_authority,
-            &swap_authority_alt,
             &nav_authority,
             &nav_authority_alt,
             &withdrawal_authority,
@@ -63,7 +59,6 @@
             tag_len: 4,
             admin: operator.pubkey().to_bytes(),
             strategist: strategist.pubkey().to_bytes(),
-            swap_authority: swap_authority.pubkey().to_bytes(),
             nav_authority: nav_authority.pubkey().to_bytes(),
             withdrawal_authority: withdrawal_authority.pubkey().to_bytes(),
             base_mint: base_mint.to_bytes(),
@@ -195,9 +190,14 @@
         //     amount sits in the token-transfer ix data ([tag, amount_le]).
         let atomic_venue = Pubkey::new_unique();
         set_token_account(&mut ctx.svm, atomic_venue, &base_mint, &sub_account, VENUE_BASE);
-        let atomic_action_hash =
-            compute_action_hash_from_metas(&support::TOKEN_PROGRAM_ID, &Ops::empty(), &[], &[])
-                .expect("action hash");
+        let atomic_action_hash = compute_action_hash_from_metas(
+            &support::TOKEN_PROGRAM_ID,
+            &Ops::empty(),
+            &[],
+            &[],
+            &[],
+        )
+        .expect("action hash");
         let (atomic_action, _) = Action::find_address(&vault, &atomic_action_hash);
         submit_ok(
             &mut ctx,
@@ -209,6 +209,8 @@
                 ActionScope::AtomicRedeem,
                 Ops::empty(),
                 1,
+                0,
+                0,
             )
             .unwrap(),
             &[&operator],
@@ -460,8 +462,6 @@
             vault_authority_alt,
             strategist,
             strategist_alt,
-            swap_authority,
-            swap_authority_alt,
             nav_authority,
             nav_authority_alt,
             withdrawal_authority,
