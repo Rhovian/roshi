@@ -98,37 +98,6 @@
         submit(&mut self.ctx, restore, &[&self.operator.clone()])
     }
 
-    /// Rotate swap authority, prove the old swap authority cannot execute a
-    /// swap, then restore the original swap authority.
-    pub fn action_set_swap_authority(&mut self) -> bool {
-        let set = roshi_client::instruction::set_swap_authority(
-            self.operator.pubkey(),
-            self.vault,
-            self.swap_authority_alt.pubkey(),
-        )
-        .unwrap();
-        if !submit(&mut self.ctx, set, &[&self.operator.clone()]) {
-            return false;
-        }
-
-        if !self.load_vault().manage_paused().unwrap_or(true) {
-            let ix = self.swap_base_ix(self.swap_authority.pubkey(), false, 0);
-            let old_ok = submit(&mut self.ctx, ix, &[&self.swap_authority.clone()]);
-            fuzz_assert!(
-                !old_ok,
-                "old swap authority executed swap after rotation"
-            );
-        }
-
-        let restore = roshi_client::instruction::set_swap_authority(
-            self.operator.pubkey(),
-            self.vault,
-            self.swap_authority.pubkey(),
-        )
-        .unwrap();
-        submit(&mut self.ctx, restore, &[&self.operator.clone()])
-    }
-
     /// Rotate NAV authority, prove the old NAV authority cannot report, then
     /// restore the original NAV authority.
     pub fn action_set_nav_authority(&mut self) -> bool {

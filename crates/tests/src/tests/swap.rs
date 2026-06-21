@@ -1,4 +1,4 @@
-//! `swap`: swap-authority execution through a pre-authorized CPI with realized
+//! `swap`: strategist execution through a pre-authorized CPI with realized
 //! balance bounds on the designated custody accounts.
 
 use litesvm::LiteSVM;
@@ -122,9 +122,9 @@ impl SwapFixture {
         .unwrap();
     }
 
-    fn ix(&self, swap_authority: Pubkey, min_out: u64, max_in: u64) -> Instruction {
+    fn ix(&self, strategist: Pubkey, min_out: u64, max_in: u64) -> Instruction {
         roshi_client::instruction::swap(
-            swap_authority,
+            strategist,
             self.vault.address,
             self.sub_account,
             self.input_custody,
@@ -173,16 +173,16 @@ fn test_swap_happy_path() {
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     send_ok(
         &mut svm,
         fixture.ix(
-            fixture.vault.roles.swap_authority.pubkey(),
+            fixture.vault.roles.strategist.pubkey(),
             SWAP_AMOUNT,
             SWAP_AMOUNT,
         ),
-        &fixture.vault.roles.swap_authority,
+        &fixture.vault.roles.strategist,
     );
 
     assert_eq!(
@@ -203,16 +203,16 @@ fn test_swap_happy_path_with_token_2022_custody() {
 
     let fixture = SwapFixture::setup_with_program(&mut svm, TOKEN_2022_PROGRAM_ID);
     fixture.install_action(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     send_ok(
         &mut svm,
         fixture.ix(
-            fixture.vault.roles.swap_authority.pubkey(),
+            fixture.vault.roles.strategist.pubkey(),
             SWAP_AMOUNT,
             SWAP_AMOUNT,
         ),
-        &fixture.vault.roles.swap_authority,
+        &fixture.vault.roles.strategist,
     );
 
     assert_eq!(
@@ -233,17 +233,17 @@ fn test_swap_rejects_received_below_min_out() {
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     assert_roshi_error(
         send(
             &mut svm,
             fixture.ix(
-                fixture.vault.roles.swap_authority.pubkey(),
+                fixture.vault.roles.strategist.pubkey(),
                 SWAP_AMOUNT + 1,
                 SWAP_AMOUNT,
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::SlippageExceeded,
     );
@@ -257,17 +257,17 @@ fn test_swap_rejects_spent_above_max_in() {
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     assert_roshi_error(
         send(
             &mut svm,
             fixture.ix(
-                fixture.vault.roles.swap_authority.pubkey(),
+                fixture.vault.roles.strategist.pubkey(),
                 SWAP_AMOUNT,
                 SWAP_AMOUNT - 1,
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::SlippageExceeded,
     );
@@ -282,7 +282,7 @@ fn test_swap_rejects_when_manage_paused() {
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
     fund(&mut svm, &fixture.vault.roles.admin);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
     send_ok(
         &mut svm,
         roshi_client::instruction::set_pause_flags(
@@ -301,18 +301,18 @@ fn test_swap_rejects_when_manage_paused() {
         send(
             &mut svm,
             fixture.ix(
-                fixture.vault.roles.swap_authority.pubkey(),
+                fixture.vault.roles.strategist.pubkey(),
                 SWAP_AMOUNT,
                 SWAP_AMOUNT,
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::VaultPaused,
     );
 }
 
 #[test]
-fn test_swap_rejects_non_swap_authority_signer() {
+fn test_swap_rejects_non_strategist_signer() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
@@ -341,17 +341,17 @@ fn test_swap_rejects_custody_with_delegate() {
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
     install_delegate(&mut svm, fixture.input_custody);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     assert_roshi_error(
         send(
             &mut svm,
             fixture.ix(
-                fixture.vault.roles.swap_authority.pubkey(),
+                fixture.vault.roles.strategist.pubkey(),
                 SWAP_AMOUNT,
                 SWAP_AMOUNT,
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::InvalidTokenAccount,
     );
@@ -490,7 +490,7 @@ fn swap_ix_with_valuation(
     ix_data: Vec<u8>,
 ) -> Instruction {
     roshi_client::instruction::swap(
-        fixture.vault.roles.swap_authority.pubkey(),
+        fixture.vault.roles.strategist.pubkey(),
         fixture.vault.address,
         fixture.sub_account,
         input_custody,
@@ -538,15 +538,15 @@ fn test_swap_value_bound_accepts_symmetric_base_swap() {
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
     set_swap_slippage(&mut svm, &fixture.vault, 100);
 
     // Both endpoints are the base mint: equal value in and out, no oracle
     // accounts needed.
     send_ok(
         &mut svm,
-        fixture.ix(fixture.vault.roles.swap_authority.pubkey(), 0, SWAP_AMOUNT),
-        &fixture.vault.roles.swap_authority,
+        fixture.ix(fixture.vault.roles.strategist.pubkey(), 0, SWAP_AMOUNT),
+        &fixture.vault.roles.strategist,
     );
     assert_eq!(
         token_balance(&svm, &fixture.output_custody),
@@ -561,7 +561,7 @@ fn test_swap_value_bound_blocks_value_leak() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     // An authorized route that pays custody value to an outside account: the
     // output custody never receives anything.
@@ -589,22 +589,14 @@ fn test_swap_value_bound_blocks_value_leak() {
 
     // Bound off: only the caller-supplied amount bounds apply, and the swap
     // authority chose not to set them. The leak goes through.
-    send_ok(
-        &mut svm,
-        leak_ix(vec![]),
-        &fixture.vault.roles.swap_authority,
-    );
+    send_ok(&mut svm, leak_ix(vec![]), &fixture.vault.roles.strategist);
     assert_eq!(token_balance(&svm, &leak), SWAP_AMOUNT);
 
     // Bound on: zero received value against positive spent value rejects.
     set_swap_slippage(&mut svm, &fixture.vault, 100);
     svm.expire_blockhash();
     assert_roshi_error(
-        send(
-            &mut svm,
-            leak_ix(vec![]),
-            &fixture.vault.roles.swap_authority,
-        ),
+        send(&mut svm, leak_ix(vec![]), &fixture.vault.roles.strategist),
         RoshiError::SlippageExceeded,
     );
     assert_eq!(token_balance(&svm, &leak), SWAP_AMOUNT);
@@ -617,7 +609,7 @@ fn test_swap_rejects_unpriceable_endpoint() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
     set_swap_slippage(&mut svm, &fixture.vault, 100);
 
     // Output custody holds a mint that is neither the base mint nor a
@@ -644,7 +636,7 @@ fn test_swap_rejects_unpriceable_endpoint() {
                 vec![AccountMeta::new_readonly(unregistered_asset_pda, false)],
                 fixture.ix_data.clone(),
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::UnpriceableSwapLeg,
     );
@@ -657,7 +649,7 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
     set_swap_slippage(&mut svm, &fixture.vault, 100);
 
     // Registered asset (9 decimals) priced 2.0 base per whole token via Pyth.
@@ -736,7 +728,7 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
                 ],
                 ix_data,
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::SlippageExceeded,
     );
@@ -773,7 +765,6 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
         roles: crate::helpers::VaultRoles {
             admin: vault.roles.admin.insecure_clone(),
             strategist: vault.roles.strategist.insecure_clone(),
-            swap_authority: vault.roles.swap_authority.insecure_clone(),
             nav_authority: vault.roles.nav_authority.insecure_clone(),
             withdrawal_authority: vault.roles.withdrawal_authority.insecure_clone(),
         },
@@ -809,7 +800,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
     crate::helpers::set_token_account(&mut svm, asset_output, &asset_mint, &sub_account, 0);
 
     set_swap_slippage(&mut svm, &fixture_vault, 100);
-    fund(&mut svm, &fixture_vault.roles.swap_authority);
+    fund(&mut svm, &fixture_vault.roles.strategist);
 
     let amount = 500_000_000u64;
     let ix_data = token_transfer_data(amount);
@@ -850,7 +841,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
     send_ok(
         &mut svm,
         roshi_client::instruction::swap(
-            fixture_vault.roles.swap_authority.pubkey(),
+            fixture_vault.roles.strategist.pubkey(),
             vault.address,
             sub_account,
             asset_input,
@@ -894,7 +885,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
             },
         )
         .unwrap(),
-        &fixture_vault.roles.swap_authority,
+        &fixture_vault.roles.strategist,
     );
     assert_eq!(token_balance(&svm, &asset_output), amount);
     assert_eq!(token_balance(&svm, &asset_input), 1_000_000_000 - amount);
@@ -914,7 +905,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
     builder.install_mints(&mut svm);
     let vault = builder.install(&mut svm);
     set_swap_slippage(&mut svm, &vault, 100);
-    fund(&mut svm, &vault.roles.swap_authority);
+    fund(&mut svm, &vault.roles.strategist);
 
     let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
 
@@ -987,7 +978,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
     .unwrap();
 
     let ix = roshi_client::instruction::swap(
-        vault.roles.swap_authority.pubkey(),
+        vault.roles.strategist.pubkey(),
         vault.address,
         sub_account,
         input_a,
@@ -1033,7 +1024,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
     .unwrap();
 
     assert_roshi_error(
-        send(&mut svm, ix, &vault.roles.swap_authority),
+        send(&mut svm, ix, &vault.roles.strategist),
         RoshiError::SlippageExceeded,
     );
     assert_eq!(token_balance(&svm, &leak), 0);
@@ -1113,7 +1104,7 @@ fn swap_ix_route(
     cpi_accounts.push(AccountMeta::new_readonly(fixture.token_program, false));
 
     roshi_client::instruction::swap(
-        fixture.vault.roles.swap_authority.pubkey(),
+        fixture.vault.roles.strategist.pubkey(),
         fixture.vault.address,
         fixture.sub_account,
         input_custody,
@@ -1148,7 +1139,7 @@ fn test_swap_rejects_draining_unnamed_sibling_custody() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     // The sub-account owns a third, funded custody. The attacker names the two
     // empty fixture endpoints as input/output (they stay flat) and routes the
@@ -1178,7 +1169,7 @@ fn test_swap_rejects_draining_unnamed_sibling_custody() {
                 vec![],
                 fixture.ix_data.clone(),
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::SwapCustodyMoved,
     );
@@ -1193,7 +1184,7 @@ fn test_swap_allows_untouched_sibling_in_route() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     let sibling = install_sibling_custody(&mut svm, &fixture, SIBLING_BALANCE);
     let action = install_floating_swap_action(&mut svm, &fixture);
@@ -1217,7 +1208,7 @@ fn test_swap_allows_untouched_sibling_in_route() {
             route,
             token_transfer_data(SWAP_AMOUNT),
         ),
-        &fixture.vault.roles.swap_authority,
+        &fixture.vault.roles.strategist,
     );
 
     assert_eq!(
@@ -1238,7 +1229,7 @@ fn test_swap_rejects_draining_sibling_listed_twice() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     // Aggregator routes list the same account more than once. A duplicated
     // sibling must be snapshotted once and still caught when the route drains it.
@@ -1271,7 +1262,7 @@ fn test_swap_rejects_draining_sibling_listed_twice() {
                 route,
                 token_transfer_data(SWAP_AMOUNT),
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::SwapCustodyMoved,
     );
@@ -1285,7 +1276,7 @@ fn test_swap_rejects_route_that_delegates_sibling() {
     };
 
     let fixture = SwapFixture::setup(&mut svm);
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.strategist);
 
     // The route leaves the sibling balance flat but grants a delegate — a
     // deferred drain. Balance-unchanged alone wouldn't catch it; the post-CPI
@@ -1309,7 +1300,7 @@ fn test_swap_rejects_route_that_delegates_sibling() {
                 route,
                 token_approve_data(SWAP_AMOUNT),
             ),
-            &fixture.vault.roles.swap_authority,
+            &fixture.vault.roles.strategist,
         ),
         RoshiError::InvalidTokenAccount,
     );

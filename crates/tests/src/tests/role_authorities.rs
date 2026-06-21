@@ -120,31 +120,6 @@ fn test_set_nav_authority() {
 }
 
 #[test]
-fn test_set_swap_authority() {
-    let Some((mut svm, ..)) = setup_program() else {
-        return;
-    };
-
-    let vault = VaultBuilder::new().install(&mut svm);
-    fund(&mut svm, &vault.roles.admin);
-
-    let before = vault.load(&svm);
-    let new_swap_authority = solana_pubkey::Pubkey::new_unique();
-
-    let ix = roshi_client::instruction::set_swap_authority(
-        vault.roles.admin.pubkey(),
-        vault.address,
-        new_swap_authority,
-    )
-    .unwrap();
-    send_ok(&mut svm, ix, &vault.roles.admin);
-
-    let mut expected = before;
-    expected.swap_authority = new_swap_authority.to_bytes();
-    assert_eq!(vault.load(&svm), expected);
-}
-
-#[test]
 fn test_set_withdrawal_authority() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

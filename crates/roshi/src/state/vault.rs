@@ -54,7 +54,6 @@ mod tests {
             b"test",
             Pubkey::new_unique().to_bytes(),
             [2; 32],
-            [3; 32],
             [4; 32],
             [5; 32],
             base_mint.to_bytes(),

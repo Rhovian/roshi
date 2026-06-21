@@ -8,9 +8,8 @@ use super::shared::{settle_authorized_cpi, validate_authorized_cpi};
 ///
 /// # Accounts
 ///
-/// 0. `[]` Action executor. Must be the vault strategist for manager actions
-///    or swap authority for swap actions; public actions do not require an
-///    executor role.
+/// 0. `[]` Action executor. Must be the vault strategist for manager actions;
+///    public actions do not require an executor role.
 /// 1. `[]` Vault account.
 /// 2. `..` Repeated `(subaccount PDA, Action PDA)` pairs, one per action.
 ///    N. `..` Shared CPI account section after all pairs.

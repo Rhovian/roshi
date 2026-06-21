@@ -114,8 +114,6 @@ struct RoshiFixture {
     /// working, then restore the original signer.
     strategist: Rc<Keypair>,
     strategist_alt: Rc<Keypair>,
-    swap_authority: Rc<Keypair>,
-    swap_authority_alt: Rc<Keypair>,
     nav_authority: Rc<Keypair>,
     nav_authority_alt: Rc<Keypair>,
     withdrawal_authority: Rc<Keypair>,
@@ -335,7 +333,7 @@ fn authorize_transfer_action_with_program(
     // Ops ingest the three accounts and ix_data[0..1] (the transfer
     // discriminator), so only the amount appended after it is free.
     let action_hash =
-        compute_action_hash_from_metas(&token_program, &ops, &metas, &[SPL_TRANSFER_TAG])
+        compute_action_hash_from_metas(&token_program, &ops, &metas, &[SPL_TRANSFER_TAG], &[])
             .expect("action hash");
     let (action, _) = Action::find_address(&vault, &action_hash);
     submit_ok(
@@ -347,6 +345,8 @@ fn authorize_transfer_action_with_program(
             action_hash,
             scope,
             ops,
+            0,
+            0,
             0,
         )
         .unwrap(),

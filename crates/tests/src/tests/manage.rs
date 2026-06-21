@@ -468,12 +468,12 @@ fn test_manage_rejects_swap_action() {
     )
     .unwrap();
 
-    fund(&mut svm, &fixture.vault.roles.swap_authority);
+    fund(&mut svm, &fixture.vault.roles.nav_authority);
     assert_instruction_error(
         send(
             &mut svm,
-            fixture.manage_ix(fixture.vault.roles.swap_authority.pubkey()),
-            &fixture.vault.roles.swap_authority,
+            fixture.manage_ix(fixture.vault.roles.nav_authority.pubkey()),
+            &fixture.vault.roles.nav_authority,
         ),
         InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
     );

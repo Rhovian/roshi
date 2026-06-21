@@ -303,7 +303,7 @@
     /// `reverse` picks the direction so base is never one-way stranded.
     fn swap_base_ix(
         &self,
-        swap_authority: Pubkey,
+        strategist: Pubkey,
         reverse: bool,
         amount: u64,
     ) -> solana_instruction::Instruction {
@@ -315,7 +315,7 @@
         let mut ix_data = vec![SPL_TRANSFER_TAG];
         ix_data.extend_from_slice(&amount.to_le_bytes());
         roshi_client::instruction::swap(
-            swap_authority,
+            strategist,
             self.vault,
             self.sub_account,
             input,
@@ -368,8 +368,8 @@
             return false;
         }
         let amount = amount % (available + 1);
-        let ix = self.swap_base_ix(self.swap_authority.pubkey(), reverse, amount);
-        submit(&mut self.ctx, ix, &[&self.swap_authority.clone()])
+        let ix = self.swap_base_ix(self.strategist.pubkey(), reverse, amount);
+        submit(&mut self.ctx, ix, &[&self.strategist.clone()])
     }
 
     /// Execute an authorized Token-2022 swap between two sub-account-owned
@@ -401,7 +401,7 @@
         let output_before = token_balance(&self.ctx.svm, &output);
         let should_succeed = !self.load_vault().manage_paused().unwrap_or(true);
         let ix = roshi_client::instruction::swap(
-            self.swap_authority.pubkey(),
+            self.strategist.pubkey(),
             self.vault,
             self.sub_account,
             input,
@@ -439,7 +439,7 @@
             },
         )
         .unwrap();
-        let ok = submit(&mut self.ctx, ix, &[&self.swap_authority.clone()]);
+        let ok = submit(&mut self.ctx, ix, &[&self.strategist.clone()]);
         let input_after = token_balance(&self.ctx.svm, &input);
         let output_after = token_balance(&self.ctx.svm, &output);
         if should_succeed {
