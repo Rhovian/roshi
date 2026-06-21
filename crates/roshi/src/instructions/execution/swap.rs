@@ -56,6 +56,14 @@ where
     let in_pre = token::token_amount(context.input_custody)?;
     let out_pre = token::token_amount(context.output_custody)?;
 
+    // Snapshot both endpoints so we can prove post-CPI that the route changed only
+    // their balances. The endpoints are exempt from the sibling-custody snapshot
+    // below (their balances must move), so this is what stops the route from leaving
+    // a standing authority — e.g. an SPL `Approve` planting a delegate that survives
+    // the swap. The pre-existing flash-repay delegate is captured here and so passes.
+    let in_pre_data = context.input_custody.try_borrow_data()?.to_vec();
+    let out_pre_data = context.output_custody.try_borrow_data()?.to_vec();
+
     let validated_accounts = ValidatedManageAccounts {
         action: context.action,
         vault_key: context.vault_key,
@@ -84,8 +92,12 @@ where
 
     authorized_cpi.verify_custody_unchanged(&custody)?;
 
-    token::verify_custody_account(context.input_custody, context.sub_account.key)?;
-    token::verify_custody_account(context.output_custody, context.sub_account.key)?;
+    // The route may only have moved the endpoints' balances — nothing else. This is
+    // what bounds the delegate exemption (see `accounts::swap`): the CPI cannot
+    // create, expand, or retarget a delegate, nor set a close authority, on either
+    // endpoint. The realized balance deltas are then bounded below.
+    token::verify_swap_endpoint_unchanged(&in_pre_data, context.input_custody)?;
+    token::verify_swap_endpoint_unchanged(&out_pre_data, context.output_custody)?;
 
     let in_post = token::token_amount(context.input_custody)?;
     let out_post = token::token_amount(context.output_custody)?;

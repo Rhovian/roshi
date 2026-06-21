@@ -333,27 +333,84 @@ fn test_swap_rejects_non_strategist_signer() {
 }
 
 #[test]
-fn test_swap_rejects_custody_with_delegate() {
+fn test_swap_allows_preexisting_endpoint_delegate() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
+    // A flash-collateral Multiply grants its flash-repay delegate on an endpoint
+    // (the collateral ATA) before the swap runs. The swap tolerates that
+    // pre-existing delegate — the route transfers via the sub-account owner, not the
+    // delegate, and leaves it untouched.
     install_delegate(&mut svm, fixture.input_custody);
     fund(&mut svm, &fixture.vault.roles.strategist);
 
+    send_ok(
+        &mut svm,
+        fixture.ix(
+            fixture.vault.roles.strategist.pubkey(),
+            SWAP_AMOUNT,
+            SWAP_AMOUNT,
+        ),
+        &fixture.vault.roles.strategist,
+    );
+
+    // The swap moved the balance and left the delegate exactly as it was.
+    assert_eq!(
+        token_balance(&svm, &fixture.input_custody),
+        INPUT_BALANCE - SWAP_AMOUNT
+    );
+    let data = svm.get_account(&fixture.input_custody).unwrap().data;
+    assert_eq!(
+        &data[72..76],
+        &1u32.to_le_bytes(),
+        "the pre-existing delegate must survive the swap untouched"
+    );
+}
+
+#[test]
+fn test_swap_rejects_route_that_delegates_endpoint() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.strategist);
+
+    // The route moves nothing but grants a delegate on a named endpoint — a deferred
+    // drain that would outlive the swap. Endpoints are exempt from the sibling
+    // snapshot (their balances legitimately move), so the post-CPI endpoint reverify
+    // is the only thing that can catch a *planted* delegate. min_out=0 means the
+    // balance bounds pass, so the swap would otherwise succeed and leave it behind.
+    let action = install_floating_swap_action(&mut svm, &fixture);
+    let route = vec![
+        AccountMeta::new(fixture.output_custody, false),
+        AccountMeta::new_readonly(Pubkey::new_unique(), false),
+        AccountMeta::new_readonly(fixture.sub_account, false),
+    ];
     assert_roshi_error(
         send(
             &mut svm,
-            fixture.ix(
-                fixture.vault.roles.strategist.pubkey(),
-                SWAP_AMOUNT,
-                SWAP_AMOUNT,
+            swap_ix_route(
+                &fixture,
+                fixture.input_custody,
+                fixture.output_custody,
+                action,
+                route,
+                token_approve_data(SWAP_AMOUNT),
             ),
             &fixture.vault.roles.strategist,
         ),
         RoshiError::InvalidTokenAccount,
+    );
+    // The rejection reverted the tx, so no delegate lingers on the endpoint.
+    let data = svm.get_account(&fixture.output_custody).unwrap().data;
+    assert_eq!(
+        &data[72..76],
+        &0u32.to_le_bytes(),
+        "no delegate may persist on the endpoint after the rejected swap"
     );
 }
 

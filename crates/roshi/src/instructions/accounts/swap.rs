@@ -73,13 +73,18 @@ where
         let sub_account_bump =
             VaultSubAccount::verify_account(&vault_key, args.sub_account, sub_account)?;
 
+        // Baseline: subaccount-owned, no close authority. An endpoint may carry a
+        // pre-existing delegate (the flash-collateral repay delegate sits on the
+        // output ATA), so a delegate is tolerated here — but `execution::swap` must
+        // reverify post-CPI that the route changed nothing but the balance
+        // (`verify_swap_endpoint_unchanged`), or the route could plant one.
         let input_custody = next_account(accounts_iter)?;
         require_writable(input_custody)?;
-        token::verify_custody_account(input_custody, sub_account.key)?;
+        token::verify_swap_endpoint_custody(input_custody, sub_account.key)?;
 
         let output_custody = next_account(accounts_iter)?;
         require_writable(output_custody)?;
-        token::verify_custody_account(output_custody, sub_account.key)?;
+        token::verify_swap_endpoint_custody(output_custody, sub_account.key)?;
 
         if input_custody.key == output_custody.key {
             return Err(RoshiError::InvalidTokenAccount.into());

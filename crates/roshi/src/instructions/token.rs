@@ -291,6 +291,66 @@ pub(crate) fn verify_custody_account(account: &AccountInfo, subaccount: &Pubkey)
     Ok(())
 }
 
+/// Pre-CPI baseline check for a swap's named input/output endpoint: a
+/// subaccount-owned, initialized token account with **no close authority**. Unlike
+/// [`verify_custody_account`] it tolerates a **delegate**, because the
+/// flash-collateral Multiply grants its flash-repay delegate on the collateral ATA
+/// (the swap's output endpoint) before the swap runs.
+///
+/// Tolerating a *pre-existing* delegate is only safe in tandem with
+/// [`verify_swap_endpoint_unchanged`], which the caller MUST run after the route CPI:
+/// this function alone would let the route plant or expand a delegate. A close
+/// authority can outright rug the account, so it is rejected here and (being part of
+/// the snapshot) can never be added by the CPI either.
+pub(crate) fn verify_swap_endpoint_custody(
+    account: &AccountInfo,
+    subaccount: &Pubkey,
+) -> ProgramResult {
+    if !is_token_program(account.owner) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let data = account.try_borrow_data()?;
+    if data.len() < TOKEN_ACCOUNT_LEN || data[TOKEN_ACCOUNT_STATE] != 1 {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    let owner = Pubkey::try_from(&data[TOKEN_ACCOUNT_OWNER..TOKEN_ACCOUNT_OWNER + 32])
+        .map_err(|_| ProgramError::from(RoshiError::InvalidTokenAccount))?;
+    if &owner != subaccount {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    if has_close_authority(&data) {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
+/// Post-CPI reverify for a swap endpoint: assert the route changed **only the token
+/// balance**. `pre` is the endpoint's account data snapshotted immediately before the
+/// CPI; every byte outside the amount field (`TOKEN_ACCOUNT_AMOUNT..+8`) must be
+/// byte-identical afterward.
+///
+/// The named endpoints are exempt from the sibling-custody snapshot (their balances
+/// legitimately move within the oracle / `max_in` / `min_out` bounds), so this is the
+/// only thing standing between the route and a *standing authority* on them: it makes
+/// it impossible for the CPI to create, expand, or retarget a delegate, set a close
+/// authority, or reassign the account — any of which would outlive the swap's bounded
+/// flow. The pre-existing flash-repay delegate is unchanged, so it passes.
+pub(crate) fn verify_swap_endpoint_unchanged(pre: &[u8], account: &AccountInfo) -> ProgramResult {
+    let post = account.try_borrow_data()?;
+    if pre.len() != post.len()
+        || pre[..TOKEN_ACCOUNT_AMOUNT] != post[..TOKEN_ACCOUNT_AMOUNT]
+        || pre[TOKEN_ACCOUNT_AMOUNT + 8..] != post[TOKEN_ACCOUNT_AMOUNT + 8..]
+    {
+        return Err(RoshiError::InvalidTokenAccount.into());
+    }
+
+    Ok(())
+}
+
 /// Classify `account` as the subaccount's custody for the control scan.
 ///
 /// Returns `Ok(true)` for a clean subaccount-owned token account, `Ok(false)`
@@ -419,6 +479,17 @@ fn has_transfer_authority(data: &[u8]) -> bool {
     );
 
     delegate_tag != 0 || close_tag != 0
+}
+
+/// Whether a token account has a close authority set (the COption tag at
+/// `TOKEN_ACCOUNT_CLOSE_AUTHORITY` is non-zero). Unlike a delegate, a close
+/// authority can drain/close the account, so it is rejected even for swap endpoints.
+fn has_close_authority(data: &[u8]) -> bool {
+    u32::from_le_bytes(
+        data[TOKEN_ACCOUNT_CLOSE_AUTHORITY..TOKEN_ACCOUNT_CLOSE_AUTHORITY + 4]
+            .try_into()
+            .unwrap(),
+    ) != 0
 }
 
 /// Read the amount field of an initialized SPL token account.
