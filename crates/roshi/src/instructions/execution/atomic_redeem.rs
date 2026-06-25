@@ -166,6 +166,13 @@ fn execute_unwind_cpi<'info>(
         return Err(RoshiError::UnauthorizedAction.into());
     }
 
+    // AtomicRedeem is publicly callable, so the action must pin every writable
+    // account in the unwind CPI (source, destination, everything). An un-ingested
+    // writable meta is caller-substitutable, which would let a broadly authorized
+    // action be redirected to drain the source into an attacker account — value
+    // the single base-custody measurement never debits from NAV.
+    authorized_cpi.require_writable_metas_bound(&action.ops)?;
+
     let pre = token::token_amount(custody)?;
     invoke_authorized_cpi(&authorized_cpi)?;
     token::verify_custody_account(custody, &sub_account_key)?;

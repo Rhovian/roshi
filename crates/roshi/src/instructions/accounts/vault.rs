@@ -1,16 +1,13 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::{
     program_config::ProgramConfigAuthorityContext,
     shared::{
-        next_account, require_system_program, require_uninitialized_account, require_writable,
-        require_writable_signer,
+        create_pda_account, next_account, require_system_program, require_uninitialized_account,
+        require_writable, require_writable_signer,
     },
 };
 use crate::{
@@ -210,24 +207,14 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
     }
 
     pub(crate) fn create_share_mint(&self) -> ProgramResult {
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(token::MINT_LEN);
-        let create_account_ix = create_account(
-            self.payer.key,
-            self.share_mint_account.key,
-            rent_exemption_lamports,
-            token::MINT_LEN as u64,
-            &token::TOKEN_PROGRAM_ID,
-        );
-        let account_infos = [
-            self.payer.clone(),
-            self.share_mint_account.clone(),
-            self.system_program_acc.clone(),
-        ];
         let bump = [self.share_mint_bump];
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[SHARE_MINT_SEED, self.vault.key.as_ref(), &bump]],
+        create_pda_account(
+            self.payer,
+            self.share_mint_account,
+            self.system_program_acc,
+            token::MINT_LEN,
+            &token::TOKEN_PROGRAM_ID,
+            &[SHARE_MINT_SEED, self.vault.key.as_ref(), &bump],
         )?;
 
         token::initialize_mint(
@@ -239,26 +226,15 @@ impl<'a, 'info> InitializeVaultContext<'a, 'info> {
     }
 
     pub(crate) fn create_vault_account(&self) -> ProgramResult {
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(Vault::SPACE);
-        let create_account_ix = create_account(
-            self.payer.key,
-            self.vault.key,
-            rent_exemption_lamports,
-            Vault::SPACE as u64,
-            &crate::ID,
-        );
-        let account_infos = [
-            self.payer.clone(),
-            self.vault.clone(),
-            self.system_program_acc.clone(),
-        ];
         let bump = [self.vault_bump];
         let tag = &self.tag[..usize::from(self.tag_len)];
-
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[Vault::SEED, tag, self.base_mint.as_ref(), &bump]],
+        create_pda_account(
+            self.payer,
+            self.vault,
+            self.system_program_acc,
+            Vault::SPACE,
+            &crate::ID,
+            &[Vault::SEED, tag, self.base_mint.as_ref(), &bump],
         )
     }
 

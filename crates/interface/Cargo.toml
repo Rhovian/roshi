@@ -1,6 +1,6 @@
 [package]
 name = "roshi-interface"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "On-chain instruction interface and types for the Roshi Solana program."

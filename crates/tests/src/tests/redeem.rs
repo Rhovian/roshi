@@ -242,6 +242,27 @@ fn test_redeem_burns_shares_and_queues_ticket() {
 }
 
 #[test]
+fn test_redeem_tolerates_prefunded_ticket_pda() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    let fixture = setup_redeem(&mut svm);
+
+    // Anyone can transfer lamports to the deterministic ticket PDA before the
+    // owner redeems against that index. That prefund must not force a retry.
+    let shares = ONE_BASE_SHARES / 2;
+    let (ticket, ix) = redeem_ix(&fixture, 0, shares);
+    svm.airdrop(&ticket, 1_000_000).unwrap();
+
+    send_ok(&mut svm, ix, &fixture.owner);
+
+    let queued = load_ticket(&svm, ticket);
+    assert_eq!(queued.owner, fixture.owner.pubkey().to_bytes());
+    assert_eq!(queued.ticket_index, 0);
+    assert_eq!(queued.shares_burned, shares);
+}
+
+#[test]
 fn test_redeem_rejects_dust_that_rounds_to_zero() {
     let Some((mut svm, ..)) = setup_program() else {
         return;

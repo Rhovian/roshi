@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "roshi-interface"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "codama",
  "codama-macros",

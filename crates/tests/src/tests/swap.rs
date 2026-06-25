@@ -792,6 +792,116 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
 }
 
 #[test]
+fn test_swap_value_bound_prices_same_feed_once() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.strategist);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    // One registered asset (9 decimals) priced via Pyth feed F. Both swap
+    // endpoints are this same asset in two sub-account custodies.
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let feed_id = [7u8; 32];
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture.vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            feed_id,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+        false,
+    );
+
+    let input_custody = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        input_custody,
+        &asset_mint,
+        &fixture.sub_account,
+        1_000_000_000,
+    );
+    let output_custody = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        output_custody,
+        &asset_mint,
+        &fixture.sub_account,
+        0,
+    );
+
+    // The input leg supplies a valid update for feed F; the output leg supplies
+    // an update for a DIFFERENT feed. If the output update were read on its own
+    // the swap would reject it (feed mismatch). Because both endpoints resolve to
+    // the same feed, the input price is reused and the output account is never
+    // consulted — the two-update comparison the finding exploits is gone.
+    let input_pyth = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, input_pyth, feed_id, 200_000_000, -8, 0);
+    let wrong_feed = [9u8; 32];
+    let output_pyth = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, output_pyth, wrong_feed, 200_000_000, -8, 0);
+
+    // A value-preserving wash: equal asset in and out.
+    let amount = 250_000_000u64;
+    let ix_data = token_transfer_data(amount);
+    let metas = token_transfer_metas(input_custody, output_custody, fixture.sub_account);
+    let hash =
+        compute_action_hash_from_metas(&fixture.token_program, &fixture.ops, &metas, &ix_data, &[])
+            .unwrap();
+    let (action, bump) = Action::find_address(&fixture.vault.address, &hash);
+    svm.set_account(
+        action,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: fixture.vault.address.to_bytes(),
+                action_hash: hash,
+                ops: fixture.ops,
+                scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    send_ok(
+        &mut svm,
+        swap_ix_with_valuation(
+            &fixture,
+            input_custody,
+            output_custody,
+            action,
+            input_custody,
+            output_custody,
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(input_pyth, false),
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(output_pyth, false),
+            ],
+            ix_data,
+        ),
+        &fixture.vault.roles.strategist,
+    );
+
+    assert_eq!(token_balance(&svm, &input_custody), 1_000_000_000 - amount);
+    assert_eq!(token_balance(&svm, &output_custody), amount);
+}
+
+#[test]
 fn test_swap_value_bound_prices_routed_asset_swap() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
@@ -944,6 +1054,166 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
         .unwrap(),
         &fixture_vault.roles.strategist,
     );
+    assert_eq!(token_balance(&svm, &asset_output), amount);
+    assert_eq!(token_balance(&svm, &asset_input), 1_000_000_000 - amount);
+}
+
+#[test]
+fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // A routed asset whose oracle is the SAME feed as the vault base oracle — the
+    // asset *is* the base. Its routed valuation is `asset_price / base_price`, so
+    // reading two independent updates of that one feed would let them disagree.
+    // The dedup must price the feed once: the asset leg reuses the base price and
+    // its separately supplied update is never consulted.
+    let feed = [8u8; 32];
+    let builder = VaultBuilder::new().base_oracle(roshi::oracle::OracleConfig::pyth(
+        roshi::oracle::PythOracleConfig::new(feed, 8, i64::MAX as u64, 250),
+    ));
+    builder.install_mints(&mut svm);
+    let vault = builder.install(&mut svm);
+
+    let sub_account_index = 0;
+    let sub_account = VaultSubAccount::find_address(&vault.address, sub_account_index).0;
+
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let fixture_vault = crate::helpers::TestVault {
+        address: vault.address,
+        bump: vault.bump,
+        tag: vault.tag.clone(),
+        base_mint: vault.base_mint,
+        share_mint: vault.share_mint,
+        treasury: vault.treasury,
+        roles: crate::helpers::VaultRoles {
+            admin: vault.roles.admin.insecure_clone(),
+            strategist: vault.roles.strategist.insecure_clone(),
+            nav_authority: vault.roles.nav_authority.insecure_clone(),
+            withdrawal_authority: vault.roles.withdrawal_authority.insecure_clone(),
+        },
+    };
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture_vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            feed,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+        true,
+    );
+
+    // The base leg supplies a valid update for the feed. The asset legs supply an
+    // update for a DIFFERENT feed: if either were read on its own the swap would
+    // reject it (feed mismatch). Dedup against the base feed means they are never
+    // consulted.
+    let pyth_base = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth_base, feed, 100_000_000, -8, 0);
+    let pyth_wrong = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, pyth_wrong, [3u8; 32], 100_000_000, -8, 0);
+
+    let asset_input = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        asset_input,
+        &asset_mint,
+        &sub_account,
+        1_000_000_000,
+    );
+    let asset_output = Pubkey::new_unique();
+    crate::helpers::set_token_account(&mut svm, asset_output, &asset_mint, &sub_account, 0);
+
+    set_swap_slippage(&mut svm, &fixture_vault, 100);
+    fund(&mut svm, &fixture_vault.roles.strategist);
+
+    let amount = 500_000_000u64;
+    let ix_data = token_transfer_data(amount);
+    let ops = Ops::new([
+        Op::IngestAccount { index: 0 },
+        Op::IngestAccount { index: 1 },
+    ])
+    .unwrap();
+    let metas = token_transfer_metas(asset_input, asset_output, sub_account);
+    let hash =
+        compute_action_hash_from_metas(&TOKEN_PROGRAM_ID, &ops, &metas, &ix_data, &[]).unwrap();
+    let (action, bump) = Action::find_address(&vault.address, &hash);
+    svm.set_account(
+        action,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Action::SPACE),
+            data: serialize(&RoshiAccount::Action(Action {
+                vault: vault.address.to_bytes(),
+                action_hash: hash,
+                ops,
+                scope: ActionScope::Swap,
+                fee_num: 0,
+                fee_den: 0,
+                redeem_amount_offset: 0,
+                bump,
+            }))
+            .unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::swap(
+            fixture_vault.roles.strategist.pubkey(),
+            vault.address,
+            sub_account,
+            asset_input,
+            asset_output,
+            action,
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(pyth_base, false),
+            ],
+            vec![
+                AccountMeta::new(asset_input, false),
+                AccountMeta::new(asset_output, false),
+                AccountMeta::new_readonly(sub_account, false),
+                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            ],
+            SwapArgs {
+                min_out: 0,
+                max_in: u64::MAX,
+                sub_account: sub_account_index,
+                program_id: TOKEN_PROGRAM_ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 3,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
+                ix_data,
+            },
+        )
+        .unwrap(),
+        &fixture_vault.roles.strategist,
+    );
+
     assert_eq!(token_balance(&svm, &asset_output), amount);
     assert_eq!(token_balance(&svm, &asset_input), 1_000_000_000 - amount);
 }

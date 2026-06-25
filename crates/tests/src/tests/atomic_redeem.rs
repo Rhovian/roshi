@@ -8,7 +8,7 @@ use roshi::{
     error::RoshiError,
     instructions::{AccountFlags, AtomicRedeemArgs},
     state::{
-        action::{compute_action_hash_from_metas, Action, ActionScope, Ops},
+        action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         sub_account::VaultSubAccount,
         Account as RoshiAccount,
     },
@@ -130,7 +130,18 @@ impl AtomicRedeemFixture {
         );
 
         let ix_data = token_transfer_data(REDEEM_AMOUNT);
-        let ops = Ops::empty();
+        // Canonical full-route authoring: pin both writable custodies the unwind
+        // touches — the venue source (meta 0) and the base destination (meta 1) —
+        // and the transfer discriminator (ix_data[0]). Only the per-redeem amount
+        // (ix_data[1..9]) is left free, so one action is reusable across users
+        // while a caller can neither substitute an account nor swap the
+        // instruction (both would change the action hash).
+        let ops = Ops::new([
+            Op::IngestAccount { index: 0 },
+            Op::IngestAccount { index: 1 },
+            Op::IngestInstruction { offset: 0, len: 1 },
+        ])
+        .unwrap();
         let action_metas = token_transfer_metas(venue_account, custody, sub_account);
         let action_hash =
             compute_action_hash_from_metas(&base_token_program, &ops, &action_metas, &ix_data, &[])
@@ -366,6 +377,188 @@ fn test_atomic_redeem_min_output_applies_to_net_payout() {
         ),
         RoshiError::SlippageExceeded,
     );
+}
+
+#[test]
+fn test_atomic_redeem_rejects_unbound_custody_route() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // The finding's precondition: a broad action that pins only the program id
+    // (empty ops), leaving every CPI account caller-controlled. The unwind's
+    // writable sub-account custodies (venue source, base destination) are then
+    // unbound, so a public caller could redirect the route to drain a sibling.
+    let mut fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.ops = Ops::empty();
+    fixture.action_hash = compute_action_hash_from_metas(
+        &crate::helpers::TOKEN_PROGRAM_ID,
+        &fixture.ops,
+        &token_transfer_metas(fixture.venue_account, fixture.custody, fixture.sub_account),
+        &fixture.ix_data,
+        &[],
+    )
+    .unwrap();
+    fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            fixture.ix(REDEEM_SHARES, 0, fixture.ix_data.clone()),
+            &fixture.owner,
+        ),
+        RoshiError::UnboundAtomicRedeemAccount,
+    );
+}
+
+#[test]
+fn test_atomic_redeem_rejects_unbound_destination_redirect() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // A partially-bound action that ingests only the venue source (index 0),
+    // leaving the CPI destination unpinned. Because the action hash folds only
+    // ingested accounts, a public caller can repoint the destination at their own
+    // token account — draining the venue while the measured base custody never
+    // moves (received = 0, NAV debited 0). Binding *every* writable meta rejects
+    // this, not just sub-account custody.
+    let mut fixture = AtomicRedeemFixture::setup(&mut svm);
+    let attacker_dest = Pubkey::new_unique();
+    set_token_account_with_program(
+        &mut svm,
+        attacker_dest,
+        &fixture.vault.base_mint,
+        &Pubkey::new_unique(),
+        0,
+        fixture.base_token_program,
+    );
+
+    fixture.ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
+    fixture.action_hash = compute_action_hash_from_metas(
+        &crate::helpers::TOKEN_PROGRAM_ID,
+        &fixture.ops,
+        &token_transfer_metas(fixture.venue_account, attacker_dest, fixture.sub_account),
+        &fixture.ix_data,
+        &[],
+    )
+    .unwrap();
+    fixture.action_pda = Action::find_address(&fixture.vault.address, &fixture.action_hash).0;
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    let ix = roshi_client::instruction::atomic_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        fixture.share_account,
+        fixture.vault.share_mint,
+        fixture.recipient,
+        fixture.custody,
+        fixture.base_token_program,
+        fixture.sub_account,
+        fixture.action_pda,
+        vec![
+            AccountMeta::new(fixture.venue_account, false),
+            AccountMeta::new(attacker_dest, false),
+            AccountMeta::new_readonly(fixture.sub_account, false),
+            AccountMeta::new_readonly(fixture.base_token_program, false),
+        ],
+        AtomicRedeemArgs {
+            shares: REDEEM_SHARES,
+            min_output: 0,
+            sub_account: fixture.sub_account_index,
+            program_id: fixture.base_token_program.to_bytes(),
+            accounts_start: 0,
+            accounts_len: 3,
+            account_flags: vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            ix_data: fixture.ix_data.clone(),
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.owner),
+        RoshiError::UnboundAtomicRedeemAccount,
+    );
+    // The venue keeps its full balance: the redirect never executed.
+    assert_eq!(token_balance(&svm, &fixture.venue_account), REDEEM_AMOUNT);
+    assert_eq!(token_balance(&svm, &attacker_dest), 0);
+}
+
+#[test]
+fn test_atomic_redeem_rejects_instruction_swap_on_bound_route() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    // The canonical action pins accounts AND the transfer discriminator, leaving
+    // only the amount free. Attempting to swap the pinned SPL transfer for a
+    // `SetAuthority` on the same venue — to seize it and drain it later — changes
+    // the committed discriminator (and account layout), so the recomputed action
+    // hash no longer matches and the relay rejects it. This is what makes the
+    // public scope safe once the route is fully authored.
+    let fixture = AtomicRedeemFixture::setup(&mut svm);
+    fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
+
+    let ix = roshi_client::instruction::atomic_redeem(
+        fixture.owner.pubkey(),
+        fixture.vault.address,
+        fixture.share_account,
+        fixture.vault.share_mint,
+        fixture.recipient,
+        fixture.custody,
+        fixture.base_token_program,
+        fixture.sub_account,
+        fixture.action_pda,
+        vec![
+            AccountMeta::new(fixture.venue_account, false),
+            AccountMeta::new_readonly(fixture.sub_account, false),
+            AccountMeta::new_readonly(fixture.base_token_program, false),
+        ],
+        AtomicRedeemArgs {
+            shares: REDEEM_SHARES,
+            min_output: 0,
+            sub_account: fixture.sub_account_index,
+            program_id: fixture.base_token_program.to_bytes(),
+            accounts_start: 0,
+            accounts_len: 2,
+            account_flags: vec![
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            // New authority with small leading bytes so the amount decoded at
+            // `redeem_amount_offset` clears the entitlement check, letting the
+            // request reach (and fail) the action-hash comparison rather than the
+            // earlier entitlement guard.
+            ix_data: set_account_owner_data(Pubkey::new_from_array([0u8; 32])),
+        },
+    )
+    .unwrap();
+
+    assert_roshi_error(
+        send(&mut svm, ix, &fixture.owner),
+        RoshiError::UnauthorizedAction,
+    );
+    assert_eq!(token_balance(&svm, &fixture.venue_account), REDEEM_AMOUNT);
 }
 
 #[test]

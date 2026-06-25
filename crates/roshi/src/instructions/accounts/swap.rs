@@ -177,7 +177,7 @@ where
     }
 
     /// Value the realized `(spent, received)` amounts in base atoms, reading
-    /// the shared base price once for both sides.
+    /// each oracle feed exactly once.
     pub(crate) fn values(
         &self,
         vault: &Vault,
@@ -185,17 +185,43 @@ where
         received: u64,
         clock: &Clock,
     ) -> Result<(u64, u64), ProgramError> {
+        // Each oracle feed is read exactly once per swap. The base leg is read
+        // here; an endpoint that shares the base feed (a routed asset that *is*
+        // the base) reuses that price, and the output endpoint reuses the input
+        // price when they share a feed. Deduping at the raw feed-price level
+        // forbids valuing one feed against two independently supplied updates —
+        // `value_in_base_atoms` still applies each leg's own routed/direct logic,
+        // so a routed leg that is the base prices at exactly 1.0.
+        let base_feed = match self.base_leg {
+            Some(_) => Some(oracle_feed_identity(&vault.base_oracle)?),
+            None => None,
+        };
         let base_price = match self.base_leg {
             Some(accounts) => Some(read_oracle_price(&vault.base_oracle, accounts, clock)?.0),
             None => None,
         };
 
+        let input_feed = self.input.feed_identity()?;
+        let output_feed = self.output.feed_identity()?;
+        let input_price = if input_feed.is_some() && input_feed == base_feed {
+            base_price
+        } else {
+            self.input.read_asset_price(clock)?
+        };
+        let output_price = if output_feed.is_some() && output_feed == base_feed {
+            base_price
+        } else if output_feed.is_some() && output_feed == input_feed {
+            input_price
+        } else {
+            self.output.read_asset_price(clock)?
+        };
+
         let spent_value = self
             .input
-            .value_in_base_atoms(vault, spent, base_price, clock)?;
-        let received_value = self
-            .output
-            .value_in_base_atoms(vault, received, base_price, clock)?;
+            .value_in_base_atoms(vault, spent, input_price, base_price)?;
+        let received_value =
+            self.output
+                .value_in_base_atoms(vault, received, output_price, base_price)?;
         Ok((spent_value, received_value))
     }
 }
@@ -263,23 +289,44 @@ where
         }
     }
 
-    /// Value `amount` of this endpoint's mint in base atoms. `base_price` is
-    /// the swap's shared base-leg price, present whenever any endpoint is
-    /// routed.
-    fn value_in_base_atoms(
-        &self,
-        vault: &Vault,
-        amount: u64,
-        base_price: Option<OraclePrice>,
-        clock: &Clock,
-    ) -> Result<u64, ProgramError> {
+    /// This endpoint's oracle feed identity `(kind, feed_id)`, or `None` for the
+    /// base mint. Two endpoints sharing a feed must price against one update.
+    fn feed_identity(&self) -> Result<Option<(OracleKind, [u8; 32])>, ProgramError> {
         match self {
-            Self::Base => Ok(amount),
+            Self::Base => Ok(None),
+            Self::Asset { asset, .. } => Ok(Some(oracle_feed_identity(&asset.oracle)?)),
+        }
+    }
+
+    /// Read this endpoint's verified asset price from its supplied oracle
+    /// accounts, or `None` for the base mint (which prices one-to-one).
+    fn read_asset_price(&self, clock: &Clock) -> Result<Option<OraclePrice>, ProgramError> {
+        match self {
+            Self::Base => Ok(None),
             Self::Asset {
                 asset,
                 oracle_accounts,
             } => {
                 let (asset_price, _) = read_oracle_price(&asset.oracle, oracle_accounts, clock)?;
+                Ok(Some(asset_price))
+            }
+        }
+    }
+
+    /// Value `amount` of this endpoint's mint in base atoms from a pre-read
+    /// `asset_price` (`None` for the base mint). `base_price` is the swap's
+    /// shared base-leg price, present whenever any endpoint is routed.
+    fn value_in_base_atoms(
+        &self,
+        vault: &Vault,
+        amount: u64,
+        asset_price: Option<OraclePrice>,
+        base_price: Option<OraclePrice>,
+    ) -> Result<u64, ProgramError> {
+        match self {
+            Self::Base => Ok(amount),
+            Self::Asset { asset, .. } => {
+                let asset_price = asset_price.ok_or(ProgramError::InvalidAccountData)?;
                 let base_price = if asset.routed()? {
                     // `SwapValuation::parse` provides the shared leg whenever
                     // an endpoint routes.
@@ -299,6 +346,19 @@ where
             }
         }
     }
+}
+
+/// An oracle config's feed identity `(kind, feed_id)`: the key a single swap
+/// dedups on so one feed is never priced against two independent updates.
+fn oracle_feed_identity(config: &OracleConfig) -> Result<(OracleKind, [u8; 32]), ProgramError> {
+    let kind = config
+        .kind()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let feed_id = match kind {
+        OracleKind::Pyth => config.pyth.feed_id,
+        OracleKind::Switchboard => config.switchboard.feed_id,
+    };
+    Ok((kind, feed_id))
 }
 
 /// Accounts one oracle leg consumes (Pyth: 1 price update; Switchboard:

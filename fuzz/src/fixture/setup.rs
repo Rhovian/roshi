@@ -183,18 +183,32 @@
 
         // 4d. AtomicRedeem: a sub-account-owned venue account pre-funded with
         //     deployed capital, plus an AtomicRedeem action whose unwind CPI
-        //     pulls base venue -> custody. Empty ops authorize any CPI to the
-        //     token program; the redeem is bounded by the on-chain share
-        //     entitlement and the requirement that custody only ever increases
-        //     across the CPI. `redeem_amount_offset = 1` is where the transfer
-        //     amount sits in the token-transfer ix data ([tag, amount_le]).
+        //     pulls base venue -> custody. The ops pin the two writable
+        //     sub-account custodies the unwind touches (venue source, base
+        //     destination) and the transfer discriminator, so a public caller
+        //     cannot redirect the route to drain an unpinned sibling; the redeem
+        //     is further bounded by the on-chain share entitlement. The unwind
+        //     amount (ix_data[1..9]) stays free, and `redeem_amount_offset = 1`
+        //     is where it sits in the token-transfer ix data ([tag, amount_le]).
         let atomic_venue = Pubkey::new_unique();
         set_token_account(&mut ctx.svm, atomic_venue, &base_mint, &sub_account, VENUE_BASE);
+        let atomic_ops = Ops::new([
+            Op::IngestAccount { index: 0 },
+            Op::IngestAccount { index: 1 },
+            Op::IngestAccount { index: 2 },
+            Op::IngestInstruction { offset: 0, len: 1 },
+        ])
+        .expect("ops within capacity");
+        let atomic_metas = vec![
+            AccountMeta::new(atomic_venue, false),
+            AccountMeta::new(custody, false),
+            AccountMeta::new_readonly(sub_account, true),
+        ];
         let atomic_action_hash = compute_action_hash_from_metas(
             &support::TOKEN_PROGRAM_ID,
-            &Ops::empty(),
-            &[],
-            &[],
+            &atomic_ops,
+            &atomic_metas,
+            &[SPL_TRANSFER_TAG],
             &[],
         )
         .expect("action hash");
@@ -207,7 +221,7 @@
                 atomic_action,
                 atomic_action_hash,
                 ActionScope::AtomicRedeem,
-                Ops::empty(),
+                atomic_ops,
                 1,
                 0,
                 0,

@@ -1,14 +1,11 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::shared::{
-    next_account, require_system_program, require_uninitialized_account, require_writable,
-    require_writable_signer,
+    create_pda_account, next_account, require_system_program, require_uninitialized_account,
+    require_writable, require_writable_signer,
 };
 use crate::{
     instructions::{token, RedeemArgs},
@@ -102,31 +99,20 @@ impl<'a, 'info> RedeemContext<'a, 'info> {
     /// Create the rent-exempt withdrawal-ticket PDA (funded by the owner) and
     /// store `ticket`.
     pub(crate) fn create_ticket(&self, ticket: WithdrawalTicket) -> ProgramResult {
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(WithdrawalTicket::SPACE);
-        let create_account_ix = create_account(
-            self.owner.key,
-            self.ticket.key,
-            rent_exemption_lamports,
-            WithdrawalTicket::SPACE as u64,
-            &crate::ID,
-        );
-        let account_infos = [
-            self.owner.clone(),
-            self.ticket.clone(),
-            self.system_program_acc.clone(),
-        ];
         let bump = [self.ticket_bump];
-
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[
+        create_pda_account(
+            self.owner,
+            self.ticket,
+            self.system_program_acc,
+            WithdrawalTicket::SPACE,
+            &crate::ID,
+            &[
                 WithdrawalTicket::SEED,
                 self.vault_account.key.as_ref(),
                 self.owner.key.as_ref(),
                 &[self.ticket_index],
                 &bump,
-            ]],
+            ],
         )?;
 
         let serialized = serialize(&Account::WithdrawalTicket(ticket))

@@ -1,15 +1,12 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::{
     shared::{
-        next_account, require_system_program, require_uninitialized_account, require_writable,
-        require_writable_signer,
+        create_pda_account, next_account, require_system_program, require_uninitialized_account,
+        require_writable, require_writable_signer,
     },
     vault::VaultRoleContext,
 };
@@ -88,30 +85,19 @@ impl<'a, 'info> InitializeAssetContext<'a, 'info> {
     /// Creates the rent-exempt Asset PDA (funded by the admin) and stores the
     /// already-validated config.
     pub(crate) fn create_and_store(&self, asset: Asset) -> ProgramResult {
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(Asset::SPACE);
-        let create_account_ix = create_account(
-            self.admin.key,
-            self.asset.key,
-            rent_exemption_lamports,
-            Asset::SPACE as u64,
-            &crate::ID,
-        );
-        let account_infos = [
-            self.admin.clone(),
-            self.asset.clone(),
-            self.system_program_acc.clone(),
-        ];
         let bump = [self.asset_bump];
-
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[
+        create_pda_account(
+            self.admin,
+            self.asset,
+            self.system_program_acc,
+            Asset::SPACE,
+            &crate::ID,
+            &[
                 Asset::SEED,
                 self.vault_key.as_ref(),
                 self.asset_mint.as_ref(),
                 &bump,
-            ]],
+            ],
         )?;
 
         let serialized =

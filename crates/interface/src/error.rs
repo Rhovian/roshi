@@ -46,6 +46,8 @@ pub enum RoshiError {
     DelegateNotCleared = 40,
     FlashFeeRateNotLower = 41,
     SwapCustodyMoved = 42,
+    EmptyAtomicRedeemOps = 43,
+    UnboundAtomicRedeemAccount = 44,
 }
 
 impl From<RoshiError> for ProgramError {

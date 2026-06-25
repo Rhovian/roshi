@@ -142,6 +142,30 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
         Ok(())
     }
 
+    /// Post-validation: every *writable* account in the CPI must be pinned by the
+    /// action hash (folded via an [`Op::IngestAccount`]).
+    ///
+    /// `AtomicRedeem` is the one relay scope an untrusted public caller drives, so
+    /// its route must leave the caller no account freedom. Only ingested accounts
+    /// are committed to the action hash; an un-ingested writable meta is therefore
+    /// free for the caller to substitute, which lets them redirect the unwind to
+    /// drain the source into an account of their choosing (the base-custody
+    /// measurement would read `0` and debit no NAV). Requiring *all* writable
+    /// metas to be ingested pins the whole moving set — source, destination, and
+    /// any other writable — so the public caller can only execute the exact
+    /// authorized route. The per-user payout recipient is settled by Roshi
+    /// outside this CPI, so it is never a CPI meta and the action stays reusable
+    /// across users.
+    pub(crate) fn require_writable_metas_bound(&self, ops: &Ops) -> ProgramResult {
+        for (index, meta) in self.instruction.accounts.iter().enumerate() {
+            if meta.is_writable && !ingests_account(ops, index)? {
+                return Err(RoshiError::UnboundAtomicRedeemAccount.into());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Assert the relayed CPI is an SPL `approve` (program is an SPL token
     /// program, leading data byte is the approve discriminator). A
     /// `FlashApprove` action may only ever grant a delegate via `approve`.
@@ -172,6 +196,20 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
             expected_amount,
         )
     }
+}
+
+/// Whether `ops` commits the CPI account at `index` via [`Op::IngestAccount`],
+/// folding its pubkey and meta flags into the action hash.
+fn ingests_account(ops: &Ops, index: usize) -> Result<bool, ProgramError> {
+    for op in ops.iter().map_err(|_| RoshiError::InvalidOp)? {
+        if let Op::IngestAccount { index: ingested } = op.map_err(|_| RoshiError::InvalidOp)? {
+            if usize::from(ingested) == index {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 /// Validates and prepares one pre-authorized downstream CPI.

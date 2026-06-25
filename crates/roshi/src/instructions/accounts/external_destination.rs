@@ -1,15 +1,12 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::{
     shared::{
-        close_account, next_account, require_system_program, require_uninitialized_account,
-        require_writable, require_writable_signer,
+        close_account, create_pda_account, next_account, require_system_program,
+        require_uninitialized_account, require_writable, require_writable_signer,
     },
     vault::VaultRoleContext,
 };
@@ -76,30 +73,19 @@ impl<'a, 'info> RegisterExternalDestinationContext<'a, 'info> {
             self.bump,
         );
 
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(ExternalDestination::SPACE);
-        let create_account_ix = create_account(
-            self.admin.key,
-            self.external_destination.key,
-            rent_exemption_lamports,
-            ExternalDestination::SPACE as u64,
-            &crate::ID,
-        );
-        let account_infos = [
-            self.admin.clone(),
-            self.external_destination.clone(),
-            self.system_program_acc.clone(),
-        ];
         let bump = [self.bump];
-
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[
+        create_pda_account(
+            self.admin,
+            self.external_destination,
+            self.system_program_acc,
+            ExternalDestination::SPACE,
+            &crate::ID,
+            &[
                 ExternalDestination::SEED,
                 self.vault_key.as_ref(),
                 self.token_account.as_ref(),
                 &bump,
-            ]],
+            ],
         )?;
 
         let serialized = serialize(&Account::ExternalDestination(destination))

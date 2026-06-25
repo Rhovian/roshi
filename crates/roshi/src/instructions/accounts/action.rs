@@ -1,15 +1,12 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::{
     shared::{
-        close_account, next_account, require_system_program, require_uninitialized_account,
-        require_writable, require_writable_signer,
+        close_account, create_pda_account, next_account, require_system_program,
+        require_uninitialized_account, require_writable, require_writable_signer,
     },
     vault::VaultRoleContext,
 };
@@ -18,6 +15,7 @@ use crate::state::{
     vault::Role,
     Account,
 };
+use roshi_interface::error::RoshiError;
 
 /// Loads `[admin signer+writable, vault, action (writable, uninitialized),
 /// system program]`, verifies the vault admin, and binds the action account to
@@ -76,25 +74,26 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
     ) -> ProgramResult {
         validate_ops(&ops)?;
 
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(Action::SPACE);
-        let create_account_ix = create_account(
-            self.admin.key,
-            self.action.key,
-            rent_exemption_lamports,
-            Action::SPACE as u64,
-            &crate::ID,
-        );
-        let account_infos = [
-            self.admin.clone(),
-            self.action.clone(),
-            self.system_program_acc.clone(),
-        ];
-        let bump = [self.action_bump];
+        // An AtomicRedeem action with no ops folds only the CPI program id into
+        // the action hash — neither the account metas nor `ix_data` (which
+        // `redeem_amount_offset` decodes) would be bound, leaving the route and
+        // the decoded withdrawal amount caller-controlled. Require it to commit
+        // at least one op. `validate_ops` above already proved `ops` well-formed,
+        // so the length is readable here.
+        if scope == ActionScope::AtomicRedeem
+            && ops.is_empty().map_err(|_| RoshiError::InvalidOp)?
+        {
+            return Err(RoshiError::EmptyAtomicRedeemOps.into());
+        }
 
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[Action::SEED, self.vault_key.as_ref(), &action_hash, &bump]],
+        let bump = [self.action_bump];
+        create_pda_account(
+            self.admin,
+            self.action,
+            self.system_program_acc,
+            Action::SPACE,
+            &crate::ID,
+            &[Action::SEED, self.vault_key.as_ref(), &action_hash, &bump],
         )?;
 
         let action = Action {

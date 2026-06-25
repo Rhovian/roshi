@@ -1,14 +1,11 @@
 use solana_account_info::AccountInfo;
-use solana_cpi::invoke_signed;
 use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
-use solana_system_interface::instruction::create_account;
-use solana_sysvar::{rent::Rent, Sysvar};
 use wincode::serialize;
 
 use super::shared::{
-    next_account, require_system_program, require_uninitialized_account, require_writable,
-    require_writable_signer,
+    create_pda_account, next_account, require_system_program, require_uninitialized_account,
+    require_writable, require_writable_signer,
 };
 use crate::state::{program_config::ProgramConfig, Account};
 
@@ -122,24 +119,13 @@ impl<'a, 'info> InitializeProgramContext<'a, 'info> {
     }
 
     pub(crate) fn create_config_account(&self) -> ProgramResult {
-        let rent_exemption_lamports = Rent::get()?.minimum_balance(ProgramConfig::SPACE);
-        let create_account_ix = create_account(
-            self.payer.key,
-            self.program_config.key,
-            rent_exemption_lamports,
-            ProgramConfig::SPACE as u64,
+        create_pda_account(
+            self.payer,
+            self.program_config,
+            self.system_program_acc,
+            ProgramConfig::SPACE,
             &crate::ID,
-        );
-        let account_infos = [
-            self.payer.clone(),
-            self.program_config.clone(),
-            self.system_program_acc.clone(),
-        ];
-
-        invoke_signed(
-            &create_account_ix,
-            &account_infos,
-            &[&[ProgramConfig::SEED, &[self.program_config_bump]]],
+            &[ProgramConfig::SEED, &[self.program_config_bump]],
         )
     }
 
