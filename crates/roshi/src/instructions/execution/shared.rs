@@ -227,12 +227,14 @@ fn ingests_account(ops: &Ops, index: usize) -> Result<bool, ProgramError> {
 ///
 /// Rebuilds the intended CPI metas from selected CPI accounts plus explicit
 /// flags, then recomputes the action hash from the effective CPI program id,
-/// stored `Ops`, rebuilt metas, and instruction data. The selected subaccount
-/// is promoted to signer when present in the CPI metas.
+/// stored `Ops`, rebuilt metas, and instruction data. The CPI program id is
+/// derived from the program account supplied immediately after the selected
+/// metas (no longer re-sent in args); the action hash commits it, so
+/// substituting a different program account fails the hash check. The selected
+/// subaccount is promoted to signer when present in the CPI metas.
 pub(crate) fn validate_authorized_cpi<'a, 'info>(
     cpi_accounts: &'a [AccountInfo<'info>],
     validated_accounts: &ValidatedManageAccounts,
-    program_id: [u8; 32],
     accounts_start: u8,
     accounts_len: u8,
     account_flags: Vec<AccountFlags>,
@@ -246,7 +248,16 @@ pub(crate) fn validate_authorized_cpi<'a, 'info>(
     let cpi_meta_accounts = cpi_accounts
         .get(accounts_start..accounts_end)
         .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let cpi_program_id = Pubkey::from(program_id);
+    // The CPI program is the account supplied immediately after the metas. Its
+    // key is folded into the action hash below, so a mismatched program account
+    // is rejected by the hash check rather than a direct comparison to args.
+    let cpi_program_acc = cpi_accounts
+        .get(accounts_end)
+        .ok_or(ProgramError::NotEnoughAccountKeys)?;
+    let cpi_program_id = *cpi_program_acc.key;
+    if !cpi_program_acc.executable {
+        return Err(ProgramError::InvalidAccountData);
+    }
     if account_flags.len() != accounts_len {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -288,16 +299,6 @@ pub(crate) fn validate_authorized_cpi<'a, 'info>(
     )?;
     if validated_accounts.action.action_hash != action_hash {
         return Err(RoshiError::UnauthorizedAction.into());
-    }
-
-    let cpi_program_acc = cpi_accounts
-        .get(accounts_end)
-        .ok_or(ProgramError::NotEnoughAccountKeys)?;
-    if cpi_program_acc.key != &cpi_program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !cpi_program_acc.executable {
-        return Err(ProgramError::InvalidAccountData);
     }
 
     let account_infos_end = accounts_end

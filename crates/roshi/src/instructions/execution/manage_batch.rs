@@ -33,7 +33,6 @@ pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> Prog
         let authorized_cpi = validate_authorized_cpi(
             accounts.cpi_accounts,
             &validated_accounts,
-            action.program_id,
             action.accounts_start,
             action.accounts_len,
             action.account_flags,

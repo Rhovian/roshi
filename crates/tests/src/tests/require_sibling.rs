@@ -174,7 +174,6 @@ impl SiblingFixture {
             cpi_accounts,
             ManageArgs {
                 sub_account: 0,
-                program_id: system_program::ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 2,
                 account_flags: vec![

@@ -121,7 +121,6 @@ Instruction data:
 ```rust
 Manage {
     sub_account,
-    program_id,
     accounts_start,
     accounts_len,
     account_flags,
@@ -170,12 +169,14 @@ Execution checks:
 9. `action.vault` must equal the supplied vault.
 10. The Action PDA address and stored bump must match
    `[b"action", vault, action_hash]`.
-11. Roshi recomputes the hash from the supplied CPI program id, stored `Ops`,
-   selected CPI account slice, explicit `account_flags`, and `ix_data`.
-12. `action.action_hash` must equal the recomputed hash.
-13. The supplied target CPI program account must match `program_id`.
-14. The supplied target CPI program account must be executable.
-15. Roshi invokes the CPI with subaccount signer seeds.
+11. Roshi derives the CPI program id from the target CPI program account
+   supplied immediately after the selected CPI meta slice (it is no longer
+   re-sent in args), and recomputes the hash from that program id, stored
+   `Ops`, selected CPI account slice, explicit `account_flags`, and `ix_data`.
+12. `action.action_hash` must equal the recomputed hash. Because the program id
+   is folded into the hash, substituting a different program account fails here.
+13. The supplied target CPI program account must be executable.
+14. Roshi invokes the CPI with subaccount signer seeds.
 
 The CPI instruction metas are created from the selected CPI account infos plus
 the explicit `account_flags`. The flags represent the intended per-CPI signer
@@ -186,9 +187,11 @@ is the selected subaccount PDA being promoted with signer seeds. Readonly and
 non-signer requests may safely downgrade message-level privileges.
 
 The target CPI program account must be supplied immediately after the selected
-CPI meta account slice. Roshi verifies it matches the requested program id and
-is executable, then passes it to `invoke` as an account info without including
-it as an instruction meta.
+CPI meta account slice. Roshi derives the CPI program id from this account
+(rather than receiving it in args) and folds it into the recomputed action
+hash, so a substituted program account fails the hash check. It must be
+executable, and is passed to `invoke` as an account info without including it as
+an instruction meta.
 
 ## Manage Batch
 
@@ -207,7 +210,6 @@ Each action specifies:
 ```rust
 IndexedActionArgs {
     sub_account,
-    program_id,
     accounts_start,
     accounts_len,
     account_flags,
@@ -254,8 +256,9 @@ If any action fails, the whole transaction fails.
 - Action accounts are scoped to a single vault.
 - Action PDA seeds include the vault and action hash, and the stored bump must
   match the derived bump.
-- The target CPI program account must be supplied, match the requested program
-  id, and be executable.
+- The target CPI program account must be supplied and be executable. Its key is
+  folded into the recomputed action hash (the program id is derived from this
+  account, not re-sent in args), so a substituted program account fails the hash.
 - Stored `Ops` are used during execution; the strategist cannot substitute a
   different op list.
 - CPI account indices in `Ops` are evaluated against the selected CPI account

@@ -69,7 +69,6 @@
             ],
             ManageArgs {
                 sub_account: 0,
-                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -267,7 +266,6 @@
         };
         let leg = |start: u8, ix_data: Vec<u8>| ManageArgs {
             sub_account: 0,
-            program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
             accounts_start: start,
             accounts_len: 3,
             account_flags: transfer_flags(),
@@ -334,7 +332,6 @@
                 min_out: 0,
                 max_in: amount,
                 sub_account: 0,
-                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -418,7 +415,6 @@
                 min_out: amount,
                 max_in: amount,
                 sub_account: 0,
-                program_id: support::TOKEN_2022_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -510,7 +506,6 @@
                 shares,
                 min_output: 0,
                 sub_account: 0,
-                program_id: support::TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![

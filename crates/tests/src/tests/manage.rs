@@ -103,7 +103,45 @@ impl SystemTransferManageFixture {
             ],
             ManageArgs {
                 sub_account: 0,
-                program_id: system_program::ID.to_bytes(),
+                accounts_start: 0,
+                accounts_len: 2,
+                account_flags: vec![
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountFlags {
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                ],
+                ix_data: self.transfer_data.clone(),
+            },
+        )
+        .unwrap()
+    }
+
+    /// Same relay as [`Self::manage_ix`], but with `program` standing in for the
+    /// CPI program account that follows the meta slice. The program id is no
+    /// longer carried in args; it is derived from this account, so substituting a
+    /// different one must be caught by the action-hash check.
+    fn manage_ix_with_program(
+        &self,
+        strategist: solana_pubkey::Pubkey,
+        program: solana_pubkey::Pubkey,
+    ) -> solana_instruction::Instruction {
+        roshi_client::instruction::manage(
+            strategist,
+            self.vault.address,
+            self.sub_account_pda,
+            self.action_pda,
+            vec![
+                AccountMeta::new(self.sub_account_pda, false),
+                AccountMeta::new(self.scratch, false),
+                AccountMeta::new_readonly(program, false),
+            ],
+            ManageArgs {
+                sub_account: 0,
                 accounts_start: 0,
                 accounts_len: 2,
                 account_flags: vec![
@@ -279,7 +317,6 @@ fn test_manage_rejects_dirty_custody_before_cpi() {
                 ],
                 ManageArgs {
                     sub_account: 0,
-                    program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
                     accounts_start: 0,
                     accounts_len: 3,
                     account_flags: vec![
@@ -348,7 +385,6 @@ fn test_manage_rejects_post_cpi_custody_owner_hijack() {
                 ],
                 ManageArgs {
                     sub_account: 0,
-                    program_id: crate::helpers::TOKEN_PROGRAM_ID.to_bytes(),
                     accounts_start: 0,
                     accounts_len: 2,
                     account_flags: vec![
@@ -391,6 +427,43 @@ fn test_manage_authority_check() {
         send(&mut svm, fixture.manage_ix(wrong.pubkey()), &wrong),
         InstructionError::IllegalOwner,
     );
+}
+
+#[test]
+fn test_manage_rejects_substituted_cpi_program_via_hash() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    fixture.install_authorized_action(&mut svm);
+
+    // An executable program account whose key differs from the one committed by
+    // the action hash (the action hash binds `system_program::ID`). The program
+    // id is now derived from this account rather than re-sent in args, so the
+    // substitution survives the `executable` check but must fail the hash.
+    let substitute_program = Pubkey::new_unique();
+    svm.set_account(
+        substitute_program,
+        Account {
+            lamports: TRANSFER_LAMPORTS,
+            data: vec![],
+            owner: solana_sdk::native_loader::ID,
+            executable: true,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix_with_program(authority.pubkey(), substitute_program),
+            &authority,
+        ),
+        InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
+    );
+    assert_eq!(fixture.scratch_lamports(&svm), 0);
 }
 
 #[test]
@@ -615,7 +688,6 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
         vec![
             ManageArgs {
                 sub_account: 0,
-                program_id: system_program::ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 2,
                 account_flags: vec![
@@ -632,7 +704,6 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
             },
             ManageArgs {
                 sub_account: 0,
-                program_id: system_program::ID.to_bytes(),
                 accounts_start: 3,
                 accounts_len: 1,
                 account_flags: vec![AccountFlags {
