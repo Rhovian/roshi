@@ -58,7 +58,6 @@ pub struct AccountFlags {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageArgs {
     pub sub_account: u8,
-    pub program_id: [u8; 32],
     pub accounts_start: u8,
     pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,
@@ -70,7 +69,6 @@ pub struct AtomicRedeemArgs {
     pub shares: u64,
     pub min_output: u64,
     pub sub_account: u8,
-    pub program_id: [u8; 32],
     pub accounts_start: u8,
     pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,
@@ -82,7 +80,6 @@ pub struct SwapArgs {
     pub min_out: u64,
     pub max_in: u64,
     pub sub_account: u8,
-    pub program_id: [u8; 32],
     pub accounts_start: u8,
     pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,

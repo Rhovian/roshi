@@ -74,7 +74,6 @@ where
     let authorized_cpi = validate_authorized_cpi(
         context.cpi_accounts,
         &validated_accounts,
-        args.program_id,
         args.accounts_start,
         args.accounts_len,
         args.account_flags,

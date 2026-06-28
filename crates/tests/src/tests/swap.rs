@@ -141,7 +141,6 @@ impl SwapFixture {
                 min_out,
                 max_in,
                 sub_account: self.sub_account_index,
-                program_id: self.token_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -564,7 +563,6 @@ fn swap_ix_with_valuation(
             min_out: 0,
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
-            program_id: fixture.token_program.to_bytes(),
             accounts_start: 0,
             accounts_len: 3,
             account_flags: vec![
@@ -1031,7 +1029,6 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                 min_out: 0,
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
-                program_id: TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -1190,7 +1187,6 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                 min_out: 0,
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
-                program_id: TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
@@ -1328,7 +1324,6 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
             min_out: 0,
             max_in: u64::MAX,
             sub_account: 0,
-            program_id: TOKEN_PROGRAM_ID.to_bytes(),
             accounts_start: 0,
             accounts_len: 3,
             account_flags: vec![
@@ -1443,7 +1438,6 @@ fn swap_ix_route(
             min_out: 0,
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
-            program_id: fixture.token_program.to_bytes(),
             accounts_start: 0,
             accounts_len,
             account_flags,

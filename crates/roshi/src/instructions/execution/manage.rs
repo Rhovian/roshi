@@ -28,7 +28,6 @@ pub fn try_manage(accounts: &[AccountInfo], args: ManageArgs) -> ProgramResult {
     let authorized_cpi = validate_authorized_cpi(
         accounts.cpi_accounts,
         &validated_accounts,
-        args.program_id,
         args.accounts_start,
         args.accounts_len,
         args.account_flags,

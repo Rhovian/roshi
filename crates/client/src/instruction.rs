@@ -152,7 +152,6 @@ mod tests {
             ],
             ManageArgs {
                 sub_account: 7,
-                program_id: cpi_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 1,
                 account_flags: vec![AccountFlags {
@@ -173,7 +172,6 @@ mod tests {
 
         let args: ManageArgs = decode_args(&ix.data);
         assert_eq!(args.sub_account, 7);
-        assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);
         assert_eq!(args.accounts_len, 1);
         assert_eq!(
@@ -219,7 +217,6 @@ mod tests {
                 shares: 123,
                 min_output: 120,
                 sub_account: 7,
-                program_id: cpi_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 1,
                 account_flags: vec![AccountFlags {
@@ -265,7 +262,6 @@ mod tests {
         assert_eq!(args.shares, 123);
         assert_eq!(args.min_output, 120);
         assert_eq!(args.sub_account, 7);
-        assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);
         assert_eq!(args.accounts_len, 1);
         assert_eq!(
@@ -306,7 +302,6 @@ mod tests {
                 min_out: 120,
                 max_in: 123,
                 sub_account: 7,
-                program_id: cpi_program.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 1,
                 account_flags: vec![AccountFlags {
@@ -339,7 +334,6 @@ mod tests {
         assert_eq!(args.min_out, 120);
         assert_eq!(args.max_in, 123);
         assert_eq!(args.sub_account, 7);
-        assert_eq!(args.program_id, cpi_program.to_bytes());
         assert_eq!(args.accounts_start, 0);
         assert_eq!(args.accounts_len, 1);
         assert_eq!(

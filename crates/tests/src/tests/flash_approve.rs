@@ -219,7 +219,6 @@ impl FlashFixture {
             cpi_accounts,
             ManageArgs {
                 sub_account: 0,
-                program_id: TOKEN_PROGRAM_ID.to_bytes(),
                 accounts_start: 0,
                 accounts_len: 3,
                 account_flags: vec![
