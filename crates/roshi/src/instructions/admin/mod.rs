@@ -32,7 +32,7 @@ pub use initialize_vault::try_initialize_vault;
 pub use invest_external::try_invest_external;
 pub use process_withdrawals::try_process_withdrawals;
 pub use register_external_destination::try_register_external_destination;
-pub use report_nav::try_report_nav;
+pub use report_nav::{try_recover_nav, try_report_nav};
 pub use return_external::try_return_external;
 pub use revoke_action::try_revoke_action;
 pub use revoke_external_destination::try_revoke_external_destination;

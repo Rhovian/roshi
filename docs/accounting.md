@@ -102,6 +102,12 @@ position snapshots, venue statements, off-chain balances, internal marks, or
 reconciliation output. The all-zero report hash is reserved for "no accepted
 report yet".
 
+`RecoverNav` carries the same fields and uses the same accounting path. It is
+available only when shares remain outstanding while the recognized share price
+rounds to zero. Both `vault.nav_authority` and `vault.admin` must sign, and
+deposits must already be paused. It bypasses only the upward NAV gain bound;
+the pause remains set after recovery.
+
 The NAV update flow:
 
 - verify the caller is `vault.nav_authority`,

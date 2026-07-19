@@ -6,12 +6,14 @@
 use litesvm::LiteSVM;
 use roshi::{error::RoshiError, state::sub_account::VaultSubAccount};
 use roshi_interface::{math::shares_for_deposit, state::VaultControls};
+use solana_instruction::error::InstructionError;
 use solana_pubkey::Pubkey;
 use solana_sdk::{signature::Keypair, signer::Signer};
 
 use crate::helpers::{
-    assert_roshi_error, associated_token_address, fund, send, send_ok, set_ata,
-    set_clock_timestamp, set_token_account, setup_program, token_balance, TestVault, VaultBuilder,
+    assert_roshi_error, associated_token_address, fund, send, send_ok, send_ok_signed, send_signed,
+    set_ata, set_clock_timestamp, set_token_account, setup_program, token_balance, TestVault,
+    VaultBuilder,
 };
 
 const ONE_BASE: u64 = 1_000_000;
@@ -75,6 +77,27 @@ fn report_nav_ix(
     let withdraw_sub = VaultSubAccount::find_address(&vault.address, 1).0;
     roshi_client::instruction::report_nav(
         vault.roles.nav_authority.pubkey(),
+        vault.address,
+        vault.share_mint,
+        vault.base_mint,
+        associated_token_address(&deposit_sub, &vault.base_mint),
+        associated_token_address(&withdraw_sub, &vault.base_mint),
+        external_value,
+        report_hash,
+    )
+    .unwrap()
+}
+
+fn recover_nav_ix(
+    vault: &TestVault,
+    external_value: u64,
+    report_hash: [u8; 32],
+) -> solana_instruction::Instruction {
+    let deposit_sub = VaultSubAccount::find_address(&vault.address, 0).0;
+    let withdraw_sub = VaultSubAccount::find_address(&vault.address, 1).0;
+    roshi_client::instruction::recover_nav(
+        vault.roles.nav_authority.pubkey(),
+        vault.roles.admin.pubkey(),
         vault.address,
         vault.share_mint,
         vault.base_mint,
@@ -255,10 +278,121 @@ fn test_report_gain_bound_skips_empty_vaults() {
     set_clock_timestamp(&mut svm, 10_000);
     let (vault, _) = setup_vault(&mut svm, VaultControls::new(0, 0, 0, 0, 1_000, 0, 0));
 
-    // No shares outstanding: any reported value passes (post-total-loss
-    // recovery must not wedge).
+    // No shares outstanding: any reported value passes.
     report(&mut svm, &vault, 5_000_000, 1);
     assert_eq!(vault.load(&svm).total_assets, 5_000_000);
+}
+
+#[test]
+fn test_zero_price_blocks_deposits_and_requires_dual_authority_recovery() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+    set_clock_timestamp(&mut svm, 10_000);
+    let controls = VaultControls::new(1_000, 0, 0, 0, 1_000, 0, 0);
+    let (vault, custody) = setup_vault(&mut svm, controls);
+    deposit_base(&mut svm, &vault, custody, ONE_BASE);
+    fund(&mut svm, &vault.roles.admin);
+
+    // Model all base leaving pinned custody, then a corrupt zero NAV report.
+    let deposit_sub = VaultSubAccount::find_address(&vault.address, 0).0;
+    set_token_account(&mut svm, custody, &vault.base_mint, &deposit_sub, 0);
+    report(&mut svm, &vault, 0, 1);
+    assert_eq!(vault.load(&svm).total_assets, 0);
+
+    // Existing shares plus zero effective assets previously let a one-atom
+    // deposit mint a dominant share position through the virtual offset.
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let source = set_ata(&mut svm, &depositor.pubkey(), &vault.base_mint, 1);
+    let share_account = set_ata(&mut svm, &depositor.pubkey(), &vault.share_mint, 0);
+    let deposit_ix = roshi_client::instruction::deposit(
+        depositor.pubkey(),
+        vault.address,
+        source,
+        custody,
+        share_account,
+        vault.share_mint,
+        crate::helpers::TOKEN_PROGRAM_ID,
+        vault.base_mint,
+        1,
+        0,
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_roshi_error(
+        send(&mut svm, deposit_ix, &depositor),
+        RoshiError::ZeroSharePrice,
+    );
+
+    // Exact asset-ratio arithmetic rejects ordinary recovery from zero.
+    assert_roshi_error(
+        send(
+            &mut svm,
+            report_nav_ix(&vault, ONE_BASE, [2; 32]),
+            &vault.roles.nav_authority,
+        ),
+        RoshiError::NavGainExceedsBound,
+    );
+
+    // Even both authorities cannot use the recovery path while deposits are open.
+    assert_roshi_error(
+        send_signed(
+            &mut svm,
+            recover_nav_ix(&vault, ONE_BASE, [3; 32]),
+            &vault.roles.nav_authority,
+            &[&vault.roles.admin],
+        ),
+        RoshiError::DepositsMustBePaused,
+    );
+
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::set_pause_flags(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            true,
+            false,
+            false,
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    // A signer that is not the configured admin cannot authorize recovery.
+    let outsider = Keypair::new();
+    fund(&mut svm, &outsider);
+    let mut unauthorized_ix = recover_nav_ix(&vault, ONE_BASE, [4; 32]);
+    unauthorized_ix.accounts[1].pubkey = outsider.pubkey();
+    crate::helpers::assert_instruction_error(
+        send_signed(
+            &mut svm,
+            unauthorized_ix,
+            &vault.roles.nav_authority,
+            &[&outsider],
+        ),
+        InstructionError::IllegalOwner,
+    );
+
+    // Recovery applies ordinary accounting and leaves deposits paused. Advancing
+    // time makes the restored gain enter the configured profit-unlock window.
+    set_clock_timestamp(&mut svm, 11_000);
+    send_ok_signed(
+        &mut svm,
+        recover_nav_ix(&vault, ONE_BASE, [5; 32]),
+        &vault.roles.nav_authority,
+        &[&vault.roles.admin],
+    );
+
+    let state = vault.load(&svm);
+    assert_eq!(state.total_assets, ONE_BASE);
+    assert_eq!(state.locked_profit, ONE_BASE);
+    assert_eq!(state.profit_unlock_start_ts, 11_000);
+    assert_eq!(state.profit_unlock_end_ts, 12_000);
+    assert!(state.deposits_paused().unwrap());
+    assert_eq!(state.report_epoch, 2);
+    assert_eq!(state.last_report_hash, [5; 32]);
 }
 
 #[test]

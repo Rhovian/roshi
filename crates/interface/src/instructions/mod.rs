@@ -43,6 +43,7 @@ pub mod tags {
     pub const ASSERT_DELEGATE_CLEARED: u8 = 31;
     pub const ADMIN_SET_FLASH_FEE_RATE: u8 = 32;
     pub const STRATEGIST_LOWER_FLASH_FEE_RATE: u8 = 33;
+    pub const RECOVER_NAV: u8 = 34;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -264,6 +265,15 @@ pub enum RoshiInstruction {
     #[codama(account(name = "vault"))]
     #[codama(account(name = "action", writable))]
     StrategistLowerFlashFeeRate(#[codama(name = "args")] StrategistLowerFlashFeeRateArgs) = 33,
+
+    #[codama(account(name = "nav_authority", signer))]
+    #[codama(account(name = "admin", signer))]
+    #[codama(account(name = "vault", writable))]
+    #[codama(account(name = "share_mint"))]
+    #[codama(account(name = "base_mint"))]
+    #[codama(account(name = "deposit_base_custody"))]
+    #[codama(account(name = "withdraw_base_custody"))]
+    RecoverNav(#[codama(name = "args")] RecoverNavArgs) = 34,
 }
 
 impl RoshiInstruction {
@@ -302,6 +312,7 @@ impl RoshiInstruction {
             Self::AssertDelegateCleared => tags::ASSERT_DELEGATE_CLEARED,
             Self::AdminSetFlashFeeRate(_) => tags::ADMIN_SET_FLASH_FEE_RATE,
             Self::StrategistLowerFlashFeeRate(_) => tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
+            Self::RecoverNav(_) => tags::RECOVER_NAV,
         }
     }
 
@@ -365,6 +376,7 @@ impl RoshiInstruction {
             tags::STRATEGIST_LOWER_FLASH_FEE_RATE => {
                 Ok(Self::StrategistLowerFlashFeeRate(decode_payload(payload)?))
             }
+            tags::RECOVER_NAV => Ok(Self::RecoverNav(decode_payload(payload)?)),
             _ => Err(()),
         }
     }
@@ -414,6 +426,7 @@ impl RoshiInstruction {
             }
             Self::AdminSetFlashFeeRate(args) => wincode::serialize_into(&mut data, args)?,
             Self::StrategistLowerFlashFeeRate(args) => wincode::serialize_into(&mut data, args)?,
+            Self::RecoverNav(args) => wincode::serialize_into(&mut data, args)?,
         }
 
         Ok(data)
@@ -478,6 +491,7 @@ impl_instruction_args! {
     AssertDelegateClearedArgs = tags::ASSERT_DELEGATE_CLEARED,
     AdminSetFlashFeeRateArgs = tags::ADMIN_SET_FLASH_FEE_RATE,
     StrategistLowerFlashFeeRateArgs = tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
+    RecoverNavArgs = tags::RECOVER_NAV,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -504,7 +518,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 25, 26, 27, 28, 29, 30, 31, 32, 33
+                23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34
             ]
         );
         assert_eq!(
@@ -659,5 +673,6 @@ mod tests {
             "strategistLowerFlashFeeRate",
             tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
         ),
+        ("recoverNav", tags::RECOVER_NAV),
     ];
 }
