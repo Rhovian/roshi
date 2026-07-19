@@ -113,6 +113,9 @@ impl VaultControls {
 pub struct Vault {
     pub base_oracle: OracleConfig,
     pub total_assets: u64,
+    /// Maximum `total_assets` permitted immediately after a deposit, in base
+    /// atoms. `0` means uncapped.
+    pub deposit_cap: u64,
     pub external_assets: u64,
     pub pending_withdrawal_assets: u64,
     pub fees_payable: u64,
@@ -172,6 +175,7 @@ impl Vault {
         treasury: [u8; 32],
         performance_fee_bps: u16,
         withdrawal_buffer_bps: u16,
+        deposit_cap: u64,
         controls: VaultControls,
         private: bool,
         access_merkle_root: [u8; 32],
@@ -194,6 +198,7 @@ impl Vault {
         Ok(Self {
             base_oracle,
             total_assets: 0,
+            deposit_cap,
             external_assets: 0,
             pending_withdrawal_assets: 0,
             fees_payable: 0,
@@ -341,6 +346,19 @@ impl Vault {
         active_share_supply
             .checked_add(self.requested_withdrawal_shares)
             .ok_or(ProgramError::from(RoshiError::Overflow))
+    }
+
+    /// Return recognized AUM after accepting `base_atoms`, enforcing the
+    /// admin-configured vault capacity before any token movement occurs.
+    pub fn total_assets_after_deposit(&self, base_atoms: u64) -> Result<u64, ProgramError> {
+        let projected = self
+            .total_assets
+            .checked_add(base_atoms)
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        if self.deposit_cap != 0 && projected > self.deposit_cap {
+            return Err(RoshiError::DepositCapExceeded.into());
+        }
+        Ok(projected)
     }
 
     /// Reported profit still locked at `now`: the full `locked_profit` until
@@ -654,6 +672,7 @@ mod tests {
             [9; 32],
             100,
             250,
+            0,
             VaultControls::default(),
             private,
             access_merkle_root,
@@ -675,6 +694,7 @@ mod tests {
         assert_eq!(vault.withdraw_sub_account, 8);
         assert_eq!(vault.treasury, [9; 32]);
         assert_eq!(vault.total_assets, 0);
+        assert_eq!(vault.deposit_cap, 0);
         assert_eq!(vault.external_assets, 0);
         assert_eq!(vault.pending_withdrawal_assets, 0);
         assert_eq!(vault.fees_payable, 0);
@@ -721,12 +741,33 @@ mod tests {
     fn vault_is_zero_copy_with_explicit_padding() {
         assert_zero_copy::<Vault>();
         assert_eq!(core::mem::size_of::<VaultControls>(), 24);
-        assert_eq!(core::mem::size_of::<Vault>(), 648);
-        assert_eq!(Vault::SPACE, 649);
+        assert_eq!(core::mem::size_of::<Vault>(), 656);
+        assert_eq!(Vault::SPACE, 657);
         let vault = new_test_vault(false, [0; 32]);
         assert_eq!(
             serialize(&vault).unwrap().len(),
             core::mem::size_of::<Vault>()
+        );
+    }
+
+    #[test]
+    fn total_assets_after_deposit_enforces_cap_and_overflow() {
+        let mut vault = new_test_vault(false, [0; 32]);
+        vault.total_assets = 900;
+        vault.deposit_cap = 1_000;
+
+        assert_eq!(vault.total_assets_after_deposit(100), Ok(1_000));
+        assert_eq!(
+            vault.total_assets_after_deposit(101),
+            Err(ProgramError::from(RoshiError::DepositCapExceeded))
+        );
+
+        vault.deposit_cap = 0;
+        assert_eq!(vault.total_assets_after_deposit(101), Ok(1_001));
+        vault.total_assets = u64::MAX;
+        assert_eq!(
+            vault.total_assets_after_deposit(1),
+            Err(ProgramError::from(RoshiError::Overflow))
         );
     }
 

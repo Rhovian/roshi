@@ -33,6 +33,7 @@ pub fn action_set_controls(&mut self, enabled: bool) -> bool {
             base_oracle: before.base_oracle,
             performance_fee_bps: before.performance_fee_bps,
             withdrawal_buffer_bps: before.withdrawal_buffer_bps,
+            deposit_cap: before.deposit_cap,
             controls,
             external_enabled,
         },

@@ -26,6 +26,9 @@ pub struct InitializeVaultArgs {
     pub treasury: [u8; 32],
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
+    /// Maximum recognized vault AUM in base atoms after a deposit.
+    /// `0` disables the cap.
+    pub deposit_cap: u64,
     pub controls: VaultControls,
     pub private: bool,
     pub access_merkle_root: [u8; 32],
@@ -152,6 +155,9 @@ pub struct UpdateVaultConfigArgs {
     pub base_oracle: OracleConfig,
     pub performance_fee_bps: u16,
     pub withdrawal_buffer_bps: u16,
+    /// Maximum recognized vault AUM in base atoms after a deposit.
+    /// `0` disables the cap.
+    pub deposit_cap: u64,
     pub controls: VaultControls,
     pub external_enabled: bool,
 }

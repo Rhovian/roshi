@@ -110,6 +110,61 @@ fn test_deposit_base_first_deposit_mints_initial_shares() {
 }
 
 #[test]
+fn test_deposit_enforces_vault_cap_atomically() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = install_base_vault(&mut svm, VaultBuilder::new().deposit_cap(ONE_BASE));
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let source = set_ata(
+        &mut svm,
+        &depositor.pubkey(),
+        &fixture.base_mint,
+        ONE_BASE + 1,
+    );
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &fixture.share_mint, 0);
+
+    send_ok(
+        &mut svm,
+        base_deposit_ix(
+            &fixture,
+            &depositor.pubkey(),
+            source,
+            share_dest,
+            ONE_BASE,
+            0,
+            vec![],
+        ),
+        &depositor,
+    );
+    assert_eq!(fixture.vault.load(&svm).total_assets, ONE_BASE);
+
+    assert_roshi_error(
+        send(
+            &mut svm,
+            base_deposit_ix(
+                &fixture,
+                &depositor.pubkey(),
+                source,
+                share_dest,
+                1,
+                0,
+                vec![],
+            ),
+            &depositor,
+        ),
+        RoshiError::DepositCapExceeded,
+    );
+
+    assert_eq!(fixture.vault.load(&svm).total_assets, ONE_BASE);
+    assert_eq!(token_balance(&svm, &source), 1);
+    assert_eq!(token_balance(&svm, &fixture.custody), ONE_BASE);
+    assert_eq!(token_balance(&svm, &share_dest), ONE_BASE_SHARES);
+}
+
+#[test]
 fn test_deposit_token_2022_base_mint_mints_classic_shares() {
     let Some((mut svm, _authority, _config_pda)) = setup_program() else {
         return;

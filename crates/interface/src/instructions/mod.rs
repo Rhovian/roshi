@@ -52,10 +52,11 @@ pub mod tags {
 #[allow(clippy::large_enum_variant)]
 #[codama(program(
     name = "roshi",
-    address = "Roshi11111111111111111111111111111111111111"
+    address = "RoshianbALLAs1RzbvHSHpLRaA8ayaKERQCbfmLb9UP"
 ))]
 pub enum RoshiInstruction {
     #[codama(account(name = "payer", signer, writable))]
+    #[codama(account(name = "program", signer))]
     #[codama(account(name = "program_config", writable))]
     #[codama(account(name = "system_program", default_value = program("system")))]
     InitializeProgram(#[codama(name = "args")] InitializeProgramArgs) = 0,
@@ -526,13 +527,19 @@ mod tests {
         assert_eq!(idl["program"]["name"], "roshi");
         assert_eq!(
             idl["program"]["publicKey"],
-            "Roshi11111111111111111111111111111111111111"
+            "RoshianbALLAs1RzbvHSHpLRaA8ayaKERQCbfmLb9UP"
         );
         assert_eq!(instructions.len(), TAG_CASES.len());
 
         for (name, tag) in IDL_TAG_CASES {
             assert_instruction_discriminator(instructions, name, *tag);
         }
+
+        let initialize_program = instruction(instructions, "initializeProgram");
+        let initialize_accounts = initialize_program["accounts"].as_array().unwrap();
+        assert_eq!(initialize_accounts.len(), 4);
+        assert_eq!(initialize_accounts[1]["name"], "program");
+        assert_eq!(initialize_accounts[1]["isSigner"], true);
 
         let deposit = instruction(instructions, "deposit");
         assert_eq!(deposit["arguments"][1]["name"], "args");

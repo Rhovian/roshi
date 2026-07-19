@@ -17,6 +17,7 @@ fn test_initialize_vault() {
 
     let vault = VaultBuilder::new()
         .tag(b"main")
+        .deposit_cap(75_000_000)
         .private(true, [7; 32])
         .create(&mut svm, &authority, config_pda);
 
@@ -44,6 +45,7 @@ fn test_initialize_vault() {
     assert_eq!(state.withdraw_sub_account, 1);
     assert_eq!(state.performance_fee_bps, 100);
     assert_eq!(state.withdrawal_buffer_bps, 250);
+    assert_eq!(state.deposit_cap, 75_000_000);
     assert_eq!(state.total_assets, 0);
     assert_eq!(state.private(), Ok(true));
     assert_eq!(state.access_merkle_root, [7; 32]);

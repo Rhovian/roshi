@@ -193,6 +193,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps,
             withdrawal_buffer_bps,
+            deposit_cap: 0,
             controls: VaultControls::default(),
             external_enabled,
         };
@@ -216,6 +217,7 @@
                 && updated.withdraw_sub_account == 1
                 && updated.performance_fee_bps == performance_fee_bps
                 && updated.withdrawal_buffer_bps == withdrawal_buffer_bps
+                && updated.deposit_cap == 0
                 && updated_external_enabled == external_enabled,
             "update_vault_config stored wrong config"
         );
@@ -228,6 +230,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps: MAX_BPS + 1,
             withdrawal_buffer_bps,
+            deposit_cap: 0,
             controls: VaultControls::default(),
             external_enabled,
         };
@@ -251,6 +254,7 @@
             base_oracle: OracleConfig::default(),
             performance_fee_bps,
             withdrawal_buffer_bps,
+            deposit_cap: 0,
             controls: VaultControls::default(),
             external_enabled: !external_enabled,
         };

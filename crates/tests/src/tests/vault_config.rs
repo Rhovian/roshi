@@ -137,6 +137,7 @@ fn test_update_vault_config() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 150,
         withdrawal_buffer_bps: 300,
+        deposit_cap: 75_000_000,
         controls: VaultControls::default(),
         external_enabled: true,
     };
@@ -154,6 +155,7 @@ fn test_update_vault_config() {
     expected.withdraw_sub_account = 5;
     expected.performance_fee_bps = 150;
     expected.withdrawal_buffer_bps = 300;
+    expected.deposit_cap = 75_000_000;
     expected.set_external_enabled(true);
     assert_eq!(vault.load(&svm), expected);
 }
@@ -183,6 +185,7 @@ fn test_update_vault_config_rejects_invalid_bps() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 10_001,
         withdrawal_buffer_bps: 0,
+        deposit_cap: 0,
         controls: VaultControls::default(),
         external_enabled: false,
     };
@@ -226,6 +229,7 @@ fn test_update_vault_config_rejects_non_admin() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        deposit_cap: 0,
         controls: VaultControls::default(),
         external_enabled: false,
     };
@@ -265,6 +269,7 @@ fn test_update_vault_config_rejects_treasury_for_wrong_mint() {
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        deposit_cap: 0,
         controls: VaultControls::default(),
         external_enabled: false,
     };
@@ -320,6 +325,7 @@ fn test_update_vault_config_allows_withdraw_subaccount_rotation_with_liabilities
         base_oracle: OracleConfig::default(),
         performance_fee_bps: 100,
         withdrawal_buffer_bps: 250,
+        deposit_cap: 0,
         controls: VaultControls::default(),
         external_enabled: false,
     };

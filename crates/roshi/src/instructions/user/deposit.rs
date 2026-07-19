@@ -1,5 +1,5 @@
 use solana_account_info::AccountInfo;
-use solana_program_error::{ProgramError, ProgramResult};
+use solana_program_error::ProgramResult;
 use solana_sysvar::{clock::Clock, Sysvar};
 
 use crate::{
@@ -30,11 +30,12 @@ use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError, math::sha
 /// Rejects deposits while paused, gates private vaults by Merkle proof, prices
 /// the deposit in base atoms (non-base deposits through the asset oracle —
 /// composed with the vault base oracle for routed assets — scaled by mint
-/// decimals) with a virtual-share offset against donation inflation, and enforces
-/// `min_shares_out` *before* any funds move. Only then does it route base-mint
-/// deposits into custody owned by `vault.deposit_sub_account` (non-base
-/// deposits into their Asset custody), mint shares to the depositor (vault PDA
-/// is the share-mint authority), and increase `total_assets`.
+/// decimals), enforces the vault-wide base-atom deposit cap, prices shares with
+/// a virtual offset against donation inflation, and enforces `min_shares_out`
+/// *before* any funds move. Only then does it route base-mint deposits into
+/// custody owned by `vault.deposit_sub_account` (non-base deposits into their
+/// Asset custody), mint shares to the depositor (vault PDA is the share-mint
+/// authority), and increase `total_assets`.
 pub fn try_deposit<'info>(
     accounts: &'info [AccountInfo<'info>],
     args: DepositArgs,
@@ -54,6 +55,7 @@ pub fn try_deposit<'info>(
     }
 
     let base_atoms = context.resolve_base_atoms(&args)?;
+    let total_assets_after_deposit = vault.total_assets_after_deposit(base_atoms)?;
     let share_supply = token::mint_supply(context.share_mint)?;
     let economic_share_supply = vault.economic_share_supply(share_supply)?;
 
@@ -95,10 +97,7 @@ pub fn try_deposit<'info>(
     )?;
 
     context.store(|vault| {
-        vault.total_assets = vault
-            .total_assets
-            .checked_add(base_atoms)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        vault.total_assets = total_assets_after_deposit;
         Ok(())
     })
 }
@@ -119,7 +118,9 @@ mod tests {
                     access_proof: vec![[0; 32]; MAX_ACCESS_PROOF_LEN + 1],
                 },
             ),
-            Err(ProgramError::from(RoshiError::InvalidAccessProof))
+            Err(solana_program_error::ProgramError::from(
+                RoshiError::InvalidAccessProof
+            ))
         );
     }
 }

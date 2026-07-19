@@ -233,6 +233,8 @@ The deposit flow:
 - price the deposit in base atoms: directly if
   `asset_mint == vault.base_mint`, otherwise through the enabled `Asset` PDA's
   configured oracle,
+- reject when the resulting `total_assets + base_atoms` would exceed the
+  vault's nonzero `deposit_cap` (`DepositCapExceeded`),
 - compute `shares_to_mint` and enforce `min_shares_out` — no funds move on a
   slippage failure,
 - transfer the deposit into custody: base assets into custody owned by
