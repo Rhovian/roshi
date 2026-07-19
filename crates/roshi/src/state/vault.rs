@@ -65,6 +65,7 @@ mod tests {
             [9; 32],
             100,
             250,
+            0,
             VaultControls::default(),
             false,
             [0; 32],

@@ -93,6 +93,7 @@ mod tests {
             treasury: treasury.to_bytes(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
+            deposit_cap: 75_000_000,
             controls: roshi_interface::state::VaultControls::default(),
             private: true,
             access_merkle_root: [2; 32],
@@ -128,6 +129,7 @@ mod tests {
         assert_eq!(args.tag, [1; 32]);
         assert_eq!(args.tag_len, 4);
         assert_eq!(args.base_mint, base_mint.to_bytes());
+        assert_eq!(args.deposit_cap, 75_000_000);
         assert!(args.private);
     }
 
@@ -945,6 +947,7 @@ mod tests {
             base_oracle: roshi_interface::oracle::OracleConfig::default(),
             performance_fee_bps: 150,
             withdrawal_buffer_bps: 300,
+            deposit_cap: 75_000_000,
             controls: roshi_interface::state::VaultControls::default(),
             external_enabled: true,
         };
@@ -963,6 +966,7 @@ mod tests {
         assert_eq!(args.withdraw_sub_account, 3);
         assert_eq!(args.performance_fee_bps, 150);
         assert_eq!(args.withdrawal_buffer_bps, 300);
+        assert_eq!(args.deposit_cap, 75_000_000);
         assert!(args.external_enabled);
     }
 }

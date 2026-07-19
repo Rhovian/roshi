@@ -102,6 +102,18 @@ SetPauseFlags {
 }
 ```
 
+## Deposit Capacity
+
+The vault stores `deposit_cap` in base atoms. `0` means uncapped. Every deposit
+is normalized into base atoms and may only proceed when the projected
+`total_assets` is at or below the cap. The program checks capacity before any
+token transfer or share mint.
+
+The program authority sets the initial value through `InitializeVault`; the
+vault admin may replace it through `UpdateVaultConfig`. Lowering the cap below
+current AUM is valid and blocks subsequent deposits without affecting existing
+holders.
+
 ## Economic Controls
 
 The vault embeds an admin-configured `VaultControls` block. Zero disables a

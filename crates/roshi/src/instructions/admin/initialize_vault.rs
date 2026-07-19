@@ -49,6 +49,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         args.treasury,
         args.performance_fee_bps,
         args.withdrawal_buffer_bps,
+        args.deposit_cap,
         args.controls,
         args.private,
         args.access_merkle_root,

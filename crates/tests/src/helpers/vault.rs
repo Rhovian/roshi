@@ -65,6 +65,7 @@ pub struct VaultBuilder {
     treasury: Pubkey,
     performance_fee_bps: u16,
     withdrawal_buffer_bps: u16,
+    deposit_cap: u64,
     controls: VaultControls,
     private: bool,
     access_merkle_root: [u8; 32],
@@ -83,6 +84,7 @@ impl Default for VaultBuilder {
             treasury: Pubkey::new_unique(),
             performance_fee_bps: 100,
             withdrawal_buffer_bps: 250,
+            deposit_cap: 0,
             controls: VaultControls::default(),
             private: false,
             access_merkle_root: [0; 32],
@@ -141,6 +143,11 @@ impl VaultBuilder {
         self
     }
 
+    pub fn deposit_cap(mut self, deposit_cap: u64) -> Self {
+        self.deposit_cap = deposit_cap;
+        self
+    }
+
     /// Set the vault's economic risk controls.
     pub fn controls(mut self, controls: VaultControls) -> Self {
         self.controls = controls;
@@ -184,6 +191,7 @@ impl VaultBuilder {
             treasury: self.treasury.to_bytes(),
             performance_fee_bps: self.performance_fee_bps,
             withdrawal_buffer_bps: self.withdrawal_buffer_bps,
+            deposit_cap: self.deposit_cap,
             controls: self.controls,
             private: self.private,
             access_merkle_root: self.access_merkle_root,
@@ -278,6 +286,7 @@ impl VaultBuilder {
             self.treasury.to_bytes(),
             self.performance_fee_bps,
             self.withdrawal_buffer_bps,
+            self.deposit_cap,
             self.controls,
             self.private,
             self.access_merkle_root,

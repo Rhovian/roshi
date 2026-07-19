@@ -50,6 +50,7 @@ mod tests {
             admin.to_bytes(),
             0,
             0,
+            0,
             VaultControls::default(),
             false,
             [0; 32],

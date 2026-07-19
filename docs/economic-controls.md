@@ -162,6 +162,25 @@ Two purposes:
 The fee rounds up (in the pool's favor) and `min_output` protects the net
 amount the caller actually receives.
 
+## Vault Deposit Cap
+
+`deposit_cap` bounds recognized vault AUM in base atoms. Every base or
+non-base deposit is normalized to base atoms and rejects when:
+
+```text
+total_assets + deposit_base_atoms > deposit_cap
+```
+
+The equality boundary is accepted. `0` means uncapped. The cap is configured
+at vault initialization and can be replaced by the admin through
+`UpdateVaultConfig`. Lowering it below current AUM does not invalidate the
+vault or force withdrawals; it simply blocks further deposits until AUM falls
+below the cap or the admin raises it.
+
+The cap governs deposits, not organic performance. A gain report may move AUM
+above the cap, after which deposits remain blocked. This keeps strategy
+capacity authoritative on-chain without turning a risk limit into a NAV clamp.
+
 ## Per-Asset Deposit Caps
 
 `deposit_cap_atoms` bounds each non-base asset's custody inventory:
@@ -172,9 +191,10 @@ can enter through any one feed.
 It is an **inventory cap, not a flow cap**, by construction: the check reads
 the custody balance already in the deposit's account list, so there is no
 tracking state to maintain and the cap self-heals as swaps drain custody.
-`u64::MAX` means uncapped — explicitly, no zero-means-off magic (a zero cap
+`u64::MAX` means uncapped — unlike the vault-wide cap, a zero asset cap
 blocks all deposits of that asset, equivalent to disabling it). The base
-mint is uncapped: it has no oracle leg to bound.
+mint has no per-asset cap because it has no oracle leg; the vault-wide cap
+still applies.
 
 Accepted: donation-griefing — inflating custody to block deposits — is
 possible and cheap to undo (the admin raises the cap).
