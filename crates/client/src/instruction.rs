@@ -26,11 +26,11 @@ mod tests {
         instructions::{
             AccountFlags, AtomicRedeemArgs, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs,
             DepositArgs, InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs,
-            InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs, RedeemArgs,
-            ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, SetNavAuthorityArgs,
-            SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-            SwapArgs, TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
-            UpdateVaultConfigArgs,
+            InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs,
+            RecoverNavArgs, RedeemArgs, ReportNavArgs, ReturnExternalArgs, RevokeActionArgs,
+            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
+            SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs,
+            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -632,6 +632,54 @@ mod tests {
 
         let args: ReportNavArgs = decode_args(&ix.data);
         assert_eq!(args.external_value, 123);
+        assert_eq!(args.report_hash, report_hash);
+    }
+
+    #[test]
+    fn builds_recover_nav_instruction() {
+        let nav_authority = Pubkey::new_unique();
+        let admin = Pubkey::new_unique();
+        let vault = Pubkey::new_unique();
+        let share_mint = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let deposit_base_custody = Pubkey::new_unique();
+        let withdraw_base_custody = Pubkey::new_unique();
+        let report_hash = [8; 32];
+
+        let ix = recover_nav(
+            nav_authority,
+            admin,
+            vault,
+            share_mint,
+            base_mint,
+            deposit_base_custody,
+            withdraw_base_custody,
+            456,
+            report_hash,
+        )
+        .unwrap();
+
+        assert_eq!(ix.program_id, ID);
+        assert_eq!(ix.accounts.len(), 7);
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(nav_authority, true)
+        );
+        assert_eq!(ix.accounts[1], AccountMeta::new_readonly(admin, true));
+        assert_eq!(ix.accounts[2], AccountMeta::new(vault, false));
+        assert_eq!(ix.accounts[3], AccountMeta::new_readonly(share_mint, false));
+        assert_eq!(ix.accounts[4], AccountMeta::new_readonly(base_mint, false));
+        assert_eq!(
+            ix.accounts[5],
+            AccountMeta::new_readonly(deposit_base_custody, false)
+        );
+        assert_eq!(
+            ix.accounts[6],
+            AccountMeta::new_readonly(withdraw_base_custody, false)
+        );
+
+        let args: RecoverNavArgs = decode_args(&ix.data);
+        assert_eq!(args.external_value, 456);
         assert_eq!(args.report_hash, report_hash);
     }
 

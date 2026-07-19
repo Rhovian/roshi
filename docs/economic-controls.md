@@ -127,8 +127,21 @@ failure.
 
 The bound is computed against stored `total_assets` (recognized NAV), not
 effective NAV — it governs report-to-report movement, and using effective
-would double-count the in-flight drip. It is skipped when the share supply or
-the stored price is zero, so post-total-loss recovery cannot wedge.
+would double-count the in-flight drip. The comparison is exact and avoids
+rounded share prices:
+
+```text
+new_total_assets * 10_000
+    <= old_total_assets * (10_000 + max_nav_gain_bps)
+```
+
+It is skipped only when the share supply is zero or the control is disabled.
+If an economically nonempty vault's share price rounds to zero, deposits fail
+with `ZeroSharePrice` and an ordinary report cannot jump out of the state.
+Recovery is explicit: the admin first pauses deposits, then `RecoverNav`
+requires both the NAV authority and admin to sign. Recovery runs the normal
+fee, high-watermark, liability, and profit-unlock accounting, bypasses only
+the gain bound, and leaves deposits paused for an intentional admin unpause.
 
 ## Atomic-Redeem Exit Fee
 

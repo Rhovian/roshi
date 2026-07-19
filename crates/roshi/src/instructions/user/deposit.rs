@@ -6,7 +6,11 @@ use crate::{
     instructions::{accounts::DepositContext, token, DepositArgs},
     state::vault::Vault,
 };
-use roshi_interface::{access::MAX_ACCESS_PROOF_LEN, error::RoshiError, math::shares_for_deposit};
+use roshi_interface::{
+    access::MAX_ACCESS_PROOF_LEN,
+    error::RoshiError,
+    math::{share_price_from_assets, shares_for_deposit},
+};
 
 /// Implements [`crate::instructions::RoshiInstruction::Deposit`].
 ///
@@ -61,9 +65,15 @@ pub fn try_deposit<'info>(
     // as it unlocks, so a just-pre-report or mid-drip depositor's capture
     // rate stays at the vault's organic earning rate.
     let now = Clock::get()?.unix_timestamp;
+    let effective_total_assets = vault.effective_total_assets(now)?;
+    if economic_share_supply != 0
+        && share_price_from_assets(effective_total_assets, economic_share_supply)? == 0
+    {
+        return Err(RoshiError::ZeroSharePrice.into());
+    }
     let shares = shares_for_deposit(
         base_atoms,
-        vault.effective_total_assets(now)?,
+        effective_total_assets,
         economic_share_supply,
         vault.base_decimals,
     )?;

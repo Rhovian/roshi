@@ -5,14 +5,17 @@ use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
 use crate::{
-    instructions::{accounts::next_account, token, ReportNavArgs},
+    instructions::{accounts::next_account, token, RecoverNavArgs, ReportNavArgs},
     state::{
         sub_account::VaultSubAccount,
         vault::{self, Role},
         Account,
     },
 };
-use roshi_interface::{error::RoshiError, math::performance_fee_for_nav};
+use roshi_interface::{
+    error::RoshiError,
+    math::{performance_fee_for_nav, share_price_from_assets},
+};
 
 const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 
@@ -38,9 +41,54 @@ const EMPTY_REPORT_HASH: [u8; 32] = [0; 32];
 /// rate limit and upward price-move bound; an over-bound honest gain is
 /// reported capped and rolled into subsequent reports.
 pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramResult {
+    apply_nav_report(
+        accounts,
+        NavReport {
+            external_value: args.external_value,
+            report_hash: args.report_hash,
+        },
+        ReportKind::Ordinary,
+    )
+}
+
+/// Restore NAV after an economically nonempty vault's share price has rounded
+/// to zero. Recovery uses the normal report accounting, but bypasses the gain
+/// bound only with both authorities signing while deposits are paused.
+pub fn try_recover_nav(accounts: &[AccountInfo], args: RecoverNavArgs) -> ProgramResult {
+    apply_nav_report(
+        accounts,
+        NavReport {
+            external_value: args.external_value,
+            report_hash: args.report_hash,
+        },
+        ReportKind::Recovery,
+    )
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReportKind {
+    Ordinary,
+    Recovery,
+}
+
+struct NavReport {
+    external_value: u64,
+    report_hash: [u8; 32],
+}
+
+fn apply_nav_report(
+    accounts: &[AccountInfo],
+    args: NavReport,
+    report_kind: ReportKind,
+) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
 
     let nav_authority = next_account(accounts_iter)?;
+    let admin = if report_kind == ReportKind::Recovery {
+        Some(next_account(accounts_iter)?)
+    } else {
+        None
+    };
     let vault_account = next_account(accounts_iter)?;
     if !vault_account.is_writable {
         return Err(ProgramError::InvalidAccountData);
@@ -48,6 +96,9 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
 
     let mut vault = vault::load_checked(vault_account)?;
     vault::verify_role(&vault, Role::NavAuthority, nav_authority)?;
+    if let Some(admin) = admin {
+        vault::verify_role(&vault, Role::Admin, admin)?;
+    }
 
     let now = Clock::get()?.unix_timestamp;
     vault.verify_report_interval(now)?;
@@ -56,6 +107,17 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
     vault::verify_share_mint(&vault, share_mint)?;
     let share_supply = token::mint_supply(share_mint)?;
     let economic_share_supply = vault.economic_share_supply(share_supply)?;
+
+    if report_kind == ReportKind::Recovery {
+        if !vault.deposits_paused()? {
+            return Err(RoshiError::DepositsMustBePaused.into());
+        }
+        if economic_share_supply == 0
+            || share_price_from_assets(vault.total_assets, economic_share_supply)? != 0
+        {
+            return Err(RoshiError::InvalidVaultState.into());
+        }
+    }
 
     if args.report_hash == EMPTY_REPORT_HASH {
         return Err(RoshiError::InvalidVaultState.into());
@@ -108,7 +170,9 @@ pub fn try_report_nav(accounts: &[AccountInfo], args: ReportNavArgs) -> ProgramR
         vault.high_watermark,
         vault.performance_fee_bps,
     )?;
-    vault.verify_nav_gain_bound(net_total_assets, economic_share_supply)?;
+    if report_kind == ReportKind::Ordinary {
+        vault.verify_nav_gain_bound(net_total_assets, economic_share_supply)?;
+    }
 
     vault.fees_payable = vault
         .fees_payable

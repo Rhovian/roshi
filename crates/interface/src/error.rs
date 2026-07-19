@@ -48,6 +48,8 @@ pub enum RoshiError {
     SwapCustodyMoved = 42,
     EmptyAtomicRedeemOps = 43,
     UnboundAtomicRedeemAccount = 44,
+    ZeroSharePrice = 45,
+    DepositsMustBePaused = 46,
 }
 
 impl From<RoshiError> for ProgramError {

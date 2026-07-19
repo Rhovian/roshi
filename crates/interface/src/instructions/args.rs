@@ -145,6 +145,14 @@ pub struct ReportNavArgs {
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct RecoverNavArgs {
+    /// See [`ReportNavArgs::external_value`]. Recovery uses the same NAV
+    /// accounting, but requires both the NAV authority and vault admin.
+    pub external_value: u64,
+    pub report_hash: [u8; 32],
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct UpdateVaultConfigArgs {
     pub treasury: [u8; 32],
     pub deposit_sub_account: u8,

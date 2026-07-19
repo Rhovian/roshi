@@ -10,7 +10,7 @@ pub use roshi_interface::instructions::{
     AccountFlags, AdminSetFlashFeeRateArgs, AtomicRedeemArgs, AuthorizeActionArgs,
     CancelRedeemArgs, CollectFeesArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
     InitializeVaultArgs, InvestExternalArgs, ManageArgs, ManageBatchArgs, ProcessWithdrawalsArgs,
-    RedeemArgs, RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
+    RecoverNavArgs, RedeemArgs, RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
     RevokeActionArgs, RevokeExternalDestinationArgs, RoshiInstruction, SetNavAuthorityArgs,
     SetPauseFlagsArgs, SetShareMetadataArgs, SetStrategistArgs, SetVaultAccessArgs,
     SetWithdrawalAuthorityArgs, StrategistLowerFlashFeeRateArgs, SwapArgs,

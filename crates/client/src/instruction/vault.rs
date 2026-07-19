@@ -1,6 +1,6 @@
 use roshi_interface::instructions::{
     CollectFeesArgs, InitializeVaultArgs, InvestExternalArgs, ProcessWithdrawalsArgs,
-    RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
+    RecoverNavArgs, RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs,
     RevokeExternalDestinationArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetShareMetadataArgs,
     SetStrategistArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
     TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateVaultConfigArgs,
@@ -181,6 +181,35 @@ pub fn report_nav(
             AccountMeta::new_readonly(withdraw_base_custody, false),
         ],
         &ReportNavArgs {
+            external_value,
+            report_hash,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn recover_nav(
+    nav_authority: Pubkey,
+    admin: Pubkey,
+    vault: Pubkey,
+    share_mint: Pubkey,
+    base_mint: Pubkey,
+    deposit_base_custody: Pubkey,
+    withdraw_base_custody: Pubkey,
+    external_value: u64,
+    report_hash: [u8; 32],
+) -> Result<Instruction> {
+    new(
+        vec![
+            AccountMeta::new_readonly(nav_authority, true),
+            AccountMeta::new_readonly(admin, true),
+            AccountMeta::new(vault, false),
+            AccountMeta::new_readonly(share_mint, false),
+            AccountMeta::new_readonly(base_mint, false),
+            AccountMeta::new_readonly(deposit_base_custody, false),
+            AccountMeta::new_readonly(withdraw_base_custody, false),
+        ],
+        &RecoverNavArgs {
             external_value,
             report_hash,
         },

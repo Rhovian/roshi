@@ -7,10 +7,7 @@ use wincode::{deserialize, SchemaRead, SchemaWrite};
 use crate::{
     access::verify_access_merkle_proof,
     error::RoshiError,
-    math::{
-        checked_u64, mul_div_floor, share_price_from_assets, validate_percentage_bps,
-        BPS_DENOMINATOR, SHARE_DECIMALS,
-    },
+    math::{checked_u64, mul_div_floor, validate_percentage_bps, BPS_DENOMINATOR, SHARE_DECIMALS},
     oracle::OracleConfig,
     state::VAULT_ACCOUNT_TAG,
     ID,
@@ -474,12 +471,11 @@ impl Vault {
         Ok(())
     }
 
-    /// NAV gain bound: a report may not raise the net share price by more
-    /// than `controls.max_nav_gain_bps` vs. the stored pre-report price. No
-    /// downward bound — honest losses must land in one report. An over-bound
-    /// honest gain is not lost: the authority reports the capped amount and
-    /// rolls the remainder into subsequent reports. Skipped when supply or
-    /// the stored price is zero so post-total-loss recovery cannot wedge.
+    /// NAV gain bound: a report may not raise net assets per share by more
+    /// than `controls.max_nav_gain_bps`. The common share supply cancels from
+    /// the ratio, so comparing assets directly avoids a rounded-zero price
+    /// bypass. No downward bound — honest losses must land in one report. An
+    /// over-bound honest gain is reported capped and rolled forward.
     pub fn verify_nav_gain_bound(
         &self,
         net_total_assets: u64,
@@ -488,18 +484,13 @@ impl Vault {
         if self.controls.max_nav_gain_bps == 0 || economic_share_supply == 0 {
             return Ok(());
         }
-        let pre_price = share_price_from_assets(self.total_assets, economic_share_supply)?;
-        if pre_price == 0 {
-            return Ok(());
-        }
-
-        let new_price = share_price_from_assets(net_total_assets, economic_share_supply)?;
-        let max_price = checked_u64(mul_div_floor(
-            u128::from(pre_price),
-            u128::from(BPS_DENOMINATOR) + u128::from(self.controls.max_nav_gain_bps),
-            u128::from(BPS_DENOMINATOR),
-        )?)?;
-        if new_price > max_price {
+        let new_assets_scaled = u128::from(net_total_assets)
+            .checked_mul(u128::from(BPS_DENOMINATOR))
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        let max_assets_scaled = u128::from(self.total_assets)
+            .checked_mul(u128::from(BPS_DENOMINATOR) + u128::from(self.controls.max_nav_gain_bps))
+            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+        if new_assets_scaled > max_assets_scaled {
             return Err(RoshiError::NavGainExceedsBound.into());
         }
         Ok(())
@@ -928,10 +919,13 @@ mod tests {
         );
         // No downward bound.
         assert!(vault.verify_nav_gain_bound(0, supply).is_ok());
-        // Skips: supply zero, stored price zero, control disabled.
+        // Skips: supply zero or control disabled.
         assert!(vault.verify_nav_gain_bound(u64::MAX, 0).is_ok());
         vault.total_assets = 0;
-        assert!(vault.verify_nav_gain_bound(u64::MAX, supply).is_ok());
+        assert_eq!(
+            vault.verify_nav_gain_bound(1, supply),
+            Err(ProgramError::from(RoshiError::NavGainExceedsBound))
+        );
         vault.total_assets = 1_000;
         vault.controls = VaultControls::default();
         assert!(vault.verify_nav_gain_bound(u64::MAX, supply).is_ok());
