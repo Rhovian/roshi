@@ -22,7 +22,8 @@ use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 
 /// Fixed swap account layout:
 ///
-/// 0. `[signer]` Strategist (verified against `vault.strategist`).
+/// 0. `[signer]` Swap executor (verified against `vault.swap_authority` or
+///    `vault.strategist`).
 /// 1. `[]` Vault.
 /// 2. `[]` Subaccount PDA derived from `(vault, sub_account)`.
 /// 3. `[writable]` Input custody token account (owner = subaccount PDA).
@@ -62,10 +63,10 @@ where
     ) -> Result<Self, ProgramError> {
         let accounts_iter = &mut accounts.iter();
 
-        let strategist = next_account(accounts_iter)?;
+        let swap_executor = next_account(accounts_iter)?;
         let vault_account = next_account(accounts_iter)?;
         let vault = vault::load_checked(vault_account)?;
-        vault::verify_role(&vault, Role::Strategist, strategist)?;
+        vault::verify_either_role(&vault, Role::SwapAuthority, Role::Strategist, swap_executor)?;
         vault.verify_manage_enabled()?;
 
         let vault_key = *vault_account.key;

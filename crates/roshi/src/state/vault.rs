@@ -39,6 +39,19 @@ pub fn verify_role(vault: &Vault, role: Role, signer: &AccountInfo) -> ProgramRe
     Ok(())
 }
 
+/// Verify `signer` signed and holds either role on `vault`.
+pub fn verify_either_role(vault: &Vault, a: Role, b: Role, signer: &AccountInfo) -> ProgramResult {
+    if !signer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    if !vault.has_role(a, signer.key) && !vault.has_role(b, signer.key) {
+        return Err(ProgramError::IllegalOwner);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +67,7 @@ mod tests {
             b"test",
             Pubkey::new_unique().to_bytes(),
             [2; 32],
+            [3; 32],
             [4; 32],
             [5; 32],
             base_mint.to_bytes(),

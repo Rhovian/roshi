@@ -16,6 +16,7 @@ pub struct InitializeVaultArgs {
     pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
+    pub swap_authority: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
@@ -218,6 +219,11 @@ pub struct TransferVaultAuthorityArgs {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetStrategistArgs {
     pub strategist: [u8; 32],
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct SetSwapAuthorityArgs {
+    pub swap_authority: [u8; 32],
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]

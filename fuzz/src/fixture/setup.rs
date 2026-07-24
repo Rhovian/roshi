@@ -9,6 +9,8 @@
         let vault_authority_alt = Rc::new(Keypair::new());
         let strategist = Rc::new(Keypair::new());
         let strategist_alt = Rc::new(Keypair::new());
+        let swap_authority = Rc::new(Keypair::new());
+        let swap_authority_alt = Rc::new(Keypair::new());
         let nav_authority = Rc::new(Keypair::new());
         let nav_authority_alt = Rc::new(Keypair::new());
         let withdrawal_authority = Rc::new(Keypair::new());
@@ -20,6 +22,8 @@
             &vault_authority_alt,
             &strategist,
             &strategist_alt,
+            &swap_authority,
+            &swap_authority_alt,
             &nav_authority,
             &nav_authority_alt,
             &withdrawal_authority,
@@ -59,6 +63,7 @@
             tag_len: 4,
             admin: operator.pubkey().to_bytes(),
             strategist: strategist.pubkey().to_bytes(),
+            swap_authority: swap_authority.pubkey().to_bytes(),
             nav_authority: nav_authority.pubkey().to_bytes(),
             withdrawal_authority: withdrawal_authority.pubkey().to_bytes(),
             base_mint: base_mint.to_bytes(),
@@ -478,6 +483,8 @@
             vault_authority_alt,
             strategist,
             strategist_alt,
+            swap_authority,
+            swap_authority_alt,
             nav_authority,
             nav_authority_alt,
             withdrawal_authority,
