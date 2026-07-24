@@ -26,11 +26,12 @@ mod tests {
         instructions::{
             AccountFlags, AtomicRedeemArgs, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs,
             DepositArgs, InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs,
-            InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs,
-            RecoverNavArgs, RedeemArgs, ReportNavArgs, ReturnExternalArgs, RevokeActionArgs,
-            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetSwapAuthorityArgs,
-            SetVaultAccessArgs, SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs,
-            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+            InstructionArgs, InvestExternalArgs, ManageArgs, PackedAccountFlags,
+            ProcessWithdrawalsArgs, RecoverNavArgs, RedeemArgs, ReportNavArgs, ReturnExternalArgs,
+            RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+            SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs, SwapArgs,
+            TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
+            UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -156,10 +157,10 @@ mod tests {
             ManageArgs {
                 sub_account: 7,
                 accounts_start: 0,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -177,10 +178,10 @@ mod tests {
         assert_eq!(args.accounts_start, 0);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }
@@ -219,10 +220,10 @@ mod tests {
                 min_output: 120,
                 sub_account: 7,
                 accounts_start: 0,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -265,10 +266,10 @@ mod tests {
         assert_eq!(args.accounts_start, 0);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }
@@ -302,10 +303,10 @@ mod tests {
                 max_in: 123,
                 sub_account: 7,
                 accounts_start: 0,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -338,10 +339,10 @@ mod tests {
         assert_eq!(args.accounts_start, 0);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }

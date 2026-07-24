@@ -9,7 +9,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     instructions::accounts::ValidatedManageAccounts,
-    instructions::AccountFlags,
+    instructions::PackedAccountFlags,
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops, ResolvedSibling},
         sub_account::VaultSubAccount,
@@ -217,8 +217,8 @@ fn ingests_account(ops: &Ops, index: usize) -> Result<bool, ProgramError> {
 /// # Accounts
 ///
 /// `cpi_accounts` is the remaining account section after the Roshi instruction
-/// prefix has been consumed. `accounts_start` and `account_flags.len()` select
-/// the downstream CPI account metas relative to that section. The target
+/// prefix has been consumed. `accounts_start` and `account_flags.accounts_len`
+/// select the downstream CPI account metas relative to that section. The target
 /// program account must be supplied immediately after the selected CPI metas;
 /// it must be executable and is passed through to `invoke_signed` as an
 /// account info but is not included as an instruction meta.
@@ -236,11 +236,11 @@ pub(crate) fn validate_authorized_cpi<'a, 'info>(
     cpi_accounts: &'a [AccountInfo<'info>],
     validated_accounts: &ValidatedManageAccounts,
     accounts_start: u8,
-    account_flags: Vec<AccountFlags>,
+    account_flags: PackedAccountFlags,
     ix_data: Vec<u8>,
 ) -> Result<AuthorizedCpi<'a, 'info>, ProgramError> {
     let accounts_start = usize::from(accounts_start);
-    let accounts_len = account_flags.len();
+    let accounts_len = usize::from(account_flags.accounts_len);
     let accounts_end = accounts_start
         .checked_add(accounts_len)
         .ok_or(ProgramError::InvalidInstructionData)?;
@@ -259,7 +259,7 @@ pub(crate) fn validate_authorized_cpi<'a, 'info>(
     }
     let cpi_account_metas = cpi_meta_accounts
         .iter()
-        .zip(account_flags)
+        .zip(account_flags.iter()?)
         .map(|(acc, flags)| {
             if flags.is_writable && !acc.is_writable {
                 return Err(ProgramError::InvalidAccountData);

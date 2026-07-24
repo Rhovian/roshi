@@ -15,7 +15,7 @@
 use litesvm::types::TransactionResult;
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, ManageArgs},
+    instructions::{AccountFlags, ManageArgs, PackedAccountFlags},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops, ResolvedSibling},
         sub_account::VaultSubAccount,
@@ -220,7 +220,7 @@ impl FlashFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -233,7 +233,7 @@ impl FlashFixture {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )

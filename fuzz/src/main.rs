@@ -16,7 +16,7 @@ use std::rc::Rc;
 use roshi::{
     instructions::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
-        SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+        PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
     oracle::{OracleConfig, PythOracleConfig},
     state::{

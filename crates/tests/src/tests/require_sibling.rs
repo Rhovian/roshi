@@ -8,7 +8,7 @@
 use litesvm::types::TransactionResult;
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, ManageArgs},
+    instructions::{AccountFlags, ManageArgs, PackedAccountFlags},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops, ResolvedSibling},
         sub_account::VaultSubAccount,
@@ -175,7 +175,7 @@ impl SiblingFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -184,7 +184,7 @@ impl SiblingFixture {
                         is_signer: false,
                         is_writable: true,
                     },
-                ],
+                ]),
                 ix_data: self.relayed_ix_data(),
             },
         )

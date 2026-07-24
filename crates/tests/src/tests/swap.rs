@@ -4,7 +4,7 @@
 use litesvm::LiteSVM;
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, SwapArgs},
+    instructions::{AccountFlags, PackedAccountFlags, SwapArgs},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         sub_account::VaultSubAccount,
@@ -142,7 +142,7 @@ impl SwapFixture {
                 max_in,
                 sub_account: self.sub_account_index,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -155,7 +155,7 @@ impl SwapFixture {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data: self.ix_data.clone(),
             },
         )
@@ -596,7 +596,7 @@ fn swap_ix_with_valuation(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -609,7 +609,7 @@ fn swap_ix_with_valuation(
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )
@@ -1062,7 +1062,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -1075,7 +1075,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -1220,7 +1220,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -1233,7 +1233,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -1356,7 +1356,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
             max_in: u64::MAX,
             sub_account: 0,
             accounts_start: 0,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -1369,7 +1369,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )
@@ -1450,7 +1450,7 @@ fn swap_ix_route(
             is_signer: false,
             is_writable: meta.is_writable,
         })
-        .collect();
+        .collect::<Vec<_>>();
     let mut cpi_accounts = route_metas;
     cpi_accounts.push(AccountMeta::new_readonly(fixture.token_program, false));
 
@@ -1468,7 +1468,7 @@ fn swap_ix_route(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            account_flags,
+            account_flags: PackedAccountFlags::from_flags(&account_flags),
             ix_data,
         },
     )

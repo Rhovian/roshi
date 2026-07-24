@@ -70,7 +70,7 @@
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -83,7 +83,7 @@
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -248,7 +248,7 @@
             action: self.manage_action,
         };
         let transfer_flags = || {
-            vec![
+            PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -261,7 +261,7 @@
                     is_signer: false,
                     is_writable: false,
                 },
-            ]
+            ])
         };
         let leg = |start: u8, ix_data: Vec<u8>| ManageArgs {
             sub_account: 0,
@@ -331,7 +331,7 @@
                 max_in: amount,
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -344,7 +344,7 @@
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -413,7 +413,7 @@
                 max_in: amount,
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -426,7 +426,7 @@
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -503,7 +503,7 @@
                 min_output: 0,
                 sub_account: 0,
                 accounts_start: 0,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -516,7 +516,7 @@
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )

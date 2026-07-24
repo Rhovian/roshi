@@ -1,5 +1,7 @@
+pub mod account_flags;
 pub mod args;
 
+pub use account_flags::{AccountFlags, PackedAccountFlags};
 pub use args::*;
 
 use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};

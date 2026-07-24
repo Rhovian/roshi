@@ -178,12 +178,24 @@ Execution checks:
 14. Roshi invokes the CPI with subaccount signer seeds.
 
 The CPI instruction metas are created from the selected CPI account infos plus
-the explicit `account_flags`. The flags represent the intended per-CPI signer
-and writable privileges and are used for both action hashing and `invoke`.
-Roshi rejects requested writable access when the loaded account is not writable,
-and rejects requested signer access unless the account signed the transaction or
-is the selected subaccount PDA being promoted with signer seeds. Readonly and
-non-signer requests may safely downgrade message-level privileges.
+the explicit packed `account_flags`:
+
+```rust
+PackedAccountFlags {
+    accounts_len,
+    bits,
+}
+```
+
+Each account uses two bits in `bits` (bit 0 = signer, bit 1 = writable), with
+four accounts per byte. `bits` must contain exactly `ceil(accounts_len / 4)`
+bytes, and unused high bits in its final byte must be zero. The flags represent
+the intended per-CPI signer and writable privileges and are used for both action
+hashing and `invoke`. Roshi rejects requested writable access when the loaded
+account is not writable, and rejects requested signer access unless the account
+signed the transaction or is the selected subaccount PDA being promoted with
+signer seeds. Readonly and non-signer requests may safely downgrade
+message-level privileges.
 
 The target CPI program account must be supplied immediately after the selected
 CPI meta account slice. Roshi derives the CPI program id from this account
@@ -229,8 +241,8 @@ cpi_accounts_base = 2 + actions.len() * 2
 
 For action `i`, Roshi uses account `2 + i * 2` as that action's subaccount PDA
 and account `3 + i * 2` as that action's Action PDA. It then uses
-`accounts_start` and `account_flags.len()` as offsets into the shared CPI
-account section. The target CPI program account for that action must appear
+`accounts_start` and `account_flags.accounts_len` as offsets into the shared
+CPI account section. The target CPI program account for that action must appear
 immediately after its selected CPI account slice.
 
 This lets multiple actions share the same CPI accounts by overlapping their
