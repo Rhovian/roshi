@@ -32,6 +32,7 @@ fn bool_flag(flag: u8) -> Result<bool, ProgramError> {
 pub enum Role {
     Admin,
     Strategist,
+    SwapAuthority,
     NavAuthority,
     WithdrawalAuthority,
 }
@@ -128,6 +129,7 @@ pub struct Vault {
     pub tag: [u8; 32],
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
+    pub swap_authority: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
@@ -161,6 +163,7 @@ impl Vault {
         tag: &[u8],
         admin: [u8; 32],
         strategist: [u8; 32],
+        swap_authority: [u8; 32],
         nav_authority: [u8; 32],
         withdrawal_authority: [u8; 32],
         base_mint: [u8; 32],
@@ -209,6 +212,7 @@ impl Vault {
             tag,
             admin,
             strategist,
+            swap_authority,
             nav_authority,
             withdrawal_authority,
             base_mint,
@@ -316,6 +320,7 @@ impl Vault {
         match role {
             Role::Admin => Pubkey::from(self.admin),
             Role::Strategist => Pubkey::from(self.strategist),
+            Role::SwapAuthority => Pubkey::from(self.swap_authority),
             Role::NavAuthority => Pubkey::from(self.nav_authority),
             Role::WithdrawalAuthority => Pubkey::from(self.withdrawal_authority),
         }
@@ -652,6 +657,7 @@ mod tests {
             b"test",
             admin.to_bytes(),
             [2; 32],
+            [3; 32],
             [4; 32],
             [5; 32],
             base_mint.to_bytes(),
@@ -678,6 +684,7 @@ mod tests {
 
         assert_eq!(vault.tag_seed().unwrap(), b"test");
         assert_eq!(vault.strategist, [2; 32]);
+        assert_eq!(vault.swap_authority, [3; 32]);
         assert_eq!(vault.nav_authority, [4; 32]);
         assert_eq!(vault.withdrawal_authority, [5; 32]);
         assert_eq!(vault.base_decimals, 6);
@@ -732,8 +739,8 @@ mod tests {
     fn vault_is_zero_copy_with_explicit_padding() {
         assert_zero_copy::<Vault>();
         assert_eq!(core::mem::size_of::<VaultControls>(), 24);
-        assert_eq!(core::mem::size_of::<Vault>(), 656);
-        assert_eq!(Vault::SPACE, 657);
+        assert_eq!(core::mem::size_of::<Vault>(), 688);
+        assert_eq!(Vault::SPACE, 689);
         let vault = new_test_vault(false, [0; 32]);
         assert_eq!(
             serialize(&vault).unwrap().len(),

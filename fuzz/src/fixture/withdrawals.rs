@@ -156,8 +156,7 @@
                 min_output: 0,
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -170,7 +169,7 @@
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )

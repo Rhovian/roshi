@@ -73,7 +73,6 @@ pub fn try_atomic_redeem(accounts: &[AccountInfo], args: AtomicRedeemArgs) -> Pr
         context.user_share_account.key,
         context.custody,
         args.accounts_start,
-        args.accounts_len,
         args.account_flags,
         args.ix_data,
     )?;
@@ -139,8 +138,7 @@ fn execute_unwind_cpi<'info>(
     user_share_account_key: &Pubkey,
     custody: &AccountInfo<'info>,
     accounts_start: u8,
-    accounts_len: u8,
-    account_flags: Vec<roshi_interface::instructions::AccountFlags>,
+    account_flags: roshi_interface::instructions::PackedAccountFlags,
     ix_data: Vec<u8>,
 ) -> Result<u64, ProgramError> {
     let validated_accounts = ValidatedManageAccounts {
@@ -155,7 +153,6 @@ fn execute_unwind_cpi<'info>(
         cpi_accounts,
         &validated_accounts,
         accounts_start,
-        accounts_len,
         account_flags,
         ix_data,
     )?;

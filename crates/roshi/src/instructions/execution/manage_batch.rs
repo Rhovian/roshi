@@ -21,9 +21,9 @@ use super::shared::{settle_authorized_cpi, validate_authorized_cpi};
 /// the shared CPI account section. Each action is validated and invoked in
 /// order so account writes from earlier actions are visible to later action
 /// validation. Each action selects its own subaccount and Action PDA pair while
-/// using `accounts_start` and `accounts_len` as offsets into the shared CPI
-/// accounts. The target CPI program account must follow each selected CPI
-/// account meta slice.
+/// using `accounts_start` and `account_flags.accounts_len` as offsets into the
+/// shared CPI accounts. The target CPI program account must follow each
+/// selected CPI account meta slice.
 pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> ProgramResult {
     let accounts = ManageBatchContext::load(accounts, args.actions.len())?;
 
@@ -34,7 +34,6 @@ pub fn try_manage_batch(accounts: &[AccountInfo], args: ManageBatchArgs) -> Prog
             accounts.cpi_accounts,
             &validated_accounts,
             action.accounts_start,
-            action.accounts_len,
             action.account_flags,
             action.ix_data,
         )?;

@@ -6,7 +6,7 @@
 use litesvm::LiteSVM;
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, AtomicRedeemArgs},
+    instructions::{AccountFlags, AtomicRedeemArgs, PackedAccountFlags},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         sub_account::VaultSubAccount,
@@ -212,8 +212,7 @@ impl AtomicRedeemFixture {
                 min_output,
                 sub_account: self.sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -226,7 +225,7 @@ impl AtomicRedeemFixture {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -467,8 +466,7 @@ fn test_atomic_redeem_rejects_unbound_destination_redirect() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 3,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -481,7 +479,7 @@ fn test_atomic_redeem_rejects_unbound_destination_redirect() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data: fixture.ix_data.clone(),
         },
     )
@@ -531,8 +529,7 @@ fn test_atomic_redeem_rejects_instruction_swap_on_bound_route() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 2,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -541,7 +538,7 @@ fn test_atomic_redeem_rejects_instruction_swap_on_bound_route() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             // New authority with small leading bytes so the amount decoded at
             // `redeem_amount_offset` clears the entitlement check, letting the
             // request reach (and fail) the action-hash comparison rather than the
@@ -769,8 +766,7 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
             min_output: REDEEM_AMOUNT,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 4,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -787,7 +783,7 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )
@@ -841,8 +837,7 @@ fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 2,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -851,7 +846,7 @@ fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )

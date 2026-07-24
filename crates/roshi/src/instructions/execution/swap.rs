@@ -16,7 +16,8 @@ use roshi_interface::{
 ///
 /// # Accounts
 ///
-/// 0. `[signer]` Strategist (verified against `vault.strategist`).
+/// 0. `[signer]` Swap executor (verified against `vault.swap_authority` or
+///    `vault.strategist`).
 /// 1. `[]` Vault.
 /// 2. `[]` Subaccount PDA derived from `(vault, sub_account)`.
 /// 3. `[writable]` Input custody token account (owner = subaccount PDA).
@@ -75,7 +76,6 @@ where
         context.cpi_accounts,
         &validated_accounts,
         args.accounts_start,
-        args.accounts_len,
         args.account_flags,
         args.ix_data,
     )?;
@@ -121,7 +121,8 @@ where
 /// the realized input minus the configured tolerance, both valued in base
 /// atoms through the same pricing path deposits use. The caller-supplied
 /// `max_in`/`min_out` protect amounts; this bounds *value*, so a compromised
-/// strategist cannot leak NAV through an unfavorable authorized route.
+/// swap authority or strategist cannot leak NAV through an unfavorable
+/// authorized route.
 #[inline(never)]
 fn verify_swap_value<'a, 'info>(
     context: &SwapContext<'a, 'info>,

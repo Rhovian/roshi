@@ -1,3 +1,4 @@
+use super::PackedAccountFlags;
 use crate::{
     action::{ActionScope, Ops},
     oracle::OracleConfig,
@@ -16,6 +17,7 @@ pub struct InitializeVaultArgs {
     pub tag_len: u8,
     pub admin: [u8; 32],
     pub strategist: [u8; 32],
+    pub swap_authority: [u8; 32],
     pub nav_authority: [u8; 32],
     pub withdrawal_authority: [u8; 32],
     pub base_mint: [u8; 32],
@@ -52,18 +54,11 @@ pub struct RevokeActionArgs {
     pub action_hash: [u8; 32],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
-pub struct AccountFlags {
-    pub is_signer: bool,
-    pub is_writable: bool,
-}
-
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageArgs {
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
-    pub account_flags: Vec<AccountFlags>,
+    pub account_flags: PackedAccountFlags,
     pub ix_data: Vec<u8>,
 }
 
@@ -73,8 +68,7 @@ pub struct AtomicRedeemArgs {
     pub min_output: u64,
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
-    pub account_flags: Vec<AccountFlags>,
+    pub account_flags: PackedAccountFlags,
     pub ix_data: Vec<u8>,
 }
 
@@ -84,8 +78,7 @@ pub struct SwapArgs {
     pub max_in: u64,
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
-    pub account_flags: Vec<AccountFlags>,
+    pub account_flags: PackedAccountFlags,
     pub ix_data: Vec<u8>,
 }
 
@@ -218,6 +211,11 @@ pub struct TransferVaultAuthorityArgs {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct SetStrategistArgs {
     pub strategist: [u8; 32],
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct SetSwapAuthorityArgs {
+    pub swap_authority: [u8; 32],
 }
 
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]

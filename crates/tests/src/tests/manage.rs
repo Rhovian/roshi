@@ -1,6 +1,6 @@
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, ManageArgs},
+    instructions::{AccountFlags, ManageArgs, PackedAccountFlags},
     state::{
         action::{
             compute_action_hash, compute_action_hash_from_metas, Action, ActionScope, Op, Ops,
@@ -91,6 +91,26 @@ impl SystemTransferManageFixture {
     }
 
     fn manage_ix(&self, strategist: solana_pubkey::Pubkey) -> solana_instruction::Instruction {
+        self.manage_ix_with_flags(
+            strategist,
+            PackedAccountFlags::from_flags(&[
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountFlags {
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ]),
+        )
+    }
+
+    fn manage_ix_with_flags(
+        &self,
+        strategist: solana_pubkey::Pubkey,
+        account_flags: PackedAccountFlags,
+    ) -> solana_instruction::Instruction {
         roshi_client::instruction::manage(
             strategist,
             self.vault.address,
@@ -104,17 +124,7 @@ impl SystemTransferManageFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
-                account_flags: vec![
-                    AccountFlags {
-                        is_signer: false,
-                        is_writable: true,
-                    },
-                    AccountFlags {
-                        is_signer: false,
-                        is_writable: true,
-                    },
-                ],
+                account_flags,
                 ix_data: self.transfer_data.clone(),
             },
         )
@@ -143,8 +153,7 @@ impl SystemTransferManageFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -153,7 +162,7 @@ impl SystemTransferManageFixture {
                         is_signer: false,
                         is_writable: true,
                     },
-                ],
+                ]),
                 ix_data: self.transfer_data.clone(),
             },
         )
@@ -318,8 +327,7 @@ fn test_manage_rejects_dirty_custody_before_cpi() {
                 ManageArgs {
                     sub_account: 0,
                     accounts_start: 0,
-                    accounts_len: 3,
-                    account_flags: vec![
+                    account_flags: PackedAccountFlags::from_flags(&[
                         AccountFlags {
                             is_signer: false,
                             is_writable: true,
@@ -332,7 +340,7 @@ fn test_manage_rejects_dirty_custody_before_cpi() {
                             is_signer: false,
                             is_writable: false,
                         },
-                    ],
+                    ]),
                     ix_data,
                 },
             )
@@ -386,8 +394,7 @@ fn test_manage_rejects_post_cpi_custody_owner_hijack() {
                 ManageArgs {
                     sub_account: 0,
                     accounts_start: 0,
-                    accounts_len: 2,
-                    account_flags: vec![
+                    account_flags: PackedAccountFlags::from_flags(&[
                         AccountFlags {
                             is_signer: false,
                             is_writable: true,
@@ -396,7 +403,7 @@ fn test_manage_rejects_post_cpi_custody_owner_hijack() {
                             is_signer: false,
                             is_writable: false,
                         },
-                    ],
+                    ]),
                     ix_data,
                 },
             )
@@ -426,6 +433,109 @@ fn test_manage_authority_check() {
     assert_instruction_error(
         send(&mut svm, fixture.manage_ix(wrong.pubkey()), &wrong),
         InstructionError::IllegalOwner,
+    );
+}
+
+#[test]
+fn test_manage_rejects_flags_longer_than_cpi_section() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    fixture.install_authorized_action(&mut svm);
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            roshi_client::instruction::manage(
+                authority.pubkey(),
+                fixture.vault.address,
+                fixture.sub_account_pda,
+                fixture.action_pda,
+                vec![
+                    AccountMeta::new(fixture.sub_account_pda, false),
+                    AccountMeta::new(fixture.scratch, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                ],
+                ManageArgs {
+                    sub_account: 0,
+                    accounts_start: 0,
+                    account_flags: PackedAccountFlags::from_flags(&[
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                    ]),
+                    ix_data: fixture.transfer_data.clone(),
+                },
+            )
+            .unwrap(),
+            &authority,
+        ),
+        InstructionError::NotEnoughAccountKeys,
+    );
+}
+
+#[test]
+fn test_manage_rejects_packed_flags_with_wrong_length() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    fixture.install_authorized_action(&mut svm);
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix_with_flags(
+                authority.pubkey(),
+                PackedAccountFlags {
+                    accounts_len: 2,
+                    bits: vec![],
+                },
+            ),
+            &authority,
+        ),
+        InstructionError::InvalidInstructionData,
+    );
+}
+
+#[test]
+fn test_manage_rejects_packed_flags_with_nonzero_pad_bits() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    fixture.install_authorized_action(&mut svm);
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            fixture.manage_ix_with_flags(
+                authority.pubkey(),
+                PackedAccountFlags {
+                    accounts_len: 2,
+                    bits: vec![0b0001_0000],
+                },
+            ),
+            &authority,
+        ),
+        InstructionError::InvalidInstructionData,
     );
 }
 
@@ -541,12 +651,12 @@ fn test_manage_rejects_swap_action() {
     )
     .unwrap();
 
-    fund(&mut svm, &fixture.vault.roles.nav_authority);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
     assert_instruction_error(
         send(
             &mut svm,
-            fixture.manage_ix(fixture.vault.roles.nav_authority.pubkey()),
-            &fixture.vault.roles.nav_authority,
+            fixture.manage_ix(fixture.vault.roles.swap_authority.pubkey()),
+            &fixture.vault.roles.swap_authority,
         ),
         InstructionError::Custom(RoshiError::UnauthorizedAction as u32),
     );
@@ -689,8 +799,7 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -699,17 +808,16 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
                         is_signer: false,
                         is_writable: true,
                     },
-                ],
+                ]),
                 ix_data: fixture.transfer_data.clone(),
             },
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 3,
-                accounts_len: 1,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: false,
-                }],
+                }]),
                 ix_data: vec![],
             },
         ],

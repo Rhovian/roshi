@@ -4,7 +4,7 @@
 use litesvm::LiteSVM;
 use roshi::{
     error::RoshiError,
-    instructions::{AccountFlags, SwapArgs},
+    instructions::{AccountFlags, PackedAccountFlags, SwapArgs},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         sub_account::VaultSubAccount,
@@ -14,7 +14,7 @@ use roshi::{
 };
 use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
-use solana_sdk::{account::Account, signature::Keypair, signer::Signer};
+use solana_sdk::{account::Account, signer::Signer};
 use wincode::serialize;
 
 use crate::helpers::{
@@ -142,8 +142,7 @@ impl SwapFixture {
                 max_in,
                 sub_account: self.sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -156,7 +155,7 @@ impl SwapFixture {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data: self.ix_data.clone(),
             },
         )
@@ -182,6 +181,36 @@ fn test_swap_happy_path() {
             SWAP_AMOUNT,
         ),
         &fixture.vault.roles.strategist,
+    );
+
+    assert_eq!(
+        token_balance(&svm, &fixture.input_custody),
+        INPUT_BALANCE - SWAP_AMOUNT
+    );
+    assert_eq!(
+        token_balance(&svm, &fixture.output_custody),
+        OUTPUT_BALANCE + SWAP_AMOUNT
+    );
+}
+
+#[test]
+fn test_swap_authority_happy_path() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fixture.install_action(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.swap_authority);
+
+    send_ok(
+        &mut svm,
+        fixture.ix(
+            fixture.vault.roles.swap_authority.pubkey(),
+            SWAP_AMOUNT,
+            SWAP_AMOUNT,
+        ),
+        &fixture.vault.roles.swap_authority,
     );
 
     assert_eq!(
@@ -311,21 +340,24 @@ fn test_swap_rejects_when_manage_paused() {
 }
 
 #[test]
-fn test_swap_rejects_non_strategist_signer() {
+fn test_swap_rejects_non_executor_signer() {
     let Some((mut svm, ..)) = setup_program() else {
         return;
     };
 
     let fixture = SwapFixture::setup(&mut svm);
     fixture.install_action(&mut svm);
-    let outsider = Keypair::new();
-    fund(&mut svm, &outsider);
+    fund(&mut svm, &fixture.vault.roles.nav_authority);
 
     assert_instruction_error(
         send(
             &mut svm,
-            fixture.ix(outsider.pubkey(), SWAP_AMOUNT, SWAP_AMOUNT),
-            &outsider,
+            fixture.ix(
+                fixture.vault.roles.nav_authority.pubkey(),
+                SWAP_AMOUNT,
+                SWAP_AMOUNT,
+            ),
+            &fixture.vault.roles.nav_authority,
         ),
         InstructionError::IllegalOwner,
     );
@@ -564,8 +596,7 @@ fn swap_ix_with_valuation(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 3,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -578,7 +609,7 @@ fn swap_ix_with_valuation(
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )
@@ -930,6 +961,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
         roles: crate::helpers::VaultRoles {
             admin: vault.roles.admin.insecure_clone(),
             strategist: vault.roles.strategist.insecure_clone(),
+            swap_authority: vault.roles.swap_authority.insecure_clone(),
             nav_authority: vault.roles.nav_authority.insecure_clone(),
             withdrawal_authority: vault.roles.withdrawal_authority.insecure_clone(),
         },
@@ -1030,8 +1062,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -1044,7 +1075,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -1088,6 +1119,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
         roles: crate::helpers::VaultRoles {
             admin: vault.roles.admin.insecure_clone(),
             strategist: vault.roles.strategist.insecure_clone(),
+            swap_authority: vault.roles.swap_authority.insecure_clone(),
             nav_authority: vault.roles.nav_authority.insecure_clone(),
             withdrawal_authority: vault.roles.withdrawal_authority.insecure_clone(),
         },
@@ -1188,8 +1220,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
-                account_flags: vec![
+                account_flags: PackedAccountFlags::from_flags(&[
                     AccountFlags {
                         is_signer: false,
                         is_writable: true,
@@ -1202,7 +1233,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                         is_signer: false,
                         is_writable: false,
                     },
-                ],
+                ]),
                 ix_data,
             },
         )
@@ -1325,8 +1356,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
             max_in: u64::MAX,
             sub_account: 0,
             accounts_start: 0,
-            accounts_len: 3,
-            account_flags: vec![
+            account_flags: PackedAccountFlags::from_flags(&[
                 AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -1339,7 +1369,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
                     is_signer: false,
                     is_writable: false,
                 },
-            ],
+            ]),
             ix_data,
         },
     )
@@ -1420,8 +1450,7 @@ fn swap_ix_route(
             is_signer: false,
             is_writable: meta.is_writable,
         })
-        .collect();
-    let accounts_len = route_metas.len() as u8;
+        .collect::<Vec<_>>();
     let mut cpi_accounts = route_metas;
     cpi_accounts.push(AccountMeta::new_readonly(fixture.token_program, false));
 
@@ -1439,8 +1468,7 @@ fn swap_ix_route(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len,
-            account_flags,
+            account_flags: PackedAccountFlags::from_flags(&account_flags),
             ix_data,
         },
     )

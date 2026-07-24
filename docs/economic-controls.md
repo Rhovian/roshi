@@ -253,9 +253,9 @@ and deferred — documented as an accepted risk below.
 `max_swap_slippage_bps` requires every swap's realized output value to cover
 its realized input value minus the tolerance, both valued through the same
 oracle path deposits use. The caller's `max_in`/`min_out` bound *amounts*; a
-compromised strategist sets them loose. The value bound is the control
-that survives key compromise: an authorized route that leaks NAV (output
-worth less than input) rejects regardless of what the authority claims.
+compromised swap authority or strategist sets them loose. The value bound is
+the control that survives key compromise: an authorized route that leaks NAV
+(output worth less than input) rejects regardless of the authority.
 
 The vault base-oracle leg is read **once per swap** and shared by both
 endpoint valuations: a pull-oracle feed can have several verified updates

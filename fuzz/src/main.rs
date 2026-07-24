@@ -16,7 +16,7 @@ use std::rc::Rc;
 use roshi::{
     instructions::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
-        SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+        PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
     oracle::{OracleConfig, PythOracleConfig},
     state::{
@@ -114,6 +114,8 @@ struct RoshiFixture {
     /// working, then restore the original signer.
     strategist: Rc<Keypair>,
     strategist_alt: Rc<Keypair>,
+    swap_authority: Rc<Keypair>,
+    swap_authority_alt: Rc<Keypair>,
     nav_authority: Rc<Keypair>,
     nav_authority_alt: Rc<Keypair>,
     withdrawal_authority: Rc<Keypair>,

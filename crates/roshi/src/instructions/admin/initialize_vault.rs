@@ -38,6 +38,7 @@ pub fn try_initialize_vault(accounts: &[AccountInfo], args: InitializeVaultArgs)
         tag,
         args.admin,
         args.strategist,
+        args.swap_authority,
         args.nav_authority,
         args.withdrawal_authority,
         args.base_mint,

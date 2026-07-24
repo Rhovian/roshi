@@ -26,11 +26,12 @@ mod tests {
         instructions::{
             AccountFlags, AtomicRedeemArgs, AuthorizeActionArgs, CancelRedeemArgs, CollectFeesArgs,
             DepositArgs, InitializeAssetArgs, InitializeProgramArgs, InitializeVaultArgs,
-            InstructionArgs, InvestExternalArgs, ManageArgs, ProcessWithdrawalsArgs,
-            RecoverNavArgs, RedeemArgs, ReportNavArgs, ReturnExternalArgs, RevokeActionArgs,
-            SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs, SetVaultAccessArgs,
-            SetWithdrawalAuthorityArgs, SwapArgs, TransferProgramAuthorityArgs,
-            TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+            InstructionArgs, InvestExternalArgs, ManageArgs, PackedAccountFlags,
+            ProcessWithdrawalsArgs, RecoverNavArgs, RedeemArgs, ReportNavArgs, ReturnExternalArgs,
+            RevokeActionArgs, SetNavAuthorityArgs, SetPauseFlagsArgs, SetStrategistArgs,
+            SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs, SwapArgs,
+            TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
+            UpdateVaultConfigArgs,
         },
         ID,
     };
@@ -83,6 +84,7 @@ mod tests {
             tag_len: 4,
             admin: Pubkey::new_unique().to_bytes(),
             strategist: Pubkey::new_unique().to_bytes(),
+            swap_authority: Pubkey::new_unique().to_bytes(),
             nav_authority: Pubkey::new_unique().to_bytes(),
             withdrawal_authority: Pubkey::new_unique().to_bytes(),
             base_mint: base_mint.to_bytes(),
@@ -155,11 +157,10 @@ mod tests {
             ManageArgs {
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -175,13 +176,12 @@ mod tests {
         let args: ManageArgs = decode_args(&ix.data);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }
@@ -220,11 +220,10 @@ mod tests {
                 min_output: 120,
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -265,20 +264,19 @@ mod tests {
         assert_eq!(args.min_output, 120);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }
 
     #[test]
     fn builds_swap_instruction() {
-        let strategist = Pubkey::new_unique();
+        let swap_authority = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let sub_account_pda = Pubkey::new_unique();
         let input_custody = Pubkey::new_unique();
@@ -289,7 +287,7 @@ mod tests {
         let ix_data = vec![3, 42, 0, 0, 0, 0, 0, 0, 0];
 
         let ix = swap(
-            strategist,
+            swap_authority,
             vault,
             sub_account_pda,
             input_custody,
@@ -305,11 +303,10 @@ mod tests {
                 max_in: 123,
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
-                account_flags: vec![AccountFlags {
+                account_flags: PackedAccountFlags::from_flags(&[AccountFlags {
                     is_signer: false,
                     is_writable: true,
-                }],
+                }]),
                 ix_data: ix_data.clone(),
             },
         )
@@ -317,7 +314,10 @@ mod tests {
 
         assert_eq!(ix.program_id, ID);
         assert_eq!(ix.accounts.len(), 8);
-        assert_eq!(ix.accounts[0], AccountMeta::new_readonly(strategist, true));
+        assert_eq!(
+            ix.accounts[0],
+            AccountMeta::new_readonly(swap_authority, true)
+        );
         assert_eq!(ix.accounts[1], AccountMeta::new_readonly(vault, false));
         assert_eq!(
             ix.accounts[2],
@@ -337,13 +337,12 @@ mod tests {
         assert_eq!(args.max_in, 123);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
-            vec![AccountFlags {
+            PackedAccountFlags::from_flags(&[AccountFlags {
                 is_signer: false,
                 is_writable: true,
-            }]
+            }])
         );
         assert_eq!(args.ix_data, ix_data);
     }
@@ -387,6 +386,7 @@ mod tests {
         let admin = Pubkey::new_unique();
         let vault = Pubkey::new_unique();
         let strategist = Pubkey::new_unique();
+        let swap_authority = Pubkey::new_unique();
         let nav_authority = Pubkey::new_unique();
         let withdrawal_authority = Pubkey::new_unique();
 
@@ -395,6 +395,10 @@ mod tests {
         assert_eq!(ix.accounts[1], AccountMeta::new(vault, false));
         let args: SetStrategistArgs = decode_args(&ix.data);
         assert_eq!(args.strategist, strategist.to_bytes());
+
+        let ix = set_swap_authority(admin, vault, swap_authority).unwrap();
+        let args: SetSwapAuthorityArgs = decode_args(&ix.data);
+        assert_eq!(args.swap_authority, swap_authority.to_bytes());
 
         let ix = set_nav_authority(admin, vault, nav_authority).unwrap();
         let args: SetNavAuthorityArgs = decode_args(&ix.data);
