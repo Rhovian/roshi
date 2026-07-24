@@ -156,7 +156,6 @@ mod tests {
             ManageArgs {
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
                 account_flags: vec![AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -176,7 +175,6 @@ mod tests {
         let args: ManageArgs = decode_args(&ix.data);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
             vec![AccountFlags {
@@ -221,7 +219,6 @@ mod tests {
                 min_output: 120,
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
                 account_flags: vec![AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -266,7 +263,6 @@ mod tests {
         assert_eq!(args.min_output, 120);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
             vec![AccountFlags {
@@ -306,7 +302,6 @@ mod tests {
                 max_in: 123,
                 sub_account: 7,
                 accounts_start: 0,
-                accounts_len: 1,
                 account_flags: vec![AccountFlags {
                     is_signer: false,
                     is_writable: true,
@@ -341,7 +336,6 @@ mod tests {
         assert_eq!(args.max_in, 123);
         assert_eq!(args.sub_account, 7);
         assert_eq!(args.accounts_start, 0);
-        assert_eq!(args.accounts_len, 1);
         assert_eq!(
             args.account_flags,
             vec![AccountFlags {

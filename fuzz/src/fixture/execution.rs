@@ -70,7 +70,6 @@
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -267,7 +266,6 @@
         let leg = |start: u8, ix_data: Vec<u8>| ManageArgs {
             sub_account: 0,
             accounts_start: start,
-            accounts_len: 3,
             account_flags: transfer_flags(),
             ix_data,
         };
@@ -333,7 +331,6 @@
                 max_in: amount,
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -416,7 +413,6 @@
                 max_in: amount,
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -507,7 +503,6 @@
                 min_output: 0,
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,

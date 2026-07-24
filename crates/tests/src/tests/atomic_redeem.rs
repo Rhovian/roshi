@@ -212,7 +212,6 @@ impl AtomicRedeemFixture {
                 min_output,
                 sub_account: self.sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -467,7 +466,6 @@ fn test_atomic_redeem_rejects_unbound_destination_redirect() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 3,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,
@@ -531,7 +529,6 @@ fn test_atomic_redeem_rejects_instruction_swap_on_bound_route() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 2,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,
@@ -769,7 +766,6 @@ fn test_atomic_redeem_rejects_share_account_in_cpi_metas() {
             min_output: REDEEM_AMOUNT,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 4,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,
@@ -841,7 +837,6 @@ fn test_atomic_redeem_rejects_post_cpi_custody_owner_hijack() {
             min_output: 0,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 2,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,

@@ -63,7 +63,6 @@ pub struct AccountFlags {
 pub struct ManageArgs {
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,
     pub ix_data: Vec<u8>,
 }
@@ -74,7 +73,6 @@ pub struct AtomicRedeemArgs {
     pub min_output: u64,
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,
     pub ix_data: Vec<u8>,
 }
@@ -85,7 +83,6 @@ pub struct SwapArgs {
     pub max_in: u64,
     pub sub_account: u8,
     pub accounts_start: u8,
-    pub accounts_len: u8,
     pub account_flags: Vec<AccountFlags>,
     pub ix_data: Vec<u8>,
 }

@@ -76,7 +76,6 @@ where
         context.cpi_accounts,
         &validated_accounts,
         args.accounts_start,
-        args.accounts_len,
         args.account_flags,
         args.ix_data,
     )?;

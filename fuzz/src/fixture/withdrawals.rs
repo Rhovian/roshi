@@ -156,7 +156,6 @@
                 min_output: 0,
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,

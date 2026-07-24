@@ -142,7 +142,6 @@ impl SwapFixture {
                 max_in,
                 sub_account: self.sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -597,7 +596,6 @@ fn swap_ix_with_valuation(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len: 3,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,
@@ -1064,7 +1062,6 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -1223,7 +1220,6 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                 max_in: u64::MAX,
                 sub_account: sub_account_index,
                 accounts_start: 0,
-                accounts_len: 3,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -1360,7 +1356,6 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
             max_in: u64::MAX,
             sub_account: 0,
             accounts_start: 0,
-            accounts_len: 3,
             account_flags: vec![
                 AccountFlags {
                     is_signer: false,
@@ -1456,7 +1451,6 @@ fn swap_ix_route(
             is_writable: meta.is_writable,
         })
         .collect();
-    let accounts_len = route_metas.len() as u8;
     let mut cpi_accounts = route_metas;
     cpi_accounts.push(AccountMeta::new_readonly(fixture.token_program, false));
 
@@ -1474,7 +1468,6 @@ fn swap_ix_route(
             max_in: u64::MAX,
             sub_account: fixture.sub_account_index,
             accounts_start: 0,
-            accounts_len,
             account_flags,
             ix_data,
         },

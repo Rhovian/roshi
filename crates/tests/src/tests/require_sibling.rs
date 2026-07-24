@@ -175,7 +175,6 @@ impl SiblingFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,

@@ -104,7 +104,6 @@ impl SystemTransferManageFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -143,7 +142,6 @@ impl SystemTransferManageFixture {
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -318,7 +316,6 @@ fn test_manage_rejects_dirty_custody_before_cpi() {
                 ManageArgs {
                     sub_account: 0,
                     accounts_start: 0,
-                    accounts_len: 3,
                     account_flags: vec![
                         AccountFlags {
                             is_signer: false,
@@ -386,7 +383,6 @@ fn test_manage_rejects_post_cpi_custody_owner_hijack() {
                 ManageArgs {
                     sub_account: 0,
                     accounts_start: 0,
-                    accounts_len: 2,
                     account_flags: vec![
                         AccountFlags {
                             is_signer: false,
@@ -426,6 +422,59 @@ fn test_manage_authority_check() {
     assert_instruction_error(
         send(&mut svm, fixture.manage_ix(wrong.pubkey()), &wrong),
         InstructionError::IllegalOwner,
+    );
+}
+
+#[test]
+fn test_manage_rejects_flags_longer_than_cpi_section() {
+    let Some((mut svm, authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SystemTransferManageFixture::install(&mut svm, &authority);
+    fixture.install_authorized_action(&mut svm);
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            roshi_client::instruction::manage(
+                authority.pubkey(),
+                fixture.vault.address,
+                fixture.sub_account_pda,
+                fixture.action_pda,
+                vec![
+                    AccountMeta::new(fixture.sub_account_pda, false),
+                    AccountMeta::new(fixture.scratch, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                ],
+                ManageArgs {
+                    sub_account: 0,
+                    accounts_start: 0,
+                    account_flags: vec![
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: true,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                        AccountFlags {
+                            is_signer: false,
+                            is_writable: false,
+                        },
+                    ],
+                    ix_data: fixture.transfer_data.clone(),
+                },
+            )
+            .unwrap(),
+            &authority,
+        ),
+        InstructionError::NotEnoughAccountKeys,
     );
 }
 
@@ -689,7 +738,6 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 0,
-                accounts_len: 2,
                 account_flags: vec![
                     AccountFlags {
                         is_signer: false,
@@ -705,7 +753,6 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
             ManageArgs {
                 sub_account: 0,
                 accounts_start: 3,
-                accounts_len: 1,
                 account_flags: vec![AccountFlags {
                     is_signer: false,
                     is_writable: false,

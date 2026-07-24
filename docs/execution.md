@@ -122,7 +122,6 @@ Instruction data:
 Manage {
     sub_account,
     accounts_start,
-    accounts_len,
     account_flags,
     ix_data,
 }
@@ -211,7 +210,6 @@ Each action specifies:
 IndexedActionArgs {
     sub_account,
     accounts_start,
-    accounts_len,
     account_flags,
     ix_data,
 }
@@ -231,9 +229,9 @@ cpi_accounts_base = 2 + actions.len() * 2
 
 For action `i`, Roshi uses account `2 + i * 2` as that action's subaccount PDA
 and account `3 + i * 2` as that action's Action PDA. It then uses
-`accounts_start` and `accounts_len` as offsets into the shared CPI account
-section. The target CPI program account for that action must appear immediately
-after its selected CPI account slice.
+`accounts_start` and `account_flags.len()` as offsets into the shared CPI
+account section. The target CPI program account for that action must appear
+immediately after its selected CPI account slice.
 
 This lets multiple actions share the same CPI accounts by overlapping their
 account slices.
