@@ -67,32 +67,72 @@ the final argument to choose a different output file.
 ## Fuzzing
 
 `fuzz/` is a [crucible](https://github.com/asymmetric-research/crucible)
-invariant-fuzzing harness (LibAFL + LiteSVM, sBPF edge-coverage guided). It drives
-the real program through `roshi-client` instructions and, after every mutated
-action sequence, checks accounting invariants — base-token conservation (the
-program mints/burns only shares, never base), withdrawal-queue accounting
-(`requested_withdrawal_shares` and `pending_withdrawal_assets` reconcile against
-the live tickets), high-watermark monotonicity (never regresses, so performance
-fees can't be double-charged), and NAV-report conservation (right after a report,
-net `total_assets` + accrued fees + pending withdrawals equals gross NAV, pinning
-the fee/liability arithmetic). Alongside the core deposit/redeem/NAV
-loop it exercises the arbitrary-CPI surface: pre-authorized `manage`,
-`manage_batch`, `swap`, and `atomic_redeem` CPIs drive the action-authorization
-machinery (`authorize_action`, `validate_authorized_cpi`, sub-account
-`invoke_signed`, the custody clean-check, swap input/output bounds, and the
-atomic-redeem entitlement/unwind-into-custody checks with share burn). Two
-negative invariants pin authorization: a tampered `manage` asserts an unpinned
-destination can never move custody funds, and `revoke_action` is exercised by
-revoking an action and asserting a `manage` against it then moves nothing. The
-vault runs **private** over a real access merkle tree: members deposit with
-their proofs, `set_vault_access` toggles the access mode, and a non-whitelisted
-outsider asserts a private vault never admits a deposit. The harness also covers
-Pyth-priced non-base assets, Token-2022 registered assets, extended Token-2022
-mint rejection, split custody, role rotation, config updates, fee correctness,
-and flat-NAV no-overpay. A minimized seed corpus is committed in `fuzz/corpus`
-and loaded by default. The engine is a fork pinned as the `vendor/crucible`
-submodule (litesvm 0.12 / solana 4.x, so its instruction types match the
-program's).
+invariant-fuzzing harness that uses LibAFL and LiteSVM. It sends `roshi-client`
+instructions to the real program. sBPF edge coverage on the LiteSVM execution
+guides the fuzzer, so the program needs no instrumentation. After each mutated
+action sequence, `invariant_core` evaluates the invariants below.
+
+**Post-sequence invariants**
+
+- Base tokens remain conserved. The program mints and burns shares only.
+- Each registered non-base asset stays conserved in its own units. Its atoms
+  never enter the base sum; deposits credit `total_assets` in priced base terms.
+- Neither `performance_fee_bps` nor `withdrawal_buffer_bps` exceeds `MAX_BPS`.
+- `high_watermark` never decreases, so the same gains cannot incur performance
+  fees twice.
+- `requested_withdrawal_shares` matches shares on unstruck live tickets.
+  `pending_withdrawal_assets` matches assets owed by all live tickets.
+
+After every accepted `report_nav`, net `total_assets` plus `fees_payable` plus
+`pending_withdrawal_assets` equals gross NAV. A mismatch exposes an error in the
+fee or liability arithmetic.
+
+**What the harness exercises**
+
+- The core loop runs deposits, redeems, NAV reports, and withdrawal settlement.
+- `manage`, `manage_batch`, `swap`, and `atomic_redeem` run arbitrary CPIs that
+  the program authorizes in advance.
+  - `authorize_action` creates the authorization. `validate_authorized_cpi`
+    validates it, and sub-account `invoke_signed` executes the CPI.
+  - `manage` and `manage_batch` scan every writable custody account for the
+    sub-account before a CPI and re-check it after. No route can leave a sibling
+    custody with a delegate or close authority for a later drain.
+  - `swap` must stay within its realized input and output bounds.
+  - `atomic_redeem` must stay within the share entitlement. Its unwind must land
+    in custody before the program burns the shares.
+- A tampered `manage` cannot move custody funds to an unpinned destination.
+- After `revoke_action`, a `manage` call for the same action moves nothing.
+- The vault starts in private mode over a real access merkle tree. Members
+  submit proofs with their deposits, so the core loop passes through the ACL by
+  default. `set_vault_access` toggles the mode; private mode rejects a
+  non-whitelisted outsider.
+- Actions for non-base deposits use a mock Pyth feed. At a clean first deposit,
+  they accept a fresh price. They reject a stale price, an over-wide confidence
+  interval, or a disabled asset without moving tokens.
+- Other actions deposit and swap a registered bare Token-2022 asset.
+- A separate action proves that `initialize_asset` rejects a transfer-fee
+  Token-2022 mint without creating its Asset PDA.
+- Rotation actions prove that each previous signer loses its former instruction.
+  They cover the program authority, vault admin, strategist, swap authority,
+  NAV authority, and withdrawal authority.
+- Configuration actions call `update_vault_config` or `set_pause_flags`. Through
+  `update_vault_config`, one action replaces the full profile for economic
+  controls.
+- Separate sub-accounts hold deposit and withdrawal custody. `report_nav` counts
+  both, but `process_withdrawals` can pay only from withdrawal custody.
+- Fee actions preserve exact accounting. `collect_fees` and `write_down_fees`
+  reject amounts above `fees_payable` without changing the vault or token
+  balances.
+- A deposit followed immediately by `atomic_redeem` at flat NAV never returns
+  more base than the user deposited.
+
+A minimized seed corpus is committed in `fuzz/corpus`. The `fuzz`,
+`fuzz-stateful`, and `fuzz-cov` recipes pass it with `--corpus-in`.
+The `vendor/crucible` git submodule records a specific revision of the engine
+fork. This fork pins `litesvm` 0.12 and `solana-pubkey` 4.x. The harness uses
+`solana-instruction` 3.4 for `Instruction` and `solana-pubkey` 4.2 for `Pubkey`.
+Both versions satisfy `roshi-client`'s 3.3 and 4.1 constraints, so the types
+unify.
 
 One-time setup:
 
@@ -120,9 +160,9 @@ just fuzz-tmin-all                        # minimize all recorded crashes
 just fuzz-regressions                     # replay committed regression inputs
 ```
 
-When a crash is worth keeping, minimize it, fix the bug, then commit the
-minimized input under `fuzz/regressions/invariant_core/`. A fixed regression
-should no longer reproduce when `just fuzz-regressions` replays it.
+When a crash is worth keeping, minimize the input and fix the bug. Then commit
+the minimized input under `fuzz/regressions/invariant_core/`. After the fix,
+`just fuzz-regressions` must not reproduce the failure.
 
 ## Design Docs
 
