@@ -239,52 +239,78 @@ const fn read_leg<const N: usize>(legs: &[u8; LEGS_SIZE], offset: usize) -> [u8;
 
 impl SwitchboardOracleConfig {
     const fn to_leg_bytes(self) -> [u8; 112] {
-        // SAFETY: `repr(C)` lays out the fields as quote account `0..32`,
-        // queue account `32..64`, feed id `64..96`, max age `96..104`, price
-        // decimals `104`, and explicit padding `105..112`. The u64 starts on
-        // an 8-byte boundary and the explicit tail fills the struct to 112
-        // bytes, so there is no implicit or potentially uninitialized padding.
+        // SAFETY: `repr(C)` fixes this byte layout:
+        //
+        // Bytes    Field            Type
+        // 0..32    quote_account    [u8; 32]
+        // 32..64   queue_account    [u8; 32]
+        // 64..96   feed_id          [u8; 32]
+        // 96..104  max_age_slots    u64
+        // 104..105 price_decimals   u8
+        // 105..112 _padding         [u8; 7]
+        //
+        // `max_age_slots` begins at an 8-byte boundary, and `_padding` extends
+        // the initialized fields to the struct's 112-byte aligned size. There
+        // is no implicit or potentially uninitialized padding.
         unsafe { core::mem::transmute(self) }
     }
 
     const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
-        // SAFETY: the 112-byte layout is described above. Every field is a
-        // byte array, u64, or u8, so every possible input bit pattern is a
-        // valid `SwitchboardOracleConfig` value.
+        // SAFETY: the layout above accounts for all 112 input bytes. Every
+        // field is a byte array, u64, or u8, each of which accepts every bit
+        // pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
 
 impl PythOracleConfig {
     const fn to_leg_bytes(self) -> [u8; 80] {
-        // SAFETY: `repr(C)` lays out the fields as feed id `0..32`, pinned
-        // update account `32..64`, max age `64..72`, confidence bps `72..74`,
-        // price decimals `74`, and explicit padding `75..80`. The aligned
-        // integer fields and explicit tail leave no implicit padding.
+        // SAFETY: `repr(C)` fixes this byte layout:
+        //
+        // Bytes   Field                   Type
+        // 0..32   feed_id                 [u8; 32]
+        // 32..64  price_update_account    [u8; 32]
+        // 64..72  max_age_seconds         u64
+        // 72..74  max_confidence_bps      u16
+        // 74..75  price_decimals          u8
+        // 75..80  _padding                [u8; 5]
+        //
+        // The integer fields begin at their required alignments, and
+        // `_padding` extends the initialized fields to the struct's 80-byte
+        // aligned size. There is no implicit or uninitialized padding.
         unsafe { core::mem::transmute(self) }
     }
 
     const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
-        // SAFETY: the 80-byte layout is described above. Every field is a byte
-        // array, u64, u16, or u8, so every possible input bit pattern is a
-        // valid `PythOracleConfig` value.
+        // SAFETY: the layout above accounts for all 80 input bytes. Every field
+        // is a byte array, u64, u16, or u8, each of which accepts every bit
+        // pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
 
 impl ScopeOracleConfig {
     const fn to_leg_bytes(self) -> [u8; 80] {
-        // SAFETY: `repr(C)` lays out the fields as prices account `0..32`,
-        // price-info account `32..64`, max age `64..72`, price index `72..74`,
-        // price type `74`, and explicit padding `75..80`. The aligned integer
-        // fields and explicit tail leave no implicit padding.
+        // SAFETY: `repr(C)` fixes this byte layout:
+        //
+        // Bytes   Field                 Type
+        // 0..32   prices_account        [u8; 32]
+        // 32..64  price_info_account    [u8; 32]
+        // 64..72  max_age_seconds       u64
+        // 72..74  price_index           u16
+        // 74..75  price_type            u8
+        // 75..80  _padding              [u8; 5]
+        //
+        // The integer fields begin at their required alignments, and
+        // `_padding` extends the initialized fields to the struct's 80-byte
+        // aligned size. There is no implicit or uninitialized padding.
         unsafe { core::mem::transmute(self) }
     }
 
     const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
-        // SAFETY: the 80-byte layout is described above. Every field is a byte
-        // array, u64, u16, or u8, so every possible input bit pattern is a
-        // valid `ScopeOracleConfig` value.
+        // SAFETY: the layout above accounts for all 80 input bytes. Every field
+        // is a byte array, u64, u16, or u8, each of which accepts every bit
+        // pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
