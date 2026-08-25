@@ -98,12 +98,20 @@
         else {
             return false;
         };
+        let Ok(effective_total_assets) = vault.effective_total_assets(self.unix_timestamp()) else {
+            return false;
+        };
+        if economic_share_supply != 0
+            && share_price_from_assets(effective_total_assets, economic_share_supply) == Ok(0)
+        {
+            return false;
+        }
         let Some(base_atoms) = amount.checked_mul(2) else {
             return false;
         };
         shares_for_deposit(
             base_atoms,
-            vault.total_assets,
+            effective_total_assets,
             economic_share_supply,
             BASE_DECIMALS,
         )

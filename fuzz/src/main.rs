@@ -18,7 +18,7 @@ use roshi::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
         PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
-    oracle::{OracleConfig, PythOracleConfig},
+    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         asset::Asset,
@@ -34,7 +34,9 @@ use roshi::{
 use roshi_interface::{
     access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
     find_share_mint_address,
-    math::{assets_for_redeem, performance_fee_for_nav, shares_for_deposit},
+    math::{
+        assets_for_redeem, performance_fee_for_nav, share_price_from_assets, shares_for_deposit,
+    },
 };
 use solana_account::Account;
 use solana_instruction::AccountMeta;
@@ -47,9 +49,9 @@ const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
 use support::{
-    mint_supply, pyth_price_data, set_ata, set_ata_with_program, set_mint, set_pyth_price,
-    set_token_2022_mint, set_token_account, set_token_account_with_program,
-    set_transfer_fee_token_2022_mint, token_balance,
+    mint_supply, pyth_price_data, scope_oracle_data, set_ata, set_ata_with_program, set_mint,
+    set_pyth_price, set_scope_oracle, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, set_transfer_fee_token_2022_mint, token_balance,
 };
 
 const NUM_USERS: usize = 3;
@@ -83,6 +85,17 @@ const PYTH_MAX_AGE_SECS: u64 = 64;
 /// Confidence ceiling: 5% of price. The setup price has conf 0 (passes); the
 /// wide-conf negative installs conf == price (10_000 bps, fails).
 const PYTH_MAX_CONF_BPS: u16 = 500;
+
+// Mock Scope feed for fuzzing the same registered asset through a second
+// provider. The action restores Pyth after each case so existing sequences
+// remain composable.
+const SCOPE_PROGRAM: Pubkey =
+    solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
+const SCOPE_FEED_ID: [u8; 32] = [8u8; 32];
+const SCOPE_PRICE_INDEX: u16 = 445;
+const SCOPE_MAX_AGE_SECS: u64 = 64;
+const SCOPE_PRICE_TYPE: u8 = 38;
+const SCOPE_FROZEN_FLAG: u8 = 0x80;
 
 #[derive(Clone)]
 struct FuzzUser {
@@ -179,6 +192,10 @@ struct RoshiFixture {
     asset_pda: Pubkey,
     asset_custody: Pubkey,
     pyth_account: Pubkey,
+    /// Mock Kamino Scope accounts used when fuzz actions temporarily switch
+    /// the registered asset from Pyth to Scope.
+    scope_prices_account: Pubkey,
+    scope_mappings_account: Pubkey,
     /// Every asset-mint token account, for the asset conservation sum. A
     /// separate conserved quantity from base: non-base deposits move asset
     /// tokens here and credit `total_assets` in *priced base terms*, so asset

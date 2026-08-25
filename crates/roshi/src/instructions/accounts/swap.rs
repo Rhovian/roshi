@@ -9,7 +9,10 @@ use super::{
 };
 use crate::{
     instructions::{token, SwapArgs},
-    oracle::{OracleConfig, OracleKind, OraclePrice},
+    oracle::{
+        OracleConfig, OracleKind, OraclePrice, PythOracleConfig, ScopeOracleConfig,
+        SwitchboardOracleConfig,
+    },
     state::{
         action::{Action, ActionScope},
         asset::Asset,
@@ -178,7 +181,7 @@ where
     }
 
     /// Value the realized `(spent, received)` amounts in base atoms, reading
-    /// each oracle feed exactly once.
+    /// each reuse-compatible oracle configuration exactly once.
     pub(crate) fn values(
         &self,
         vault: &Vault,
@@ -186,13 +189,12 @@ where
         received: u64,
         clock: &Clock,
     ) -> Result<(u64, u64), ProgramError> {
-        // Each oracle feed is read exactly once per swap. The base leg is read
-        // here; an endpoint that shares the base feed (a routed asset that *is*
-        // the base) reuses that price, and the output endpoint reuses the input
-        // price when they share a feed. Deduping at the raw feed-price level
-        // forbids valuing one feed against two independently supplied updates —
-        // `value_in_base_atoms` still applies each leg's own routed/direct logic,
-        // so a routed leg that is the base prices at exactly 1.0.
+        // The base leg is read here; an endpoint may reuse it only when both
+        // active oracle configurations are identical. The output endpoint may
+        // likewise reuse the input price. This forbids valuing one feed against
+        // two independently supplied updates without skipping a leg's own
+        // verification policy. `value_in_base_atoms` still applies each leg's
+        // routed/direct logic, so a routed leg that is the base prices at 1.0.
         let base_feed = match self.base_leg {
             Some(_) => Some(oracle_feed_identity(&vault.base_oracle)?),
             None => None,
@@ -290,10 +292,10 @@ where
         }
     }
 
-    /// This endpoint's oracle feed identity `(kind, feed_id, index)`, or `None`
-    /// for the base mint. Two endpoints sharing a feed must price against one
-    /// update.
-    fn feed_identity(&self) -> Result<Option<(OracleKind, [u8; 32], u16)>, ProgramError> {
+    /// This endpoint's oracle configuration identity, or `None` for the base
+    /// mint. Reuse is safe only when every setting that verifies or interprets
+    /// a price agrees; otherwise each leg must validate its own configuration.
+    fn feed_identity(&self) -> Result<Option<OracleFeedIdentity>, ProgramError> {
         match self {
             Self::Base => Ok(None),
             Self::Asset { asset, .. } => Ok(Some(oracle_feed_identity(&asset.oracle)?)),
@@ -350,25 +352,25 @@ where
     }
 }
 
-/// An oracle config's feed identity `(kind, feed_id, index)`: the key a single
-/// swap dedups on so one feed is never priced against two independent updates.
-/// Inline-feed kinds are identified by feed id alone (index 0); Scope entries
-/// share one prices account, so the entry index disambiguates them.
-fn oracle_feed_identity(
-    config: &OracleConfig,
-) -> Result<(OracleKind, [u8; 32], u16), ProgramError> {
-    let kind = config
+/// The full active oracle configuration used to decide whether two swap legs
+/// may reuse one verified price. In particular, Scope's feed binding, program
+/// owner, and freshness bound are all part of its identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OracleFeedIdentity {
+    Switchboard(SwitchboardOracleConfig),
+    Pyth(PythOracleConfig),
+    Scope(ScopeOracleConfig),
+}
+
+fn oracle_feed_identity(config: &OracleConfig) -> Result<OracleFeedIdentity, ProgramError> {
+    match config
         .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let (feed_id, index) = match kind {
-        OracleKind::Pyth => (config.pyth_config().feed_id, 0),
-        OracleKind::Switchboard => (config.switchboard_config().feed_id, 0),
-        OracleKind::Scope => {
-            let scope = config.scope_config();
-            (scope.prices_account, scope.price_index)
-        }
-    };
-    Ok((kind, feed_id, index))
+        .map_err(|_| ProgramError::InvalidAccountData)?
+    {
+        OracleKind::Switchboard => Ok(OracleFeedIdentity::Switchboard(config.switchboard_config())),
+        OracleKind::Pyth => Ok(OracleFeedIdentity::Pyth(config.pyth_config())),
+        OracleKind::Scope => Ok(OracleFeedIdentity::Scope(config.scope_config())),
+    }
 }
 
 /// Accounts one oracle leg consumes (Pyth: 1 price update; Switchboard:
@@ -384,5 +386,37 @@ fn leg_account_count(config: &OracleConfig) -> Result<usize, ProgramError> {
         OracleKind::Pyth => Ok(1),
         OracleKind::Switchboard => Ok(4),
         OracleKind::Scope => Ok(2),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope_config(
+        scope_program: [u8; 32],
+        feed_id: [u8; 32],
+        max_age_seconds: u64,
+    ) -> OracleConfig {
+        OracleConfig::scope(ScopeOracleConfig::new(
+            scope_program,
+            [2; 32],
+            feed_id,
+            445,
+            max_age_seconds,
+        ))
+    }
+
+    #[test]
+    fn scope_dedup_requires_matching_validation_policy() {
+        let base = oracle_feed_identity(&scope_config([1; 32], [3; 32], 30)).unwrap();
+
+        for config in [
+            scope_config([9; 32], [3; 32], 30),
+            scope_config([1; 32], [8; 32], 30),
+            scope_config([1; 32], [3; 32], 31),
+        ] {
+            assert_ne!(oracle_feed_identity(&config).unwrap(), base);
+        }
     }
 }

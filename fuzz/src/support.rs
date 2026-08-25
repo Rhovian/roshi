@@ -261,6 +261,86 @@ pub fn set_pyth_price(
     .unwrap();
 }
 
+/// Kamino Scope account sizes and discriminators pinned by the on-chain reader.
+const SCOPE_PRICES_LEN: usize = 28_712;
+const SCOPE_PRICES_DISCRIMINATOR: [u8; 8] = [89, 128, 118, 221, 6, 72, 180, 146];
+const SCOPE_MAPPINGS_LEN: usize = 29_704;
+const SCOPE_MAPPINGS_DISCRIMINATOR: [u8; 8] = [40, 244, 110, 80, 255, 214, 243, 188];
+const SCOPE_PRICES_OFFSET: usize = 40;
+const SCOPE_PRICE_SIZE: usize = 56;
+const SCOPE_PRICE_INFO_OFFSET: usize = 8;
+const SCOPE_PRICE_TYPES_OFFSET: usize = 16_392;
+
+/// Build the two Scope account payloads consumed by Roshi for one entry.
+/// Kept in the standalone fuzz workspace so mid-action account rewrites can go
+/// through `TestContext::write_account` and participate in snapshot restore.
+#[allow(clippy::too_many_arguments)]
+pub fn scope_oracle_data(
+    declared_mappings: Pubkey,
+    price_index: u16,
+    value: u64,
+    exponent: u64,
+    timestamp: u64,
+    price_type: u8,
+    mapped_feed_id: [u8; 32],
+) -> (Vec<u8>, Vec<u8>) {
+    let index = usize::from(price_index);
+
+    let mut prices = vec![0u8; SCOPE_PRICES_LEN];
+    prices[..8].copy_from_slice(&SCOPE_PRICES_DISCRIMINATOR);
+    prices[8..40].copy_from_slice(declared_mappings.as_ref());
+    let price_offset = SCOPE_PRICES_OFFSET + SCOPE_PRICE_SIZE * index;
+    prices[price_offset..price_offset + 8].copy_from_slice(&value.to_le_bytes());
+    prices[price_offset + 8..price_offset + 16].copy_from_slice(&exponent.to_le_bytes());
+    prices[price_offset + 24..price_offset + 32].copy_from_slice(&timestamp.to_le_bytes());
+
+    let mut mappings = vec![0u8; SCOPE_MAPPINGS_LEN];
+    mappings[..8].copy_from_slice(&SCOPE_MAPPINGS_DISCRIMINATOR);
+    let feed_offset = SCOPE_PRICE_INFO_OFFSET + 32 * index;
+    mappings[feed_offset..feed_offset + 32].copy_from_slice(&mapped_feed_id);
+    mappings[SCOPE_PRICE_TYPES_OFFSET + index] = price_type;
+
+    (prices, mappings)
+}
+
+/// Install a valid mock Scope account pair during fixture setup.
+#[allow(clippy::too_many_arguments)]
+pub fn set_scope_oracle(
+    svm: &mut LiteSVM,
+    scope_program: Pubkey,
+    prices_account: Pubkey,
+    mappings_account: Pubkey,
+    price_index: u16,
+    feed_id: [u8; 32],
+    value: u64,
+    exponent: u64,
+    timestamp: u64,
+) {
+    let (prices, mappings) = scope_oracle_data(
+        mappings_account,
+        price_index,
+        value,
+        exponent,
+        timestamp,
+        38, // OracleType::ChainlinkExchangeRate, unfrozen
+        feed_id,
+    );
+    for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
+        let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+        svm.set_account(
+            address,
+            Account {
+                lamports,
+                data,
+                owner: scope_program,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+    }
+}
+
 /// Read the `amount` field of an SPL token account. Every account the harness
 /// reads is installed in `setup()`, so a missing/short account is a harness bug,
 /// not a 0 balance — fail loudly rather than silently masking it.

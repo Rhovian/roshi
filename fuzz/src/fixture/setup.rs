@@ -252,11 +252,11 @@
             ActionScope::Manager,
         );
 
-        // 4f. Register a non-base asset priced through a mock Pyth feed. The
-        //     custody is the sub-account's ATA for the asset mint; the price
-        //     account is installed fresh (publish_time == now == 0) so deposits
-        //     price through `oracle.rs` from the first action. This exercises
-        //     `initialize_asset` for real (admin-signed, PDA-funded).
+        // 4f. Register a non-base asset through Scope, then switch it to the
+        //     mock Pyth feed used by the general action set. Scope-specific
+        //     actions switch it back temporarily. This exercises both oracle
+        //     configs through real admin instructions without duplicating the
+        //     asset mint, custody, users, or conservation state.
         let asset_mint = Pubkey::new_unique();
         set_mint(&mut ctx.svm, asset_mint, &operator.pubkey(), ASSET_DECIMALS);
         let asset_custody = set_ata(&mut ctx.svm, &sub_account, &asset_mint, 0);
@@ -270,6 +270,19 @@
             PYTH_EXPONENT,
             0,
         );
+        let scope_prices_account = Pubkey::new_unique();
+        let scope_mappings_account = Pubkey::new_unique();
+        set_scope_oracle(
+            &mut ctx.svm,
+            SCOPE_PROGRAM,
+            scope_prices_account,
+            scope_mappings_account,
+            SCOPE_PRICE_INDEX,
+            SCOPE_FEED_ID,
+            200_000_000_000_000_000,
+            17,
+            0,
+        );
         let (asset_pda, _) = Asset::find_address(&vault, &asset_mint);
         submit_ok(
             &mut ctx,
@@ -280,11 +293,12 @@
                 asset_pda,
                 InitializeAssetArgs {
                     asset_mint: asset_mint.to_bytes(),
-                    oracle: OracleConfig::pyth(PythOracleConfig::new(
-                        PYTH_FEED_ID,
-                        PYTH_PRICE_DECIMALS,
-                        PYTH_MAX_AGE_SECS,
-                        PYTH_MAX_CONF_BPS,
+                    oracle: OracleConfig::scope(ScopeOracleConfig::new(
+                        SCOPE_PROGRAM.to_bytes(),
+                        scope_prices_account.to_bytes(),
+                        SCOPE_FEED_ID,
+                        SCOPE_PRICE_INDEX,
+                        SCOPE_MAX_AGE_SECS,
                     )),
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
@@ -294,7 +308,29 @@
             )
             .unwrap(),
             &[&operator],
-            "initialize_asset",
+            "initialize_asset(scope)",
+        );
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::update_asset(
+                operator.pubkey(),
+                vault,
+                asset_pda,
+                UpdateAssetArgs {
+                    oracle: OracleConfig::pyth(PythOracleConfig::new(
+                        PYTH_FEED_ID,
+                        PYTH_PRICE_DECIMALS,
+                        PYTH_MAX_AGE_SECS,
+                        PYTH_MAX_CONF_BPS,
+                    )),
+                    enabled: true,
+                    routed: false,
+                    deposit_cap_atoms: u64::MAX,
+                },
+            )
+            .unwrap(),
+            &[&operator],
+            "update_asset(pyth)",
         );
 
         // 4g. Register a bare Token-2022 asset. Extended Token-2022 mints are
@@ -518,6 +554,8 @@
             asset_pda,
             asset_custody,
             pyth_account,
+            scope_prices_account,
+            scope_mappings_account,
             asset_accounts,
             initial_asset,
             token_2022_asset_mint,

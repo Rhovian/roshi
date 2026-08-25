@@ -290,6 +290,7 @@ impl ScopeOracleConfig {
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct OracleConfig {
+    #[codama(type = fixed_size(number(u8), 192))]
     legs: [u8; LEGS_SIZE],
     kind: u8,
     _padding: [u8; 7],
