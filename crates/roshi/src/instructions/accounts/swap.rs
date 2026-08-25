@@ -353,8 +353,8 @@ where
 }
 
 /// The full active oracle configuration used to decide whether two swap legs
-/// may reuse one verified price. In particular, Scope's feed binding, program
-/// owner, and freshness bound are all part of its identity.
+/// may reuse one verified price. In particular, Scope's source binding,
+/// program owner, and freshness bound are all part of its identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OracleFeedIdentity {
     Switchboard(SwitchboardOracleConfig),
@@ -395,13 +395,15 @@ mod tests {
 
     fn scope_config(
         scope_program: [u8; 32],
-        feed_id: [u8; 32],
+        price_info_account: [u8; 32],
+        price_type: u8,
         max_age_seconds: u64,
     ) -> OracleConfig {
         OracleConfig::scope(ScopeOracleConfig::new(
             scope_program,
             [2; 32],
-            feed_id,
+            price_info_account,
+            price_type,
             445,
             max_age_seconds,
         ))
@@ -409,12 +411,13 @@ mod tests {
 
     #[test]
     fn scope_dedup_requires_matching_validation_policy() {
-        let base = oracle_feed_identity(&scope_config([1; 32], [3; 32], 30)).unwrap();
+        let base = oracle_feed_identity(&scope_config([1; 32], [3; 32], 26, 30)).unwrap();
 
         for config in [
-            scope_config([9; 32], [3; 32], 30),
-            scope_config([1; 32], [8; 32], 30),
-            scope_config([1; 32], [3; 32], 31),
+            scope_config([9; 32], [3; 32], 26, 30),
+            scope_config([1; 32], [8; 32], 26, 30),
+            scope_config([1; 32], [3; 32], 27, 30),
+            scope_config([1; 32], [3; 32], 26, 31),
         ] {
             assert_ne!(oracle_feed_identity(&config).unwrap(), base);
         }

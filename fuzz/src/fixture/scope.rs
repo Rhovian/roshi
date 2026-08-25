@@ -11,7 +11,8 @@ fn scope_config(&self, price_index: u16) -> OracleConfig {
     OracleConfig::scope(ScopeOracleConfig::new(
         SCOPE_PROGRAM.to_bytes(),
         self.scope_prices_account.to_bytes(),
-        SCOPE_FEED_ID,
+        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_PRICE_TYPE,
         price_index,
         SCOPE_MAX_AGE_SECS,
     ))
@@ -81,7 +82,7 @@ fn write_scope_pair(
     exponent: u64,
     timestamp: u64,
     price_type: u8,
-    mapped_feed_id: [u8; 32],
+    mapped_price_info_account: [u8; 32],
     prices_owner: Pubkey,
     mappings_owner: Pubkey,
     malformed_prices: bool,
@@ -94,7 +95,7 @@ fn write_scope_pair(
         exponent,
         timestamp,
         price_type,
-        mapped_feed_id,
+        mapped_price_info_account,
     );
     if malformed_prices {
         prices[0] ^= 0xff;

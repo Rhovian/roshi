@@ -497,9 +497,9 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
 }
 
 /// Install a vault plus a non-base asset priced through a mock Scope oracle at
-/// 2.0 base per whole asset token (value 2 * 10^17 at exp 17, the Scope
-/// exchange-rate scale), with the entry's observation `age_seconds` behind the
-/// cluster clock. Returns everything the deposit instruction needs.
+/// 2.0 base per whole asset token (value 2 * 10^17 at exp 17), with the entry's
+/// observation `age_seconds` behind the cluster clock. Returns everything the
+/// deposit instruction needs.
 fn install_scope_priced_asset(
     svm: &mut litesvm::LiteSVM,
     age_seconds: u64,
@@ -527,7 +527,8 @@ fn install_scope_priced_asset(
     let scope_program = solana_pubkey::Pubkey::new_unique();
     let prices_account = solana_pubkey::Pubkey::new_unique();
     let mappings_account = solana_pubkey::Pubkey::new_unique();
-    let feed_id = [7u8; 32];
+    let price_info_account = [7u8; 32];
+    let price_type = 26;
     let price_index = 445;
 
     fund(svm, &vault.roles.admin);
@@ -543,7 +544,8 @@ fn install_scope_priced_asset(
                 oracle: OracleConfig::scope(ScopeOracleConfig::new(
                     scope_program.to_bytes(),
                     prices_account.to_bytes(),
-                    feed_id,
+                    price_info_account,
+                    price_type,
                     price_index,
                     300,
                 )),
@@ -563,7 +565,8 @@ fn install_scope_priced_asset(
         prices_account,
         mappings_account,
         price_index,
-        feed_id,
+        price_info_account,
+        price_type,
         200_000_000_000_000_000, // 2.0 at exp 17
         17,
         NOW as u64 - age_seconds,

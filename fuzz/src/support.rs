@@ -282,7 +282,7 @@ pub fn scope_oracle_data(
     exponent: u64,
     timestamp: u64,
     price_type: u8,
-    mapped_feed_id: [u8; 32],
+    mapped_price_info_account: [u8; 32],
 ) -> (Vec<u8>, Vec<u8>) {
     let index = usize::from(price_index);
 
@@ -296,8 +296,9 @@ pub fn scope_oracle_data(
 
     let mut mappings = vec![0u8; SCOPE_MAPPINGS_LEN];
     mappings[..8].copy_from_slice(&SCOPE_MAPPINGS_DISCRIMINATOR);
-    let feed_offset = SCOPE_PRICE_INFO_OFFSET + 32 * index;
-    mappings[feed_offset..feed_offset + 32].copy_from_slice(&mapped_feed_id);
+    let price_info_offset = SCOPE_PRICE_INFO_OFFSET + 32 * index;
+    mappings[price_info_offset..price_info_offset + 32]
+        .copy_from_slice(&mapped_price_info_account);
     mappings[SCOPE_PRICE_TYPES_OFFSET + index] = price_type;
 
     (prices, mappings)
@@ -311,7 +312,8 @@ pub fn set_scope_oracle(
     prices_account: Pubkey,
     mappings_account: Pubkey,
     price_index: u16,
-    feed_id: [u8; 32],
+    price_info_account: [u8; 32],
+    price_type: u8,
     value: u64,
     exponent: u64,
     timestamp: u64,
@@ -322,8 +324,8 @@ pub fn set_scope_oracle(
         value,
         exponent,
         timestamp,
-        38, // OracleType::ChainlinkExchangeRate, unfrozen
-        feed_id,
+        price_type,
+        price_info_account,
     );
     for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
         let lamports = svm.minimum_balance_for_rent_exemption(data.len());

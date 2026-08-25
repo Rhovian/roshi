@@ -152,13 +152,11 @@ impl PythOracleConfig {
 
 /// Kamino Scope oracle configuration stored with the asset it prices.
 ///
-/// Scope verifies Chainlink Data Streams reports on-chain (its refresh CPIs
-/// the Chainlink verifier program) and caches the result in its `OraclePrices`
-/// account, so Roshi only reads: `prices_account` pins that account,
-/// `scope_program` pins its owner, and `price_index` selects the entry.
-/// `feed_id` is the 32-byte Chainlink feed id the Scope mapping entry must
-/// still be bound to at read time — Scope stores it verbatim in the mapping's
-/// price-info slot — so an admin rebinding of the index fails loudly.
+/// Scope ingests prices from multiple oracle sources and caches them in its
+/// `OraclePrices` account, so Roshi only reads: `prices_account` pins that
+/// account, `scope_program` pins its owner, and `price_index` selects the
+/// entry. `price_type` and `price_info_account` pin the selected entry's source
+/// mapping, so an admin rebinding of the index fails loudly.
 ///
 /// There is no `price_decimals`: Scope stores a value-dependent exponent
 /// (it maximizes precision, exponent <= 18), which the reader takes from the
@@ -171,31 +169,37 @@ impl PythOracleConfig {
 pub struct ScopeOracleConfig {
     pub scope_program: [u8; 32],
     pub prices_account: [u8; 32],
-    pub feed_id: [u8; 32],
+    pub price_info_account: [u8; 32],
     pub max_age_seconds: u64,
     pub price_index: u16,
-    _padding: [u8; 6],
+    pub price_type: u8,
+    _padding: [u8; 5],
 }
 
 impl ScopeOracleConfig {
     /// Entries in a Scope `OraclePrices` account (`MAX_ENTRIES` in
     /// Kamino-Finance/scope). `price_index` must be below this.
     pub const MAX_ENTRIES: u16 = 512;
+    /// Scope reserves the high bit of a mapping's price type as its frozen
+    /// flag. Configurations identify the underlying type without that flag.
+    pub const MAX_PRICE_TYPE: u8 = 0x7f;
 
     pub const fn new(
         scope_program: [u8; 32],
         prices_account: [u8; 32],
-        feed_id: [u8; 32],
+        price_info_account: [u8; 32],
+        price_type: u8,
         price_index: u16,
         max_age_seconds: u64,
     ) -> Self {
         Self {
             scope_program,
             prices_account,
-            feed_id,
+            price_info_account,
             max_age_seconds,
             price_index,
-            _padding: [0; 6],
+            price_type,
+            _padding: [0; 5],
         }
     }
 }
@@ -267,7 +271,7 @@ impl PythOracleConfig {
 
 impl ScopeOracleConfig {
     const fn to_leg_bytes(self) -> [u8; 112] {
-        // SAFETY: repr(C), size 112 with no padding (96 + 8 + 2 + 6), integer
+        // SAFETY: repr(C), size 112 with no padding (96 + 8 + 2 + 1 + 5), integer
         // fields only.
         unsafe { core::mem::transmute(self) }
     }
@@ -321,11 +325,15 @@ impl OracleConfig {
                 Ok(())
             }
             Ok(OracleKind::Switchboard) => Ok(()),
-            // An active Scope leg must address a real entry; everything else a
-            // bad Scope config could get wrong fails closed at read time
-            // (owner, address, feed, and freshness checks).
+            // An active Scope leg must address a real entry and identify an
+            // underlying price type rather than mapping state. Everything
+            // else fails closed at read time (owner, address, source mapping,
+            // and freshness checks).
             Ok(OracleKind::Scope) => {
-                if self.scope_config().price_index >= ScopeOracleConfig::MAX_ENTRIES {
+                let config = self.scope_config();
+                if config.price_index >= ScopeOracleConfig::MAX_ENTRIES
+                    || config.price_type > ScopeOracleConfig::MAX_PRICE_TYPE
+                {
                     return Err(InvalidOracleConfig);
                 }
                 Ok(())
@@ -437,7 +445,7 @@ mod tests {
     }
 
     fn scope_config() -> ScopeOracleConfig {
-        ScopeOracleConfig::new([5; 32], [6; 32], [7; 32], 445, 300)
+        ScopeOracleConfig::new([5; 32], [6; 32], [7; 32], 26, 445, 300)
     }
 
     #[test]
@@ -559,6 +567,7 @@ mod tests {
             [5; 32],
             [6; 32],
             [7; 32],
+            26,
             ScopeOracleConfig::MAX_ENTRIES,
             300,
         ));
@@ -568,10 +577,21 @@ mod tests {
             [5; 32],
             [6; 32],
             [7; 32],
+            26,
             ScopeOracleConfig::MAX_ENTRIES - 1,
             300,
         ));
         assert_eq!(last_entry.validate(), Ok(()));
+
+        let frozen_type = OracleConfig::scope(ScopeOracleConfig::new(
+            [5; 32],
+            [6; 32],
+            [7; 32],
+            0x80,
+            ScopeOracleConfig::MAX_ENTRIES - 1,
+            300,
+        ));
+        assert_eq!(frozen_type.validate(), Err(InvalidOracleConfig));
     }
 
     #[test]

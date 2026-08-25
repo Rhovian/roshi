@@ -17,7 +17,7 @@ pub fn action_deposit_asset_scope_fresh(
         u64::from(exponent),
         now - age,
         SCOPE_PRICE_TYPE,
-        SCOPE_FEED_ID,
+        SCOPE_PRICE_INFO_ACCOUNT,
         SCOPE_PROGRAM,
         SCOPE_PROGRAM,
         false,
@@ -63,11 +63,12 @@ pub fn action_deposit_asset_scope_rejects_entry(
     amount: u64,
     zero_value: bool,
     bad_exponent: bool,
-    wrong_feed: bool,
+    wrong_price_info_account: bool,
     wrong_type: bool,
     frozen: bool,
 ) -> bool {
-    let no_flag = !(zero_value || bad_exponent || wrong_feed || wrong_type || frozen);
+    let no_flag =
+        !(zero_value || bad_exponent || wrong_price_info_account || wrong_type || frozen);
     let now = self.scope_now();
     self.write_scope_pair(
         self.scope_mappings_account,
@@ -85,7 +86,11 @@ pub fn action_deposit_asset_scope_rejects_entry(
         } else {
             SCOPE_PRICE_TYPE
         },
-        if wrong_feed { [9; 32] } else { SCOPE_FEED_ID },
+        if wrong_price_info_account {
+            [9; 32]
+        } else {
+            SCOPE_PRICE_INFO_ACCOUNT
+        },
         SCOPE_PROGRAM,
         SCOPE_PROGRAM,
         false,
@@ -113,7 +118,7 @@ pub fn action_deposit_asset_scope_rejects_timestamp(
         17,
         timestamp,
         SCOPE_PRICE_TYPE,
-        SCOPE_FEED_ID,
+        SCOPE_PRICE_INFO_ACCOUNT,
         SCOPE_PROGRAM,
         SCOPE_PROGRAM,
         false,
@@ -148,7 +153,7 @@ pub fn action_deposit_asset_scope_rejects_accounts(
         17,
         now,
         SCOPE_PRICE_TYPE,
-        SCOPE_FEED_ID,
+        SCOPE_PRICE_INFO_ACCOUNT,
         if wrong_prices_owner {
             Pubkey::new_unique()
         } else {

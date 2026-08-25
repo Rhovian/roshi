@@ -7,10 +7,10 @@ pub const PYTH_RECEIVER_ID: Pubkey =
     solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 
 /// Install a mock Kamino Scope `OraclePrices` + `OracleMappings` account pair
-/// holding one unfrozen `ChainlinkExchangeRate` entry, matching the layout the
-/// program reads: prices = 8-byte discriminator, mappings pubkey, 512 56-byte
-/// `DatedPrice` entries; mappings = 8-byte discriminator, 512 price-info
-/// pubkeys (the Chainlink feed id, verbatim), then 512 price-type bytes.
+/// holding one unfrozen entry, matching the layout the program reads: prices =
+/// 8-byte discriminator, mappings pubkey, 512 56-byte `DatedPrice` entries;
+/// mappings = 8-byte discriminator, 512 price-info pubkeys, then 512
+/// price-type bytes.
 #[allow(clippy::too_many_arguments)]
 pub fn set_scope_oracle(
     svm: &mut LiteSVM,
@@ -18,7 +18,8 @@ pub fn set_scope_oracle(
     prices_account: Pubkey,
     mappings_account: Pubkey,
     price_index: u16,
-    feed_id: [u8; 32],
+    price_info_account: [u8; 32],
+    price_type: u8,
     value: u64,
     exp: u64,
     unix_timestamp: u64,
@@ -35,8 +36,8 @@ pub fn set_scope_oracle(
 
     let mut mappings = vec![0u8; 29_704];
     mappings[..8].copy_from_slice(&[40, 244, 110, 80, 255, 214, 243, 188]);
-    mappings[8 + 32 * index..8 + 32 * index + 32].copy_from_slice(&feed_id);
-    mappings[16_392 + index] = 38; // OracleType::ChainlinkExchangeRate, not frozen
+    mappings[8 + 32 * index..8 + 32 * index + 32].copy_from_slice(&price_info_account);
+    mappings[16_392 + index] = price_type;
 
     for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
         let lamports = svm.minimum_balance_for_rent_exemption(data.len());
