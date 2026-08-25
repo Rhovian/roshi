@@ -308,7 +308,6 @@ pub fn scope_oracle_data(
 #[allow(clippy::too_many_arguments)]
 pub fn set_scope_oracle(
     svm: &mut LiteSVM,
-    scope_program: Pubkey,
     prices_account: Pubkey,
     mappings_account: Pubkey,
     price_index: u16,
@@ -334,7 +333,7 @@ pub fn set_scope_oracle(
             Account {
                 lamports,
                 data,
-                owner: scope_program,
+                owner: crate::SCOPE_PROGRAM,
                 executable: false,
                 rent_epoch: 0,
             },

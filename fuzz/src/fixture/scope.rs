@@ -9,7 +9,6 @@ fn pyth_config() -> OracleConfig {
 
 fn scope_config(&self, price_index: u16) -> OracleConfig {
     OracleConfig::scope(ScopeOracleConfig::new(
-        SCOPE_PROGRAM.to_bytes(),
         self.scope_prices_account.to_bytes(),
         SCOPE_PRICE_INFO_ACCOUNT,
         SCOPE_PRICE_TYPE,

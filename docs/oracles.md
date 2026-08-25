@@ -102,17 +102,17 @@ to the configured `price_decimals` before returning the base-denominated
 
 Roshi reads prices ingested and normalized by Kamino Scope from its
 `OraclePrices` account. Scope supports multiple upstream oracle sources; Roshi
-trusts the configured Scope program to populate the cached entry and verifies
-the selected entry's identity and freshness when reading it.
+trusts the canonical Scope mainnet program to populate the cached entry and
+verifies the selected entry's identity and freshness when reading it.
 
-Scope configs pin the Scope program, the `OraclePrices` account, the entry
-index, its price type and price-info account, and a max observation age in
-seconds. The reader consumes two accounts — the prices account and the
-`OracleMappings` account the prices account itself declares — and requires on
-every read:
+Scope configs pin the `OraclePrices` account, the entry index, its price type
+and price-info account, and a max observation age in seconds. The reader
+consumes two accounts — the prices account and the `OracleMappings` account the
+prices account itself declares — and requires on every read:
 
-- prices account address and owner match the config; both accounts carry
-  Scope's discriminators and exact lengths;
+- the prices account address matches the config, both accounts are owned by
+  the canonical Kamino Scope mainnet program, and both carry Scope's
+  discriminators and exact lengths;
 - the mapping entry at the index is unfrozen and still bound to the configured
   price type and price-info account, so an admin rebind fails the read loudly;
 - the cached value is positive and its observation timestamp is neither in the

@@ -5,6 +5,9 @@ use solana_sdk::account::Account;
 /// Pyth Solana Receiver program id (owner of `PriceUpdateV2` accounts).
 pub const PYTH_RECEIVER_ID: Pubkey =
     solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+/// Canonical Kamino Scope mainnet program.
+pub const SCOPE_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 
 /// Install a mock Kamino Scope `OraclePrices` + `OracleMappings` account pair
 /// holding one unfrozen entry, matching the layout the program reads: prices =
@@ -14,7 +17,6 @@ pub const PYTH_RECEIVER_ID: Pubkey =
 #[allow(clippy::too_many_arguments)]
 pub fn set_scope_oracle(
     svm: &mut LiteSVM,
-    scope_program: Pubkey,
     prices_account: Pubkey,
     mappings_account: Pubkey,
     price_index: u16,
@@ -46,7 +48,7 @@ pub fn set_scope_oracle(
             Account {
                 lamports,
                 data,
-                owner: scope_program,
+                owner: SCOPE_PROGRAM_ID,
                 executable: false,
                 rent_epoch: 0,
             },

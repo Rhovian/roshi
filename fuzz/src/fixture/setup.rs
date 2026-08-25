@@ -274,7 +274,6 @@
         let scope_mappings_account = Pubkey::new_unique();
         set_scope_oracle(
             &mut ctx.svm,
-            SCOPE_PROGRAM,
             scope_prices_account,
             scope_mappings_account,
             SCOPE_PRICE_INDEX,
@@ -295,7 +294,6 @@
                 InitializeAssetArgs {
                     asset_mint: asset_mint.to_bytes(),
                     oracle: OracleConfig::scope(ScopeOracleConfig::new(
-                        SCOPE_PROGRAM.to_bytes(),
                         scope_prices_account.to_bytes(),
                         SCOPE_PRICE_INFO_ACCOUNT,
                         SCOPE_PRICE_TYPE,

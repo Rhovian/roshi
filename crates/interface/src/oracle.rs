@@ -154,9 +154,10 @@ impl PythOracleConfig {
 ///
 /// Scope ingests prices from multiple oracle sources and caches them in its
 /// `OraclePrices` account, so Roshi only reads: `prices_account` pins that
-/// account, `scope_program` pins its owner, and `price_index` selects the
-/// entry. `price_type` and `price_info_account` pin the selected entry's source
-/// mapping, so an admin rebinding of the index fails loudly.
+/// account and `price_index` selects the entry. `price_type` and
+/// `price_info_account` pin the selected entry's source mapping, so an admin
+/// rebinding of the index fails loudly. The reader requires both Scope
+/// accounts to be owned by the canonical Kamino Scope mainnet program.
 ///
 /// There is no `price_decimals`: Scope stores a value-dependent exponent
 /// (it maximizes precision, exponent <= 18), which the reader takes from the
@@ -167,7 +168,6 @@ impl PythOracleConfig {
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct ScopeOracleConfig {
-    pub scope_program: [u8; 32],
     pub prices_account: [u8; 32],
     pub price_info_account: [u8; 32],
     pub max_age_seconds: u64,
@@ -185,7 +185,6 @@ impl ScopeOracleConfig {
     pub const MAX_PRICE_TYPE: u8 = 0x7f;
 
     pub const fn new(
-        scope_program: [u8; 32],
         prices_account: [u8; 32],
         price_info_account: [u8; 32],
         price_type: u8,
@@ -193,7 +192,6 @@ impl ScopeOracleConfig {
         max_age_seconds: u64,
     ) -> Self {
         Self {
-            scope_program,
             prices_account,
             price_info_account,
             max_age_seconds,
@@ -211,7 +209,7 @@ const LEGS_SIZE: usize = 192;
 /// unchanged.
 const SWITCHBOARD_LEG_OFFSET: usize = 0;
 const PYTH_LEG_OFFSET: usize = 112;
-/// Scope has the whole region to itself when active; it starts at 0.
+/// Scope uses the start of the region when active.
 const SCOPE_LEG_OFFSET: usize = 0;
 
 /// Copy `bytes` into the leg region at `offset` (const-fn array copy).
@@ -270,13 +268,13 @@ impl PythOracleConfig {
 }
 
 impl ScopeOracleConfig {
-    const fn to_leg_bytes(self) -> [u8; 112] {
-        // SAFETY: repr(C), size 112 with no padding (96 + 8 + 2 + 1 + 5), integer
+    const fn to_leg_bytes(self) -> [u8; 80] {
+        // SAFETY: repr(C), size 80 with no padding (64 + 8 + 2 + 1 + 5), integer
         // fields only.
         unsafe { core::mem::transmute(self) }
     }
 
-    const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
+    const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
         // SAFETY: all fields are integers, so every byte pattern is valid.
         unsafe { core::mem::transmute(bytes) }
     }
@@ -288,7 +286,7 @@ impl ScopeOracleConfig {
 /// switching implementations only changes `kind` and account data size never
 /// changes. Each kind's configuration occupies a fixed sub-range of the
 /// region: Switchboard at `0..112` and Pyth at `112..192` (the historical
-/// field layout, byte-for-byte), Scope at `0..112`. Bytes outside the active
+/// field layout, byte-for-byte), Scope at `0..80`. Bytes outside the active
 /// kind's sub-range are dead; constructors zero them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
@@ -445,7 +443,7 @@ mod tests {
     }
 
     fn scope_config() -> ScopeOracleConfig {
-        ScopeOracleConfig::new([5; 32], [6; 32], [7; 32], 26, 445, 300)
+        ScopeOracleConfig::new([6; 32], [7; 32], 26, 445, 300)
     }
 
     #[test]
@@ -489,7 +487,7 @@ mod tests {
         assert_zero_copy::<OracleConfig>();
         assert_eq!(core::mem::size_of::<SwitchboardOracleConfig>(), 112);
         assert_eq!(core::mem::size_of::<PythOracleConfig>(), 80);
-        assert_eq!(core::mem::size_of::<ScopeOracleConfig>(), 112);
+        assert_eq!(core::mem::size_of::<ScopeOracleConfig>(), 80);
         assert_eq!(core::mem::size_of::<OracleConfig>(), 200);
         assert_eq!(
             serialize(&OracleConfig::default()).unwrap().len(),
@@ -530,7 +528,7 @@ mod tests {
         let bytes = serialize(&config).unwrap();
         let mut expected = Vec::new();
         expected.extend_from_slice(&serialize(&scope_config()).unwrap());
-        expected.extend_from_slice(&[0; 80]);
+        expected.extend_from_slice(&[0; 112]);
         expected.push(OracleKind::Scope.as_u8());
         expected.extend_from_slice(&[0; 7]);
         assert_eq!(bytes, expected);
@@ -564,7 +562,6 @@ mod tests {
     #[test]
     fn validate_requires_in_range_scope_index() {
         let out_of_range = OracleConfig::scope(ScopeOracleConfig::new(
-            [5; 32],
             [6; 32],
             [7; 32],
             26,
@@ -574,7 +571,6 @@ mod tests {
         assert_eq!(out_of_range.validate(), Err(InvalidOracleConfig));
 
         let last_entry = OracleConfig::scope(ScopeOracleConfig::new(
-            [5; 32],
             [6; 32],
             [7; 32],
             26,
@@ -584,7 +580,6 @@ mod tests {
         assert_eq!(last_entry.validate(), Ok(()));
 
         let frozen_type = OracleConfig::scope(ScopeOracleConfig::new(
-            [5; 32],
             [6; 32],
             [7; 32],
             0x80,

@@ -1,5 +1,6 @@
 use solana_account_info::AccountInfo;
 use solana_program_error::ProgramError;
+use solana_pubkey::Pubkey;
 
 use super::{Oracle, OraclePrice, ScopeOracleConfig};
 
@@ -23,6 +24,9 @@ const ORACLE_MAPPINGS_LEN: usize = 29_704;
 const PRICE_INFO_ACCOUNTS_OFFSET: usize = 8;
 const PRICE_TYPES_OFFSET: usize = 16_392;
 
+/// Canonical Kamino Scope mainnet program.
+const SCOPE_PROGRAM_ID: Pubkey =
+    solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 /// Bit 7 of `price_types[i]` marks the entry frozen by the Scope admin.
 const FROZEN_FLAG: u8 = 0x80;
 
@@ -34,8 +38,8 @@ const MAX_EXP: u64 = 18;
 ///
 /// Scope owns source ingestion and caches normalized values in its
 /// `OraclePrices` account. Roshi only reads: it pins the prices account, its
-/// owner, the mappings account the prices account itself declares, and the
-/// entry's configured source binding on every read.
+/// canonical mainnet program owner, the mappings account the prices account
+/// itself declares, and the entry's configured source binding on every read.
 pub struct ScopeOracle {
     pub config: ScopeOracleConfig,
 }
@@ -75,8 +79,7 @@ impl ScopeOracle {
         if prices_account.key.to_bytes() != self.config.prices_account {
             return Err(ProgramError::InvalidAccountData);
         }
-        if prices_account.owner.to_bytes() != self.config.scope_program
-            || mappings_account.owner.to_bytes() != self.config.scope_program
+        if prices_account.owner != &SCOPE_PROGRAM_ID || mappings_account.owner != &SCOPE_PROGRAM_ID
         {
             return Err(ProgramError::IllegalOwner);
         }
@@ -209,12 +212,8 @@ fn price_from_entry(entry: &DatedPrice) -> Option<OraclePrice> {
 
 #[cfg(test)]
 mod tests {
-    use solana_pubkey::Pubkey;
-
     use super::*;
 
-    const SCOPE_PROGRAM: Pubkey =
-        solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
     const PRICES_KEY: Pubkey =
         solana_pubkey::pubkey!("3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH");
     const MAPPINGS_KEY: Pubkey =
@@ -229,7 +228,6 @@ mod tests {
 
     fn config() -> ScopeOracleConfig {
         ScopeOracleConfig::new(
-            SCOPE_PROGRAM.to_bytes(),
             PRICES_KEY.to_bytes(),
             PRICE_INFO_ACCOUNT,
             PRICE_TYPE,
@@ -318,10 +316,10 @@ mod tests {
         read(
             config(),
             &PRICES_KEY,
-            &SCOPE_PROGRAM,
+            &SCOPE_PROGRAM_ID,
             prices_data,
             &MAPPINGS_KEY,
-            &SCOPE_PROGRAM,
+            &SCOPE_PROGRAM_ID,
             mappings_data,
             unix_timestamp,
         )
@@ -380,10 +378,10 @@ mod tests {
             read(
                 config(),
                 &other,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_prices_data(),
                 &MAPPINGS_KEY,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_mappings_data(),
                 PRICE_TIMESTAMP as i64,
             ),
@@ -396,7 +394,7 @@ mod tests {
                 &other,
                 &mut scope_prices_data(),
                 &MAPPINGS_KEY,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_mappings_data(),
                 PRICE_TIMESTAMP as i64,
             ),
@@ -406,7 +404,7 @@ mod tests {
             read(
                 config(),
                 &PRICES_KEY,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_prices_data(),
                 &MAPPINGS_KEY,
                 &other,
@@ -426,10 +424,10 @@ mod tests {
             read(
                 config(),
                 &PRICES_KEY,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_prices_data(),
                 &other,
-                &SCOPE_PROGRAM,
+                &SCOPE_PROGRAM_ID,
                 &mut scope_mappings_data(),
                 PRICE_TIMESTAMP as i64,
             ),
@@ -515,7 +513,6 @@ mod tests {
     #[test]
     fn rejects_out_of_range_index() {
         let bad_config = ScopeOracleConfig::new(
-            SCOPE_PROGRAM.to_bytes(),
             PRICES_KEY.to_bytes(),
             PRICE_INFO_ACCOUNT,
             PRICE_TYPE,
@@ -525,10 +522,10 @@ mod tests {
         assert!(read(
             bad_config,
             &PRICES_KEY,
-            &SCOPE_PROGRAM,
+            &SCOPE_PROGRAM_ID,
             &mut scope_prices_data(),
             &MAPPINGS_KEY,
-            &SCOPE_PROGRAM,
+            &SCOPE_PROGRAM_ID,
             &mut scope_mappings_data(),
             PRICE_TIMESTAMP as i64,
         )

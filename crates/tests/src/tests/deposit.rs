@@ -524,7 +524,6 @@ fn install_scope_priced_asset(
     let custody = associated_token_address(&sub_account, &asset_mint);
     let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
 
-    let scope_program = solana_pubkey::Pubkey::new_unique();
     let prices_account = solana_pubkey::Pubkey::new_unique();
     let mappings_account = solana_pubkey::Pubkey::new_unique();
     let price_info_account = [7u8; 32];
@@ -542,7 +541,6 @@ fn install_scope_priced_asset(
             InitializeAssetArgs {
                 asset_mint: asset_mint.to_bytes(),
                 oracle: OracleConfig::scope(ScopeOracleConfig::new(
-                    scope_program.to_bytes(),
                     prices_account.to_bytes(),
                     price_info_account,
                     price_type,
@@ -561,7 +559,6 @@ fn install_scope_priced_asset(
 
     set_scope_oracle(
         svm,
-        scope_program,
         prices_account,
         mappings_account,
         price_index,
