@@ -4,15 +4,12 @@ use solana_pubkey::Pubkey;
 use solana_sysvar::clock::Clock;
 
 use super::{
-    oracle_price::read_oracle_price,
+    oracle_price::{read_oracle_price, split_oracle_accounts},
     shared::{next_account, require_writable},
 };
 use crate::{
     instructions::{token, SwapArgs},
-    oracle::{
-        OracleConfig, OracleKind, OraclePrice, PythOracleConfig, ScopeOracleConfig,
-        SwitchboardOracleConfig,
-    },
+    oracle::{OracleConfig, OracleKind, OraclePrice},
     state::{
         action::{Action, ActionScope},
         asset::Asset,
@@ -105,9 +102,9 @@ where
         let valuation = if vault.controls.max_swap_slippage_bps > 0 {
             let input_mint = token::token_account_mint(input_custody)?;
             let output_mint = token::token_account_mint(output_custody)?;
-            let (valuation, used) =
+            let (valuation, after_valuation) =
                 SwapValuation::parse(&vault, &vault_key, &input_mint, &output_mint, remaining)?;
-            remaining = &remaining[used..];
+            remaining = after_valuation;
             Some(valuation)
         } else {
             None
@@ -151,32 +148,24 @@ where
         input_mint: &Pubkey,
         output_mint: &Pubkey,
         accounts: &'a [AccountInfo<'info>],
-    ) -> Result<(Self, usize), ProgramError> {
-        let (input, used_input) = LegPricing::parse(vault, vault_key, input_mint, accounts)?;
-        let (output, used_output) =
-            LegPricing::parse(vault, vault_key, output_mint, &accounts[used_input..])?;
-        let mut used = used_input
-            .checked_add(used_output)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    ) -> Result<(Self, &'a [AccountInfo<'info>]), ProgramError> {
+        let (input, remaining) = LegPricing::parse(vault, vault_key, input_mint, accounts)?;
+        let (output, mut remaining) = LegPricing::parse(vault, vault_key, output_mint, remaining)?;
 
         let base_leg = if input.routed()? || output.routed()? {
-            let count = leg_account_count(&vault.base_oracle)?;
-            let leg = accounts
-                .get(used..used + count)
-                .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            used += count;
+            let (leg, after_leg) = split_oracle_accounts(&vault.base_oracle, remaining)?;
+            remaining = after_leg;
             Some(leg)
         } else {
             None
         };
-
         Ok((
             Self {
                 input,
                 output,
                 base_leg,
             },
-            used,
+            remaining,
         ))
     }
 
@@ -199,21 +188,24 @@ where
             Some(_) => Some(oracle_feed_identity(&vault.base_oracle)?),
             None => None,
         };
+        let input_feed = self.input.feed_identity()?;
+        let output_feed = self.output.feed_identity()?;
+        let input_uses_base = feeds_match(input_feed, base_feed)?;
+        let output_uses_base = feeds_match(output_feed, base_feed)?;
+        let output_uses_input = feeds_match(output_feed, input_feed)?;
         let base_price = match self.base_leg {
             Some(accounts) => Some(read_oracle_price(&vault.base_oracle, accounts, clock)?.0),
             None => None,
         };
 
-        let input_feed = self.input.feed_identity()?;
-        let output_feed = self.output.feed_identity()?;
-        let input_price = if input_feed.is_some() && input_feed == base_feed {
+        let input_price = if input_uses_base {
             base_price
         } else {
             self.input.read_asset_price(clock)?
         };
-        let output_price = if output_feed.is_some() && output_feed == base_feed {
+        let output_price = if output_uses_base {
             base_price
-        } else if output_feed.is_some() && output_feed == input_feed {
+        } else if output_uses_input {
             input_price
         } else {
             self.output.read_asset_price(clock)?
@@ -258,9 +250,9 @@ where
         vault_key: &Pubkey,
         mint: &Pubkey,
         accounts: &'a [AccountInfo<'info>],
-    ) -> Result<(Self, usize), ProgramError> {
+    ) -> Result<(Self, &'a [AccountInfo<'info>]), ProgramError> {
         if mint.to_bytes() == vault.base_mint {
-            return Ok((Self::Base, 0));
+            return Ok((Self::Base, accounts));
         }
 
         let asset_account = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
@@ -271,17 +263,14 @@ where
         let asset = Account::load_as::<Asset>(asset_account)
             .map_err(|_| ProgramError::from(RoshiError::UnpriceableSwapLeg))?;
 
-        let oracle_account_count = leg_account_count(&asset.oracle)?;
-        let oracle_accounts = accounts
-            .get(1..1 + oracle_account_count)
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
+        let (oracle_accounts, remaining) = split_oracle_accounts(&asset.oracle, &accounts[1..])?;
 
         Ok((
             Self::Asset {
                 asset,
                 oracle_accounts,
             },
-            1 + oracle_account_count,
+            remaining,
         ))
     }
 
@@ -293,8 +282,8 @@ where
     }
 
     /// This endpoint's oracle configuration identity, or `None` for the base
-    /// mint. Reuse is safe only when every setting that verifies or interprets
-    /// a price agrees; otherwise each leg must validate its own configuration.
+    /// mint. Reuse requires an exact semantic match; the same feed under a
+    /// different verification policy is rejected.
     fn feed_identity(&self) -> Result<Option<OracleFeedIdentity>, ProgramError> {
         match self {
             Self::Base => Ok(None),
@@ -352,14 +341,61 @@ where
     }
 }
 
-/// The full active oracle configuration used to decide whether two swap legs
-/// may reuse one verified price. In particular, Scope's source binding,
-/// program owner, and freshness bound are all part of its identity.
+/// The semantic active oracle configuration used to decide whether two swap
+/// legs may reuse one verified price. Explicit fields keep serialized padding
+/// from becoming part of pricing behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OracleFeedIdentity {
-    Switchboard(SwitchboardOracleConfig),
-    Pyth(PythOracleConfig),
-    Scope(ScopeOracleConfig),
+    Switchboard {
+        quote_account: [u8; 32],
+        queue_account: [u8; 32],
+        feed_id: [u8; 32],
+        max_age_slots: u64,
+        price_decimals: u8,
+    },
+    Pyth {
+        feed_id: [u8; 32],
+        price_update_account: [u8; 32],
+        max_age_seconds: u64,
+        max_confidence_bps: u16,
+        price_decimals: u8,
+    },
+    Scope {
+        prices_account: [u8; 32],
+        price_info_account: [u8; 32],
+        max_age_seconds: u64,
+        price_index: u16,
+        price_type: u8,
+    },
+}
+
+/// Provider-specific identity of the underlying feed, independent of the
+/// validation and interpretation policy applied to it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OracleFeedKey {
+    Switchboard([u8; 32]),
+    Pyth([u8; 32]),
+    Scope {
+        price_info_account: [u8; 32],
+        price_type: u8,
+    },
+}
+
+impl OracleFeedIdentity {
+    const fn key(self) -> OracleFeedKey {
+        match self {
+            Self::Switchboard { feed_id, .. } => OracleFeedKey::Switchboard(feed_id),
+            Self::Pyth { feed_id, .. } => OracleFeedKey::Pyth(feed_id),
+            Self::Scope {
+                price_info_account,
+                price_type,
+                ..
+            } => OracleFeedKey::Scope {
+                price_info_account,
+                price_type,
+            },
+        }
+    }
 }
 
 fn oracle_feed_identity(config: &OracleConfig) -> Result<OracleFeedIdentity, ProgramError> {
@@ -367,31 +403,62 @@ fn oracle_feed_identity(config: &OracleConfig) -> Result<OracleFeedIdentity, Pro
         .kind()
         .map_err(|_| ProgramError::InvalidAccountData)?
     {
-        OracleKind::Switchboard => Ok(OracleFeedIdentity::Switchboard(config.switchboard_config())),
-        OracleKind::Pyth => Ok(OracleFeedIdentity::Pyth(config.pyth_config())),
-        OracleKind::Scope => Ok(OracleFeedIdentity::Scope(config.scope_config())),
+        OracleKind::Switchboard => {
+            let config = config.switchboard_config();
+            Ok(OracleFeedIdentity::Switchboard {
+                quote_account: config.quote_account,
+                queue_account: config.queue_account,
+                feed_id: config.feed_id,
+                max_age_slots: config.max_age_slots,
+                price_decimals: config.price_decimals,
+            })
+        }
+        OracleKind::Pyth => {
+            let config = config.pyth_config();
+            Ok(OracleFeedIdentity::Pyth {
+                feed_id: config.feed_id,
+                price_update_account: config.price_update_account,
+                max_age_seconds: config.max_age_seconds,
+                max_confidence_bps: config.max_confidence_bps,
+                price_decimals: config.price_decimals,
+            })
+        }
+        OracleKind::Scope => {
+            let config = config.scope_config();
+            Ok(OracleFeedIdentity::Scope {
+                prices_account: config.prices_account,
+                price_info_account: config.price_info_account,
+                max_age_seconds: config.max_age_seconds,
+                price_index: config.price_index,
+                price_type: config.price_type,
+            })
+        }
     }
 }
 
-/// Accounts one oracle leg consumes (Pyth: 1 price update; Switchboard:
-/// quote, queue, slot-hashes sysvar, instructions sysvar; Scope: prices
-/// account, mappings account).
-fn leg_account_count(config: &OracleConfig) -> Result<usize, ProgramError> {
-    // Holders of an OracleConfig validate the kind at deserialization, so an
-    // invalid kind here is corrupted state.
-    match config
-        .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?
-    {
-        OracleKind::Pyth => Ok(1),
-        OracleKind::Switchboard => Ok(4),
-        OracleKind::Scope => Ok(2),
+/// Reuse is safe only when both legs name the same feed and apply the same
+/// policy. Treating a policy mismatch as two feeds would let a caller compare
+/// two independently supplied updates for one feed.
+fn feeds_match(
+    left: Option<OracleFeedIdentity>,
+    right: Option<OracleFeedIdentity>,
+) -> Result<bool, ProgramError> {
+    let (Some(left), Some(right)) = (left, right) else {
+        return Ok(false);
+    };
+    if left.key() != right.key() {
+        return Ok(false);
     }
+    if left != right {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oracle::{PythOracleConfig, ScopeOracleConfig, SwitchboardOracleConfig};
 
     fn scope_config(
         price_info_account: [u8; 32],
@@ -408,15 +475,53 @@ mod tests {
     }
 
     #[test]
-    fn scope_dedup_requires_matching_validation_policy() {
+    fn same_feed_rejects_mismatched_validation_policy() {
         let base = oracle_feed_identity(&scope_config([3; 32], 26, 30)).unwrap();
 
-        for config in [
-            scope_config([8; 32], 26, 30),
-            scope_config([3; 32], 27, 30),
-            scope_config([3; 32], 26, 31),
-        ] {
-            assert_ne!(oracle_feed_identity(&config).unwrap(), base);
+        let different_policy = oracle_feed_identity(&scope_config([3; 32], 26, 31)).unwrap();
+        assert_eq!(
+            feeds_match(Some(base), Some(different_policy)),
+            Err(ProgramError::InvalidAccountData)
+        );
+
+        for config in [scope_config([8; 32], 26, 30), scope_config([3; 32], 27, 30)] {
+            let different_feed = oracle_feed_identity(&config).unwrap();
+            assert_eq!(feeds_match(Some(base), Some(different_feed)), Ok(false));
         }
+        assert_eq!(feeds_match(Some(base), Some(base)), Ok(true));
+    }
+
+    #[test]
+    fn pyth_same_feed_rejects_mismatched_validation_policy() {
+        let base = oracle_feed_identity(&OracleConfig::pyth(PythOracleConfig::new(
+            [9; 32], 8, 30, 250,
+        )))
+        .unwrap();
+        let different_policy = oracle_feed_identity(&OracleConfig::pyth(PythOracleConfig::new(
+            [9; 32], 8, 31, 250,
+        )))
+        .unwrap();
+
+        assert_eq!(
+            feeds_match(Some(base), Some(different_policy)),
+            Err(ProgramError::InvalidAccountData)
+        );
+    }
+
+    #[test]
+    fn switchboard_same_feed_rejects_mismatched_validation_policy() {
+        let base = oracle_feed_identity(&OracleConfig::switchboard(SwitchboardOracleConfig::new(
+            [1; 32], [2; 32], [9; 32], 8, 30,
+        )))
+        .unwrap();
+        let different_policy = oracle_feed_identity(&OracleConfig::switchboard(
+            SwitchboardOracleConfig::new([1; 32], [2; 32], [9; 32], 8, 31),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            feeds_match(Some(base), Some(different_policy)),
+            Err(ProgramError::InvalidAccountData)
+        );
     }
 }

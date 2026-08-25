@@ -18,7 +18,7 @@ use solana_sdk::{account::Account, signer::Signer};
 use wincode::serialize;
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_scope_oracle,
     set_token_account_with_program, setup_program, token_balance, VaultBuilder,
     TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
@@ -488,6 +488,26 @@ fn set_swap_slippage(svm: &mut LiteSVM, fixture_vault: &crate::helpers::TestVaul
     .unwrap();
 }
 
+fn set_base_oracle(
+    svm: &mut LiteSVM,
+    fixture_vault: &crate::helpers::TestVault,
+    oracle: roshi::oracle::OracleConfig,
+) {
+    let mut state = fixture_vault.load(svm);
+    state.base_oracle = oracle;
+    svm.set_account(
+        fixture_vault.address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
+            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
+            owner: ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+}
+
 /// Install a registered Asset directly (9 decimals, enabled, uncapped).
 fn install_asset(
     svm: &mut LiteSVM,
@@ -928,6 +948,107 @@ fn test_swap_value_bound_prices_same_feed_once() {
 
     assert_eq!(token_balance(&svm, &input_custody), 1_000_000_000 - amount);
     assert_eq!(token_balance(&svm, &output_custody), amount);
+}
+
+#[test]
+fn test_swap_prices_routed_scope_endpoints_over_pyth_base() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.strategist);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    let base_feed = [10u8; 32];
+    set_base_oracle(
+        &mut svm,
+        &fixture.vault,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            base_feed,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+    );
+    let base_pyth = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, base_pyth, base_feed, 100_000_000, -8, 0);
+
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let prices = Pubkey::new_unique();
+    let mappings = Pubkey::new_unique();
+    let price_info = [13u8; 32];
+    let price_type = 26;
+    let price_index = 445;
+    set_scope_oracle(
+        &mut svm,
+        prices,
+        mappings,
+        price_index,
+        price_info,
+        price_type,
+        200_000_000_000_000_000,
+        17,
+        0,
+    );
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture.vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::scope(roshi::oracle::ScopeOracleConfig::new(
+            prices.to_bytes(),
+            price_info,
+            price_type,
+            price_index,
+            i64::MAX as u64,
+        )),
+        true,
+    );
+
+    let input = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        input,
+        &asset_mint,
+        &fixture.sub_account,
+        INPUT_BALANCE,
+    );
+    let output = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        output,
+        &asset_mint,
+        &fixture.sub_account,
+        OUTPUT_BALANCE,
+    );
+    let action = install_transfer_action(&mut svm, &fixture, input, output);
+
+    send_ok(
+        &mut svm,
+        swap_ix_with_valuation(
+            &fixture,
+            input,
+            output,
+            action,
+            input,
+            output,
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(prices, false),
+                AccountMeta::new_readonly(mappings, false),
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(prices, false),
+                AccountMeta::new_readonly(mappings, false),
+                AccountMeta::new_readonly(base_pyth, false),
+            ],
+            fixture.ix_data.clone(),
+        ),
+        &fixture.vault.roles.strategist,
+    );
+
+    assert_eq!(token_balance(&svm, &input), INPUT_BALANCE - SWAP_AMOUNT);
+    assert_eq!(token_balance(&svm, &output), OUTPUT_BALANCE + SWAP_AMOUNT);
 }
 
 #[test]

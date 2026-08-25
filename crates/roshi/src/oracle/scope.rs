@@ -225,6 +225,62 @@ mod tests {
     const PRICE_VALUE: u64 = 109_679_858_068_090_600;
     const PRICE_EXP: u64 = 17;
     const PRICE_TIMESTAMP: u64 = 1_787_619_070;
+    const FIXTURE_PRICES_DISCRIMINATOR: [u8; 8] = [89, 128, 118, 221, 6, 72, 180, 146];
+    const FIXTURE_MAPPINGS_DISCRIMINATOR: [u8; 8] = [40, 244, 110, 80, 255, 214, 243, 188];
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FixturePrice {
+        value: u64,
+        exp: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FixtureDatedPrice {
+        price: FixturePrice,
+        last_updated_slot: u64,
+        unix_timestamp: u64,
+        generic_data: [u8; 24],
+    }
+
+    #[repr(C)]
+    struct FixtureOraclePrices {
+        oracle_mappings: [u8; 32],
+        prices: [FixtureDatedPrice; 512],
+    }
+
+    #[repr(C)]
+    struct FixtureOracleMappings {
+        price_info_accounts: [[u8; 32]; 512],
+        price_types: [u8; 512],
+        unread_suffix: [u8; 12_800],
+    }
+
+    /// Marker for fully initialized fixture layouts with no implicit padding.
+    unsafe trait FixtureBytes {}
+
+    // SAFETY: Every field is an integer, byte array, or `FixtureDatedPrice`;
+    // their alignments divide their offsets and the final size exactly.
+    unsafe impl FixtureBytes for FixtureOraclePrices {}
+    // SAFETY: Every field is a byte array, so the struct has alignment one and
+    // cannot contain implicit padding.
+    unsafe impl FixtureBytes for FixtureOracleMappings {}
+
+    fn encode_fixture<T: FixtureBytes>(discriminator: &[u8; 8], fixture: &T) -> Vec<u8> {
+        // SAFETY: `FixtureBytes` is implemented only for fully initialized
+        // padding-free fixture layouts.
+        let body = unsafe {
+            core::slice::from_raw_parts(
+                core::ptr::from_ref(fixture).cast::<u8>(),
+                core::mem::size_of::<T>(),
+            )
+        };
+        let mut data = Vec::with_capacity(8 + body.len());
+        data.extend_from_slice(discriminator);
+        data.extend_from_slice(body);
+        data
+    }
 
     fn config() -> ScopeOracleConfig {
         ScopeOracleConfig::new(
@@ -237,24 +293,31 @@ mod tests {
     }
 
     fn prices_data(mappings: &Pubkey, index: u16, value: u64, exp: u64, timestamp: u64) -> Vec<u8> {
-        let mut data = vec![0u8; ORACLE_PRICES_LEN];
-        data[..8].copy_from_slice(ORACLE_PRICES_DISCRIMINATOR);
-        data[ORACLE_PRICES_MAPPINGS_OFFSET..ORACLE_PRICES_MAPPINGS_OFFSET + 32]
-            .copy_from_slice(&mappings.to_bytes());
-        let base = DATED_PRICES_OFFSET + DATED_PRICE_SIZE * usize::from(index);
-        data[base..base + 8].copy_from_slice(&value.to_le_bytes());
-        data[base + 8..base + 16].copy_from_slice(&exp.to_le_bytes());
-        data[base + 24..base + 32].copy_from_slice(&timestamp.to_le_bytes());
-        data
+        assert_eq!(core::mem::size_of::<FixtureDatedPrice>(), 56);
+        assert_eq!(8 + core::mem::size_of::<FixtureOraclePrices>(), 28_712);
+        let mut fixture = FixtureOraclePrices {
+            oracle_mappings: mappings.to_bytes(),
+            prices: [FixtureDatedPrice::default(); 512],
+        };
+        fixture.prices[usize::from(index)] = FixtureDatedPrice {
+            price: FixturePrice { value, exp },
+            last_updated_slot: 0,
+            unix_timestamp: timestamp,
+            generic_data: [0; 24],
+        };
+        encode_fixture(&FIXTURE_PRICES_DISCRIMINATOR, &fixture)
     }
 
     fn mappings_data(index: u16, price_type: u8, price_info_account: [u8; 32]) -> Vec<u8> {
-        let mut data = vec![0u8; ORACLE_MAPPINGS_LEN];
-        data[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
-        data[PRICE_TYPES_OFFSET + usize::from(index)] = price_type;
-        let price_info_offset = PRICE_INFO_ACCOUNTS_OFFSET + 32 * usize::from(index);
-        data[price_info_offset..price_info_offset + 32].copy_from_slice(&price_info_account);
-        data
+        assert_eq!(8 + core::mem::size_of::<FixtureOracleMappings>(), 29_704);
+        let mut fixture = FixtureOracleMappings {
+            price_info_accounts: [[0; 32]; 512],
+            price_types: [0; 512],
+            unread_suffix: [0; 12_800],
+        };
+        fixture.price_info_accounts[usize::from(index)] = price_info_account;
+        fixture.price_types[usize::from(index)] = price_type;
+        encode_fixture(&FIXTURE_MAPPINGS_DISCRIMINATOR, &fixture)
     }
 
     fn scope_prices_data() -> Vec<u8> {
@@ -368,6 +431,7 @@ mod tests {
             now - 1
         )
         .is_err());
+        assert!(read_scope(&mut scope_prices_data(), &mut scope_mappings_data(), -1).is_err());
     }
 
     #[test]
@@ -474,6 +538,24 @@ mod tests {
             PRICE_TIMESTAMP as i64
         )
         .is_err());
+
+        let mut long_prices = scope_prices_data();
+        long_prices.push(0);
+        assert!(read_scope(
+            &mut long_prices,
+            &mut scope_mappings_data(),
+            PRICE_TIMESTAMP as i64
+        )
+        .is_err());
+
+        let mut long_mappings = scope_mappings_data();
+        long_mappings.push(0);
+        assert!(read_scope(
+            &mut scope_prices_data(),
+            &mut long_mappings,
+            PRICE_TIMESTAMP as i64
+        )
+        .is_err());
     }
 
     #[test]
@@ -530,6 +612,30 @@ mod tests {
             PRICE_TIMESTAMP as i64,
         )
         .is_err());
+    }
+
+    #[test]
+    fn reads_last_entry() {
+        let last = ScopeOracleConfig::MAX_ENTRIES - 1;
+        let config = ScopeOracleConfig::new(
+            PRICES_KEY.to_bytes(),
+            PRICE_INFO_ACCOUNT,
+            PRICE_TYPE,
+            last,
+            300,
+        );
+        let price = read(
+            config,
+            &PRICES_KEY,
+            &SCOPE_PROGRAM_ID,
+            &mut prices_data(&MAPPINGS_KEY, last, PRICE_VALUE, PRICE_EXP, PRICE_TIMESTAMP),
+            &MAPPINGS_KEY,
+            &SCOPE_PROGRAM_ID,
+            &mut mappings_data(last, PRICE_TYPE, PRICE_INFO_ACCOUNT),
+            PRICE_TIMESTAMP as i64,
+        )
+        .unwrap();
+        assert_eq!(price.value, u128::from(PRICE_VALUE));
     }
 
     #[test]

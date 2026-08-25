@@ -503,6 +503,8 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
 fn install_scope_priced_asset(
     svm: &mut litesvm::LiteSVM,
     age_seconds: u64,
+    routed: bool,
+    base_oracle: OracleConfig,
 ) -> (
     crate::helpers::TestVault,
     solana_pubkey::Pubkey, // asset mint
@@ -514,7 +516,10 @@ fn install_scope_priced_asset(
     const NOW: i64 = 1_787_619_100;
 
     let base_mint = solana_pubkey::Pubkey::new_unique();
-    let vault = VaultBuilder::new().base_mint(base_mint).install(svm);
+    let vault = VaultBuilder::new()
+        .base_mint(base_mint)
+        .base_oracle(base_oracle)
+        .install(svm);
     set_mint(svm, vault.share_mint, &vault.address, 9);
     set_clock_timestamp(svm, NOW);
 
@@ -549,7 +554,7 @@ fn install_scope_priced_asset(
                 )),
                 asset_decimals: 9,
                 enabled: true,
-                routed: false,
+                routed,
                 deposit_cap_atoms: u64::MAX,
             },
         )
@@ -586,7 +591,7 @@ fn test_deposit_non_base_prices_through_scope_oracle() {
     };
 
     let (vault, asset_mint, asset_pda, custody, prices_account, mappings_account) =
-        install_scope_priced_asset(&mut svm, 30);
+        install_scope_priced_asset(&mut svm, 30, false, OracleConfig::default());
     let share_mint = vault.share_mint;
     let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
 
@@ -632,6 +637,78 @@ fn test_deposit_non_base_prices_through_scope_oracle() {
 }
 
 #[test]
+fn test_deposit_routed_scope_asset_advances_to_pyth_base_leg() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_feed_id = [11u8; 32];
+    let base_oracle =
+        OracleConfig::pyth(PythOracleConfig::new(base_feed_id, 8, i64::MAX as u64, 250));
+    let (vault, asset_mint, asset_pda, custody, prices_account, mappings_account) =
+        install_scope_priced_asset(&mut svm, 30, true, base_oracle);
+    let base_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, base_pyth, base_feed_id, 100_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000_000u64;
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &vault.share_mint, 0);
+
+    let deposit_via = |oracle_accounts: Vec<AccountMeta>| {
+        roshi_client::instruction::deposit(
+            depositor.pubkey(),
+            vault.address,
+            source,
+            custody,
+            share_dest,
+            vault.share_mint,
+            TOKEN_PROGRAM_ID,
+            asset_mint,
+            amount,
+            0,
+            vec![],
+            oracle_accounts,
+        )
+        .unwrap()
+    };
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            deposit_via(vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(prices_account, false),
+                AccountMeta::new_readonly(mappings_account, false),
+            ]),
+            &depositor,
+        ),
+        solana_instruction::error::InstructionError::MissingAccount,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+
+    send_ok(
+        &mut svm,
+        deposit_via(vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(prices_account, false),
+            AccountMeta::new_readonly(mappings_account, false),
+            AccountMeta::new_readonly(base_pyth, false),
+        ]),
+        &depositor,
+    );
+
+    let base_atoms = 2_000_000u64;
+    assert_eq!(token_balance(&svm, &source), 0);
+    assert_eq!(token_balance(&svm, &custody), amount);
+    assert_eq!(token_balance(&svm, &share_dest), base_atoms * 1_000);
+    assert_eq!(vault.load(&svm).total_assets, base_atoms);
+}
+
+#[test]
 fn test_deposit_rejects_stale_scope_observation() {
     let Some((mut svm, _authority, _config_pda)) = setup_program() else {
         return;
@@ -639,7 +716,7 @@ fn test_deposit_rejects_stale_scope_observation() {
 
     // Observation older than the configured 300 s max age.
     let (vault, asset_mint, asset_pda, custody, prices_account, mappings_account) =
-        install_scope_priced_asset(&mut svm, 301);
+        install_scope_priced_asset(&mut svm, 301, false, OracleConfig::default());
     let share_mint = vault.share_mint;
     let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
 

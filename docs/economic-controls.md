@@ -264,6 +264,11 @@ let one comparison price the same feed two different ways (low for the
 output, high for the input), widening the bound by the feed's intra-window
 drift.
 
+Feed identity is provider-specific and separate from validation policy. Two
+legs naming the same feed reuse one observation only when their complete
+semantic configs match; a freshness, confidence, scale, account-pin, or source
+binding mismatch rejects the swap instead of admitting independent updates.
+
 Settled posture (2026-06-12): **endpoints must price.** Both endpoint custody
 mints must be the base mint or a registered Asset (routed legs included), or
 the swap rejects (`UnpriceableSwapLeg`). Whatever happens inside the single

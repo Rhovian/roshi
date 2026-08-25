@@ -68,7 +68,12 @@
             withdrawal_authority: withdrawal_authority.pubkey().to_bytes(),
             base_mint: base_mint.to_bytes(),
             base_decimals: BASE_DECIMALS,
-            base_oracle: OracleConfig::default(),
+            base_oracle: OracleConfig::pyth(PythOracleConfig::new(
+                PYTH_FEED_ID,
+                PYTH_PRICE_DECIMALS,
+                PYTH_MAX_AGE_SECS,
+                PYTH_MAX_CONF_BPS,
+            )),
             deposit_sub_account: 0,
             withdraw_sub_account: 1,
             treasury: treasury.to_bytes(),
@@ -104,7 +109,12 @@
                     treasury: treasury.to_bytes(),
                     deposit_sub_account: 0,
                     withdraw_sub_account: 1,
-                    base_oracle: OracleConfig::default(),
+                    base_oracle: OracleConfig::pyth(PythOracleConfig::new(
+                        PYTH_FEED_ID,
+                        PYTH_PRICE_DECIMALS,
+                        PYTH_MAX_AGE_SECS,
+                        PYTH_MAX_CONF_BPS,
+                    )),
                     performance_fee_bps: PERF_FEE_BPS,
                     withdrawal_buffer_bps: WITHDRAWAL_BUFFER_BPS,
                     deposit_cap: 0,
@@ -260,6 +270,32 @@
         let asset_mint = Pubkey::new_unique();
         set_mint(&mut ctx.svm, asset_mint, &operator.pubkey(), ASSET_DECIMALS);
         let asset_custody = set_ata(&mut ctx.svm, &sub_account, &asset_mint, 0);
+        let asset_swap_custody = Pubkey::new_unique();
+        set_token_account(
+            &mut ctx.svm,
+            asset_swap_custody,
+            &asset_mint,
+            &sub_account,
+            0,
+        );
+        let (asset_swap_forward_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            asset_custody,
+            asset_swap_custody,
+            ActionScope::Swap,
+        );
+        let (asset_swap_reverse_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            asset_swap_custody,
+            asset_custody,
+            ActionScope::Swap,
+        );
         let pyth_account = Pubkey::new_unique();
         set_pyth_price(
             &mut ctx.svm,
@@ -427,7 +463,7 @@
             external_account,
             treasury,
         ];
-        let mut asset_accounts = vec![asset_custody];
+        let mut asset_accounts = vec![asset_custody, asset_swap_custody];
         let mut token_2022_asset_accounts = vec![token_2022_asset_custody, token_2022_swap_custody];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
@@ -553,6 +589,9 @@
             asset_mint,
             asset_pda,
             asset_custody,
+            asset_swap_custody,
+            asset_swap_forward_action,
+            asset_swap_reverse_action,
             pyth_account,
             scope_prices_account,
             scope_mappings_account,

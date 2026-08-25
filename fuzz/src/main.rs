@@ -191,6 +191,9 @@ struct RoshiFixture {
     asset_mint: Pubkey,
     asset_pda: Pubkey,
     asset_custody: Pubkey,
+    asset_swap_custody: Pubkey,
+    asset_swap_forward_action: Pubkey,
+    asset_swap_reverse_action: Pubkey,
     pyth_account: Pubkey,
     /// Mock Kamino Scope accounts used when fuzz actions temporarily switch
     /// the registered asset from Pyth to Scope.

@@ -146,16 +146,12 @@ where
 
         let clock = Clock::get()?;
         let oracle_accounts = &self.extra[1..];
-        let (asset_price, consumed) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;
+        let (asset_price, remaining) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;
         // Direct feeds already quote in base; the base leg is exactly 1.
         // Routed feeds quote in a shared currency, so the vault's base oracle
         // supplies the base/quote leg from the accounts after the asset leg.
         let base_price = if asset.routed()? {
-            let (price, _) = read_oracle_price(
-                &self.vault.base_oracle,
-                &oracle_accounts[consumed..],
-                &clock,
-            )?;
+            let (price, _) = read_oracle_price(&self.vault.base_oracle, remaining, &clock)?;
             price
         } else {
             OraclePrice::UNIT
