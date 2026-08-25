@@ -256,9 +256,7 @@ impl SwitchboardOracleConfig {
     }
 
     const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
-        // SAFETY: the layout above accounts for all 112 input bytes. Every
-        // field is a byte array, u64, or u8, each of which accepts every bit
-        // pattern.
+        // SAFETY: The exact layout is above; every field type accepts every bit pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
@@ -282,9 +280,7 @@ impl PythOracleConfig {
     }
 
     const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
-        // SAFETY: the layout above accounts for all 80 input bytes. Every field
-        // is a byte array, u64, u16, or u8, each of which accepts every bit
-        // pattern.
+        // SAFETY: The exact layout is above; every field type accepts every bit pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
@@ -308,9 +304,7 @@ impl ScopeOracleConfig {
     }
 
     const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
-        // SAFETY: the layout above accounts for all 80 input bytes. Every field
-        // is a byte array, u64, u16, or u8, each of which accepts every bit
-        // pattern.
+        // SAFETY: The exact layout is above; every field type accepts every bit pattern.
         unsafe { core::mem::transmute(bytes) }
     }
 }
@@ -423,26 +417,6 @@ impl OracleConfig {
             _padding: [0; 7],
         }
     }
-
-    /// Compose both inline legs with `kind` selecting the active one. Only
-    /// meaningful for the inline kinds (Switchboard, Pyth) that store their
-    /// configuration side by side.
-    pub const fn with_configs(
-        kind: OracleKind,
-        switchboard: SwitchboardOracleConfig,
-        pyth: PythOracleConfig,
-    ) -> Self {
-        let legs = write_leg(
-            [0; LEGS_SIZE],
-            SWITCHBOARD_LEG_OFFSET,
-            switchboard.to_leg_bytes(),
-        );
-        Self {
-            legs: write_leg(legs, PYTH_LEG_OFFSET, pyth.to_leg_bytes()),
-            kind: kind.as_u8(),
-            _padding: [0; 7],
-        }
-    }
 }
 
 impl Default for OracleConfig {
@@ -481,6 +455,22 @@ mod tests {
         ScopeOracleConfig::new([6; 32], [7; 32], 26, 445, 300)
     }
 
+    fn legacy_pyth_config(
+        switchboard: SwitchboardOracleConfig,
+        pyth: PythOracleConfig,
+    ) -> OracleConfig {
+        let legs = write_leg(
+            [0; LEGS_SIZE],
+            SWITCHBOARD_LEG_OFFSET,
+            switchboard.to_leg_bytes(),
+        );
+        OracleConfig {
+            legs: write_leg(legs, PYTH_LEG_OFFSET, pyth.to_leg_bytes()),
+            kind: OracleKind::Pyth.as_u8(),
+            _padding: [0; 7],
+        }
+    }
+
     #[test]
     fn oracle_config_size_is_fixed_across_implementations() {
         let switchboard = OracleConfig::switchboard(SwitchboardOracleConfig::new(
@@ -503,11 +493,11 @@ mod tests {
     }
 
     #[test]
-    fn with_configs_keeps_inactive_config_available() {
+    fn legacy_inline_layout_keeps_inactive_config_available() {
         let switchboard_config = SwitchboardOracleConfig::new([1; 32], [2; 32], [3; 32], 6, 100);
         let pyth_config = PythOracleConfig::new([4; 32], 8, 30, 250);
 
-        let config = OracleConfig::with_configs(OracleKind::Pyth, switchboard_config, pyth_config);
+        let config = legacy_pyth_config(switchboard_config, pyth_config);
 
         assert_eq!(config.kind(), Ok(OracleKind::Pyth));
         assert_eq!(config.switchboard_config(), switchboard_config);
@@ -541,7 +531,7 @@ mod tests {
         let pyth_config = PythOracleConfig::new([4; 32], 8, 0x1112_1314_1516_1718, 250)
             .pin_price_update_account([9; 32]);
 
-        let config = OracleConfig::with_configs(OracleKind::Pyth, switchboard_config, pyth_config);
+        let config = legacy_pyth_config(switchboard_config, pyth_config);
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&serialize(&switchboard_config).unwrap());
