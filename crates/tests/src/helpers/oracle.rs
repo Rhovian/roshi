@@ -6,6 +6,54 @@ use solana_sdk::account::Account;
 pub const PYTH_RECEIVER_ID: Pubkey =
     solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 
+/// Install a mock Kamino Scope `OraclePrices` + `OracleMappings` account pair
+/// holding one unfrozen `ChainlinkExchangeRate` entry, matching the layout the
+/// program reads: prices = 8-byte discriminator, mappings pubkey, 512 56-byte
+/// `DatedPrice` entries; mappings = 8-byte discriminator, 512 price-info
+/// pubkeys (the Chainlink feed id, verbatim), then 512 price-type bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn set_scope_oracle(
+    svm: &mut LiteSVM,
+    scope_program: Pubkey,
+    prices_account: Pubkey,
+    mappings_account: Pubkey,
+    price_index: u16,
+    feed_id: [u8; 32],
+    value: u64,
+    exp: u64,
+    unix_timestamp: u64,
+) {
+    let index = usize::from(price_index);
+
+    let mut prices = vec![0u8; 28_712];
+    prices[..8].copy_from_slice(&[89, 128, 118, 221, 6, 72, 180, 146]);
+    prices[8..40].copy_from_slice(&mappings_account.to_bytes());
+    let base = 40 + 56 * index;
+    prices[base..base + 8].copy_from_slice(&value.to_le_bytes());
+    prices[base + 8..base + 16].copy_from_slice(&exp.to_le_bytes());
+    prices[base + 24..base + 32].copy_from_slice(&unix_timestamp.to_le_bytes());
+
+    let mut mappings = vec![0u8; 29_704];
+    mappings[..8].copy_from_slice(&[40, 244, 110, 80, 255, 214, 243, 188]);
+    mappings[8 + 32 * index..8 + 32 * index + 32].copy_from_slice(&feed_id);
+    mappings[16_392 + index] = 38; // OracleType::ChainlinkExchangeRate, not frozen
+
+    for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
+        let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+        svm.set_account(
+            address,
+            Account {
+                lamports,
+                data,
+                owner: scope_program,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+    }
+}
+
 /// Install a mock fully-verified Pyth `PriceUpdateV2` account (zero confidence)
 /// owned by the Pyth receiver program, matching the layout the program parses.
 pub fn set_pyth_price(

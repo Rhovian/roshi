@@ -27,6 +27,8 @@ pub enum OracleKind {
     Switchboard = 0,
     #[wincode(tag = 1)]
     Pyth = 1,
+    #[wincode(tag = 2)]
+    Scope = 2,
 }
 
 impl OracleKind {
@@ -38,6 +40,7 @@ impl OracleKind {
         match kind {
             0 => Some(Self::Switchboard),
             1 => Some(Self::Pyth),
+            2 => Some(Self::Scope),
             _ => None,
         }
     }
@@ -147,17 +150,147 @@ impl PythOracleConfig {
     }
 }
 
+/// Kamino Scope oracle configuration stored with the asset it prices.
+///
+/// Scope verifies Chainlink Data Streams reports on-chain (its refresh CPIs
+/// the Chainlink verifier program) and caches the result in its `OraclePrices`
+/// account, so Roshi only reads: `prices_account` pins that account,
+/// `scope_program` pins its owner, and `price_index` selects the entry.
+/// `feed_id` is the 32-byte Chainlink feed id the Scope mapping entry must
+/// still be bound to at read time — Scope stores it verbatim in the mapping's
+/// price-info slot — so an admin rebinding of the index fails loudly.
+///
+/// There is no `price_decimals`: Scope stores a value-dependent exponent
+/// (it maximizes precision, exponent <= 18), which the reader takes from the
+/// entry on every read.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
+)]
+#[wincode(assert_zero_copy)]
+#[repr(C)]
+pub struct ScopeOracleConfig {
+    pub scope_program: [u8; 32],
+    pub prices_account: [u8; 32],
+    pub feed_id: [u8; 32],
+    pub max_age_seconds: u64,
+    pub price_index: u16,
+    _padding: [u8; 6],
+}
+
+impl ScopeOracleConfig {
+    /// Entries in a Scope `OraclePrices` account (`MAX_ENTRIES` in
+    /// Kamino-Finance/scope). `price_index` must be below this.
+    pub const MAX_ENTRIES: u16 = 512;
+
+    pub const fn new(
+        scope_program: [u8; 32],
+        prices_account: [u8; 32],
+        feed_id: [u8; 32],
+        price_index: u16,
+        max_age_seconds: u64,
+    ) -> Self {
+        Self {
+            scope_program,
+            prices_account,
+            feed_id,
+            max_age_seconds,
+            price_index,
+            _padding: [0; 6],
+        }
+    }
+}
+
+/// Size of the [`OracleConfig`] leg region shared by all implementations.
+const LEGS_SIZE: usize = 192;
+/// Historical field offsets of the two inline legs, preserved so serialized
+/// configs written before the leg region became an explicit union decode
+/// unchanged.
+const SWITCHBOARD_LEG_OFFSET: usize = 0;
+const PYTH_LEG_OFFSET: usize = 112;
+/// Scope has the whole region to itself when active; it starts at 0.
+const SCOPE_LEG_OFFSET: usize = 0;
+
+/// Copy `bytes` into the leg region at `offset` (const-fn array copy).
+const fn write_leg<const N: usize>(
+    mut legs: [u8; LEGS_SIZE],
+    offset: usize,
+    bytes: [u8; N],
+) -> [u8; LEGS_SIZE] {
+    let mut index = 0;
+    while index < N {
+        legs[offset + index] = bytes[index];
+        index += 1;
+    }
+    legs
+}
+
+/// Copy a leg's bytes out of the region at `offset` (const-fn array copy).
+const fn read_leg<const N: usize>(legs: &[u8; LEGS_SIZE], offset: usize) -> [u8; N] {
+    let mut bytes = [0u8; N];
+    let mut index = 0;
+    while index < N {
+        bytes[index] = legs[offset + index];
+        index += 1;
+    }
+    bytes
+}
+
+// The leg configs are `#[repr(C)]`, padding-free, integer-only PODs, so their
+// in-memory bytes are exactly their zero-copy wire bytes and every byte
+// pattern is a valid value; the transmutes below are lossless in both
+// directions. The layout tests pin each size.
+impl SwitchboardOracleConfig {
+    const fn to_leg_bytes(self) -> [u8; 112] {
+        // SAFETY: repr(C), size 112 with no padding (96 + 8 + 1 + 7), integer
+        // fields only.
+        unsafe { core::mem::transmute(self) }
+    }
+
+    const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
+        // SAFETY: all fields are integers, so every byte pattern is valid.
+        unsafe { core::mem::transmute(bytes) }
+    }
+}
+
+impl PythOracleConfig {
+    const fn to_leg_bytes(self) -> [u8; 80] {
+        // SAFETY: repr(C), size 80 with no padding (64 + 8 + 2 + 1 + 5),
+        // integer fields only.
+        unsafe { core::mem::transmute(self) }
+    }
+
+    const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
+        // SAFETY: all fields are integers, so every byte pattern is valid.
+        unsafe { core::mem::transmute(bytes) }
+    }
+}
+
+impl ScopeOracleConfig {
+    const fn to_leg_bytes(self) -> [u8; 112] {
+        // SAFETY: repr(C), size 112 with no padding (96 + 8 + 2 + 6), integer
+        // fields only.
+        unsafe { core::mem::transmute(self) }
+    }
+
+    const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
+        // SAFETY: all fields are integers, so every byte pattern is valid.
+        unsafe { core::mem::transmute(bytes) }
+    }
+}
+
 /// Oracle configuration stored by vault and asset accounts.
 ///
-/// The serialized shape includes every supported oracle implementation from
-/// the start. Switching implementations only changes `kind`, so account data
-/// size remains stable.
+/// The serialized shape is a fixed-size leg region tagged by `kind`, so
+/// switching implementations only changes `kind` and account data size never
+/// changes. Each kind's configuration occupies a fixed sub-range of the
+/// region: Switchboard at `0..112` and Pyth at `112..192` (the historical
+/// field layout, byte-for-byte), Scope at `0..112`. Bytes outside the active
+/// kind's sub-range are dead; constructors zero them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
 #[repr(C)]
 pub struct OracleConfig {
-    pub switchboard: SwitchboardOracleConfig,
-    pub pyth: PythOracleConfig,
+    legs: [u8; LEGS_SIZE],
     kind: u8,
     _padding: [u8; 7],
 }
@@ -181,27 +314,53 @@ impl OracleConfig {
             // technically-fresh price. Only the active leg is checked, so
             // zeroed inactive configs stay legal.
             Ok(OracleKind::Pyth) => {
-                if self.pyth.max_confidence_bps == 0 {
+                if self.pyth_config().max_confidence_bps == 0 {
                     return Err(InvalidOracleConfig);
                 }
                 Ok(())
             }
             Ok(OracleKind::Switchboard) => Ok(()),
+            // An active Scope leg must address a real entry; everything else a
+            // bad Scope config could get wrong fails closed at read time
+            // (owner, address, feed, and freshness checks).
+            Ok(OracleKind::Scope) => {
+                if self.scope_config().price_index >= ScopeOracleConfig::MAX_ENTRIES {
+                    return Err(InvalidOracleConfig);
+                }
+                Ok(())
+            }
             Err(error) => Err(error),
         }
     }
 
+    /// The Switchboard view of the leg region. Meaningful when `kind` is
+    /// [`OracleKind::Switchboard`]; under other kinds it reads whatever bytes
+    /// the active leg wrote.
+    pub const fn switchboard_config(&self) -> SwitchboardOracleConfig {
+        SwitchboardOracleConfig::from_leg_bytes(read_leg(&self.legs, SWITCHBOARD_LEG_OFFSET))
+    }
+
+    /// The Pyth view of the leg region. Meaningful when `kind` is
+    /// [`OracleKind::Pyth`]; under other kinds it reads whatever bytes the
+    /// active leg wrote.
+    pub const fn pyth_config(&self) -> PythOracleConfig {
+        PythOracleConfig::from_leg_bytes(read_leg(&self.legs, PYTH_LEG_OFFSET))
+    }
+
+    /// The Scope view of the leg region. Meaningful when `kind` is
+    /// [`OracleKind::Scope`]; under other kinds it reads whatever bytes the
+    /// active leg wrote.
+    pub const fn scope_config(&self) -> ScopeOracleConfig {
+        ScopeOracleConfig::from_leg_bytes(read_leg(&self.legs, SCOPE_LEG_OFFSET))
+    }
+
     pub const fn switchboard(config: SwitchboardOracleConfig) -> Self {
         Self {
-            switchboard: config,
-            pyth: PythOracleConfig {
-                feed_id: [0; 32],
-                price_update_account: [0; 32],
-                max_age_seconds: 0,
-                max_confidence_bps: 0,
-                price_decimals: 0,
-                _padding: [0; 5],
-            },
+            legs: write_leg(
+                [0; LEGS_SIZE],
+                SWITCHBOARD_LEG_OFFSET,
+                config.to_leg_bytes(),
+            ),
             kind: OracleKind::Switchboard.as_u8(),
             _padding: [0; 7],
         }
@@ -209,28 +368,35 @@ impl OracleConfig {
 
     pub const fn pyth(config: PythOracleConfig) -> Self {
         Self {
-            switchboard: SwitchboardOracleConfig {
-                quote_account: [0; 32],
-                queue_account: [0; 32],
-                feed_id: [0; 32],
-                max_age_slots: 0,
-                price_decimals: 0,
-                _padding: [0; 7],
-            },
-            pyth: config,
+            legs: write_leg([0; LEGS_SIZE], PYTH_LEG_OFFSET, config.to_leg_bytes()),
             kind: OracleKind::Pyth.as_u8(),
             _padding: [0; 7],
         }
     }
 
+    pub const fn scope(config: ScopeOracleConfig) -> Self {
+        Self {
+            legs: write_leg([0; LEGS_SIZE], SCOPE_LEG_OFFSET, config.to_leg_bytes()),
+            kind: OracleKind::Scope.as_u8(),
+            _padding: [0; 7],
+        }
+    }
+
+    /// Compose both inline legs with `kind` selecting the active one. Only
+    /// meaningful for the inline kinds (Switchboard, Pyth) that store their
+    /// configuration side by side.
     pub const fn with_configs(
         kind: OracleKind,
         switchboard: SwitchboardOracleConfig,
         pyth: PythOracleConfig,
     ) -> Self {
+        let legs = write_leg(
+            [0; LEGS_SIZE],
+            SWITCHBOARD_LEG_OFFSET,
+            switchboard.to_leg_bytes(),
+        );
         Self {
-            switchboard,
-            pyth,
+            legs: write_leg(legs, PYTH_LEG_OFFSET, pyth.to_leg_bytes()),
             kind: kind.as_u8(),
             _padding: [0; 7],
         }
@@ -269,19 +435,29 @@ mod tests {
         );
     }
 
+    fn scope_config() -> ScopeOracleConfig {
+        ScopeOracleConfig::new([5; 32], [6; 32], [7; 32], 445, 300)
+    }
+
     #[test]
     fn oracle_config_size_is_fixed_across_implementations() {
         let switchboard = OracleConfig::switchboard(SwitchboardOracleConfig::new(
             [1; 32], [2; 32], [3; 32], 6, 100,
         ));
         let pyth = OracleConfig::pyth(PythOracleConfig::new([4; 32], 8, 30, 250));
+        let scope = OracleConfig::scope(scope_config());
 
         assert_eq!(
             serialize(&switchboard).unwrap().len(),
             serialize(&pyth).unwrap().len()
         );
+        assert_eq!(
+            serialize(&pyth).unwrap().len(),
+            serialize(&scope).unwrap().len()
+        );
         assert_eq!(switchboard.kind(), Ok(OracleKind::Switchboard));
         assert_eq!(pyth.kind(), Ok(OracleKind::Pyth));
+        assert_eq!(scope.kind(), Ok(OracleKind::Scope));
     }
 
     #[test]
@@ -292,22 +468,63 @@ mod tests {
         let config = OracleConfig::with_configs(OracleKind::Pyth, switchboard_config, pyth_config);
 
         assert_eq!(config.kind(), Ok(OracleKind::Pyth));
-        assert_eq!(config.switchboard, switchboard_config);
-        assert_eq!(config.pyth, pyth_config);
+        assert_eq!(config.switchboard_config(), switchboard_config);
+        assert_eq!(config.pyth_config(), pyth_config);
     }
 
     #[test]
     fn oracle_configs_are_zero_copy() {
         assert_zero_copy::<SwitchboardOracleConfig>();
         assert_zero_copy::<PythOracleConfig>();
+        assert_zero_copy::<ScopeOracleConfig>();
         assert_zero_copy::<OracleConfig>();
         assert_eq!(core::mem::size_of::<SwitchboardOracleConfig>(), 112);
         assert_eq!(core::mem::size_of::<PythOracleConfig>(), 80);
+        assert_eq!(core::mem::size_of::<ScopeOracleConfig>(), 112);
         assert_eq!(core::mem::size_of::<OracleConfig>(), 200);
         assert_eq!(
             serialize(&OracleConfig::default()).unwrap().len(),
             core::mem::size_of::<OracleConfig>()
         );
+    }
+
+    /// The leg region must keep the exact byte layout of the historical
+    /// `{ switchboard, pyth, kind, _padding }` field struct: each inline leg's
+    /// serialized bytes at its historical offset, `kind` at 192. Existing
+    /// on-chain vault and asset accounts depend on this.
+    #[test]
+    fn oracle_config_layout_matches_legacy_leg_fields() {
+        let switchboard_config =
+            SwitchboardOracleConfig::new([1; 32], [2; 32], [3; 32], 6, 0x0102_0304_0506_0708);
+        let pyth_config = PythOracleConfig::new([4; 32], 8, 0x1112_1314_1516_1718, 250)
+            .pin_price_update_account([9; 32]);
+
+        let config = OracleConfig::with_configs(OracleKind::Pyth, switchboard_config, pyth_config);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&serialize(&switchboard_config).unwrap());
+        expected.extend_from_slice(&serialize(&pyth_config).unwrap());
+        expected.push(OracleKind::Pyth.as_u8());
+        expected.extend_from_slice(&[0; 7]);
+
+        assert_eq!(serialize(&config).unwrap(), expected);
+    }
+
+    #[test]
+    fn scope_config_round_trips_through_leg_region() {
+        let config = OracleConfig::scope(scope_config());
+
+        assert_eq!(config.kind(), Ok(OracleKind::Scope));
+        assert_eq!(config.scope_config(), scope_config());
+        assert_eq!(config.validate(), Ok(()));
+
+        let bytes = serialize(&config).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&serialize(&scope_config()).unwrap());
+        expected.extend_from_slice(&[0; 80]);
+        expected.push(OracleKind::Scope.as_u8());
+        expected.extend_from_slice(&[0; 7]);
+        assert_eq!(bytes, expected);
     }
 
     #[test]
@@ -331,8 +548,29 @@ mod tests {
         let switchboard = OracleConfig::switchboard(SwitchboardOracleConfig::new(
             [1; 32], [2; 32], [3; 32], 6, 100,
         ));
-        assert_eq!(switchboard.pyth.max_confidence_bps, 0);
+        assert_eq!(switchboard.pyth_config().max_confidence_bps, 0);
         assert_eq!(switchboard.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validate_requires_in_range_scope_index() {
+        let out_of_range = OracleConfig::scope(ScopeOracleConfig::new(
+            [5; 32],
+            [6; 32],
+            [7; 32],
+            ScopeOracleConfig::MAX_ENTRIES,
+            300,
+        ));
+        assert_eq!(out_of_range.validate(), Err(InvalidOracleConfig));
+
+        let last_entry = OracleConfig::scope(ScopeOracleConfig::new(
+            [5; 32],
+            [6; 32],
+            [7; 32],
+            ScopeOracleConfig::MAX_ENTRIES - 1,
+            300,
+        ));
+        assert_eq!(last_entry.validate(), Ok(()));
     }
 
     #[test]

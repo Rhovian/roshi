@@ -290,9 +290,10 @@ where
         }
     }
 
-    /// This endpoint's oracle feed identity `(kind, feed_id)`, or `None` for the
-    /// base mint. Two endpoints sharing a feed must price against one update.
-    fn feed_identity(&self) -> Result<Option<(OracleKind, [u8; 32])>, ProgramError> {
+    /// This endpoint's oracle feed identity `(kind, feed_id, index)`, or `None`
+    /// for the base mint. Two endpoints sharing a feed must price against one
+    /// update.
+    fn feed_identity(&self) -> Result<Option<(OracleKind, [u8; 32], u16)>, ProgramError> {
         match self {
             Self::Base => Ok(None),
             Self::Asset { asset, .. } => Ok(Some(oracle_feed_identity(&asset.oracle)?)),
@@ -349,21 +350,30 @@ where
     }
 }
 
-/// An oracle config's feed identity `(kind, feed_id)`: the key a single swap
-/// dedups on so one feed is never priced against two independent updates.
-fn oracle_feed_identity(config: &OracleConfig) -> Result<(OracleKind, [u8; 32]), ProgramError> {
+/// An oracle config's feed identity `(kind, feed_id, index)`: the key a single
+/// swap dedups on so one feed is never priced against two independent updates.
+/// Inline-feed kinds are identified by feed id alone (index 0); Scope entries
+/// share one prices account, so the entry index disambiguates them.
+fn oracle_feed_identity(
+    config: &OracleConfig,
+) -> Result<(OracleKind, [u8; 32], u16), ProgramError> {
     let kind = config
         .kind()
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let feed_id = match kind {
-        OracleKind::Pyth => config.pyth.feed_id,
-        OracleKind::Switchboard => config.switchboard.feed_id,
+    let (feed_id, index) = match kind {
+        OracleKind::Pyth => (config.pyth_config().feed_id, 0),
+        OracleKind::Switchboard => (config.switchboard_config().feed_id, 0),
+        OracleKind::Scope => {
+            let scope = config.scope_config();
+            (scope.prices_account, scope.price_index)
+        }
     };
-    Ok((kind, feed_id))
+    Ok((kind, feed_id, index))
 }
 
 /// Accounts one oracle leg consumes (Pyth: 1 price update; Switchboard:
-/// quote, queue, slot-hashes sysvar, instructions sysvar).
+/// quote, queue, slot-hashes sysvar, instructions sysvar; Scope: prices
+/// account, mappings account).
 fn leg_account_count(config: &OracleConfig) -> Result<usize, ProgramError> {
     // Holders of an OracleConfig validate the kind at deserialization, so an
     // invalid kind here is corrupted state.
@@ -373,5 +383,6 @@ fn leg_account_count(config: &OracleConfig) -> Result<usize, ProgramError> {
     {
         OracleKind::Pyth => Ok(1),
         OracleKind::Switchboard => Ok(4),
+        OracleKind::Scope => Ok(2),
     }
 }

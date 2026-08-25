@@ -2,11 +2,14 @@ use solana_account_info::AccountInfo;
 use solana_program_error::ProgramError;
 use solana_sysvar::clock::Clock;
 
-use crate::oracle::{OracleConfig, OracleKind, OraclePrice, PythOracle, SwitchboardOracle};
+use crate::oracle::{
+    OracleConfig, OracleKind, OraclePrice, PythOracle, ScopeOracle, SwitchboardOracle,
+};
 
 /// Read one verified oracle leg from the front of `accounts`, returning the
 /// price and how many accounts the leg consumed (Pyth: 1 price update;
-/// Switchboard: quote, queue, slot-hashes sysvar, instructions sysvar).
+/// Switchboard: quote, queue, slot-hashes sysvar, instructions sysvar;
+/// Scope: prices account, mappings account).
 pub(crate) fn read_oracle_price<'a, 'info>(
     oracle: &OracleConfig,
     accounts: &'a [AccountInfo<'info>],
@@ -24,7 +27,7 @@ where
     match kind {
         OracleKind::Pyth => {
             let price_account = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let price = PythOracle::new(oracle.pyth)
+            let price = PythOracle::new(oracle.pyth_config())
                 .read_verified_price(price_account, clock.unix_timestamp)?;
             Ok((price, 1))
         }
@@ -33,9 +36,19 @@ where
             let queue = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
             let slothash = accounts.get(2).ok_or(ProgramError::NotEnoughAccountKeys)?;
             let ix_sysvar = accounts.get(3).ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let price = SwitchboardOracle::new(oracle.switchboard)
+            let price = SwitchboardOracle::new(oracle.switchboard_config())
                 .read_verified_price(quote, queue, slothash, ix_sysvar, clock.slot)?;
             Ok((price, 4))
+        }
+        OracleKind::Scope => {
+            let prices = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let mappings = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let price = ScopeOracle::new(oracle.scope_config()).read_verified_price(
+                prices,
+                mappings,
+                clock.unix_timestamp,
+            )?;
+            Ok((price, 2))
         }
     }
 }

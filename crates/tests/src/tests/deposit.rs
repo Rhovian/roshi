@@ -5,7 +5,7 @@
 use roshi::{
     error::RoshiError,
     instructions::InitializeAssetArgs,
-    oracle::{OracleConfig, PythOracleConfig},
+    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig},
     state::{asset::Asset, sub_account::VaultSubAccount},
 };
 use roshi_interface::access::access_merkle_leaf;
@@ -15,9 +15,9 @@ use solana_sdk::{signature::Keypair, signer::Signer};
 use crate::helpers::{
     assert_instruction_error, assert_roshi_error, associated_token_address,
     associated_token_address_with_program, fund, mint_supply, send, send_ok, set_ata,
-    set_ata_with_program, set_mint, set_pyth_price, set_token_2022_mint,
-    set_token_account_with_program, setup_program, token_balance, VaultBuilder,
-    TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    set_ata_with_program, set_clock_timestamp, set_mint, set_pyth_price, set_scope_oracle,
+    set_token_2022_mint, set_token_account_with_program, setup_program, token_balance,
+    VaultBuilder, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
 
 /// One whole base unit at 6 decimals.
@@ -494,6 +494,185 @@ fn test_deposit_non_base_prices_through_pyth_oracle() {
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, base_atoms);
     assert_eq!(mint_supply(&svm, &share_mint), shares);
+}
+
+/// Install a vault plus a non-base asset priced through a mock Scope oracle at
+/// 2.0 base per whole asset token (value 2 * 10^17 at exp 17, the Scope
+/// exchange-rate scale), with the entry's observation `age_seconds` behind the
+/// cluster clock. Returns everything the deposit instruction needs.
+fn install_scope_priced_asset(
+    svm: &mut litesvm::LiteSVM,
+    age_seconds: u64,
+) -> (
+    crate::helpers::TestVault,
+    solana_pubkey::Pubkey, // asset mint
+    solana_pubkey::Pubkey, // asset pda
+    solana_pubkey::Pubkey, // custody
+    solana_pubkey::Pubkey, // scope prices account
+    solana_pubkey::Pubkey, // scope mappings account
+) {
+    const NOW: i64 = 1_787_619_100;
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let vault = VaultBuilder::new().base_mint(base_mint).install(svm);
+    set_mint(svm, vault.share_mint, &vault.address, 9);
+    set_clock_timestamp(svm, NOW);
+
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    let scope_program = solana_pubkey::Pubkey::new_unique();
+    let prices_account = solana_pubkey::Pubkey::new_unique();
+    let mappings_account = solana_pubkey::Pubkey::new_unique();
+    let feed_id = [7u8; 32];
+    let price_index = 445;
+
+    fund(svm, &vault.roles.admin);
+    send_ok(
+        svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                oracle: OracleConfig::scope(ScopeOracleConfig::new(
+                    scope_program.to_bytes(),
+                    prices_account.to_bytes(),
+                    feed_id,
+                    price_index,
+                    300,
+                )),
+                asset_decimals: 9,
+                enabled: true,
+                routed: false,
+                deposit_cap_atoms: u64::MAX,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    set_scope_oracle(
+        svm,
+        scope_program,
+        prices_account,
+        mappings_account,
+        price_index,
+        feed_id,
+        200_000_000_000_000_000, // 2.0 at exp 17
+        17,
+        NOW as u64 - age_seconds,
+    );
+
+    (
+        vault,
+        asset_mint,
+        asset_pda,
+        custody,
+        prices_account,
+        mappings_account,
+    )
+}
+
+#[test]
+fn test_deposit_non_base_prices_through_scope_oracle() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let (vault, asset_mint, asset_pda, custody, prices_account, mappings_account) =
+        install_scope_priced_asset(&mut svm, 30);
+    let share_mint = vault.share_mint;
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000u64; // asset atoms
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let ix = roshi_client::instruction::deposit(
+        depositor.pubkey(),
+        vault.address,
+        source,
+        custody,
+        share_dest,
+        share_mint,
+        TOKEN_PROGRAM_ID,
+        asset_mint,
+        amount,
+        0,
+        vec![],
+        vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(prices_account, false),
+            AccountMeta::new_readonly(mappings_account, false),
+        ],
+    )
+    .unwrap();
+    send_ok(&mut svm, ix, &depositor);
+
+    // 2.0 base per whole asset token, scaled across 9 asset / 6 base decimals:
+    // base_atoms = amount * 2 * 10^17 * 10^6 / 10^(9+17) = amount * 2 / 10^3.
+    let base_atoms = amount * 2 / 1_000;
+    let shares = base_atoms * 1_000;
+    assert_eq!(token_balance(&svm, &source), 0);
+    assert_eq!(token_balance(&svm, &custody), amount);
+    assert_eq!(token_balance(&svm, &share_dest), shares);
+
+    let state = vault.load(&svm);
+    assert_eq!(state.total_assets, base_atoms);
+    assert_eq!(mint_supply(&svm, &share_mint), shares);
+}
+
+#[test]
+fn test_deposit_rejects_stale_scope_observation() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    // Observation older than the configured 300 s max age.
+    let (vault, asset_mint, asset_pda, custody, prices_account, mappings_account) =
+        install_scope_priced_asset(&mut svm, 301);
+    let share_mint = vault.share_mint;
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000u64;
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let ix = roshi_client::instruction::deposit(
+        depositor.pubkey(),
+        vault.address,
+        source,
+        custody,
+        share_dest,
+        share_mint,
+        TOKEN_PROGRAM_ID,
+        asset_mint,
+        amount,
+        0,
+        vec![],
+        vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(prices_account, false),
+            AccountMeta::new_readonly(mappings_account, false),
+        ],
+    )
+    .unwrap();
+    assert_instruction_error(
+        send(&mut svm, ix, &depositor),
+        solana_sdk::instruction::InstructionError::InvalidAccountData,
+    );
 }
 
 #[test]
