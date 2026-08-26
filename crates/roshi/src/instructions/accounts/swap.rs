@@ -4,12 +4,12 @@ use solana_pubkey::Pubkey;
 use solana_sysvar::clock::Clock;
 
 use super::{
-    oracle_price::read_oracle_price,
+    oracle_price::{OracleLeg, OracleReadSession},
     shared::{next_account, require_writable},
 };
 use crate::{
     instructions::{token, SwapArgs},
-    oracle::{OracleConfig, OracleKind, OraclePrice},
+    oracle::OraclePrice,
     state::{
         action::{Action, ActionScope},
         asset::Asset,
@@ -102,9 +102,9 @@ where
         let valuation = if vault.controls.max_swap_slippage_bps > 0 {
             let input_mint = token::token_account_mint(input_custody)?;
             let output_mint = token::token_account_mint(output_custody)?;
-            let (valuation, used) =
+            let (valuation, after_valuation) =
                 SwapValuation::parse(&vault, &vault_key, &input_mint, &output_mint, remaining)?;
-            remaining = &remaining[used..];
+            remaining = after_valuation;
             Some(valuation)
         } else {
             None
@@ -133,7 +133,7 @@ pub(crate) struct SwapValuation<'a, 'info> {
     input: LegPricing<'a, 'info>,
     output: LegPricing<'a, 'info>,
     /// The vault base-oracle accounts; present iff any endpoint is routed.
-    base_leg: Option<&'a [AccountInfo<'info>]>,
+    base_leg: Option<OracleLeg<'a, 'info>>,
 }
 
 impl<'a, 'info> SwapValuation<'a, 'info>
@@ -148,37 +148,29 @@ where
         input_mint: &Pubkey,
         output_mint: &Pubkey,
         accounts: &'a [AccountInfo<'info>],
-    ) -> Result<(Self, usize), ProgramError> {
-        let (input, used_input) = LegPricing::parse(vault, vault_key, input_mint, accounts)?;
-        let (output, used_output) =
-            LegPricing::parse(vault, vault_key, output_mint, &accounts[used_input..])?;
-        let mut used = used_input
-            .checked_add(used_output)
-            .ok_or(ProgramError::from(RoshiError::Overflow))?;
+    ) -> Result<(Self, &'a [AccountInfo<'info>]), ProgramError> {
+        let (input, remaining) = LegPricing::parse(vault, vault_key, input_mint, accounts)?;
+        let (output, mut remaining) = LegPricing::parse(vault, vault_key, output_mint, remaining)?;
 
-        let base_leg = if input.routed()? || output.routed()? {
-            let count = leg_account_count(&vault.base_oracle)?;
-            let leg = accounts
-                .get(used..used + count)
-                .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            used += count;
+        let base_leg = if input.routed() || output.routed() {
+            let (leg, after_leg) = OracleLeg::parse(&vault.base_oracle, remaining)?;
+            remaining = after_leg;
             Some(leg)
         } else {
             None
         };
-
         Ok((
             Self {
                 input,
                 output,
                 base_leg,
             },
-            used,
+            remaining,
         ))
     }
 
     /// Value the realized `(spent, received)` amounts in base atoms, reading
-    /// each oracle feed exactly once.
+    /// each reuse-compatible oracle configuration exactly once.
     pub(crate) fn values(
         &self,
         vault: &Vault,
@@ -186,36 +178,13 @@ where
         received: u64,
         clock: &Clock,
     ) -> Result<(u64, u64), ProgramError> {
-        // Each oracle feed is read exactly once per swap. The base leg is read
-        // here; an endpoint that shares the base feed (a routed asset that *is*
-        // the base) reuses that price, and the output endpoint reuses the input
-        // price when they share a feed. Deduping at the raw feed-price level
-        // forbids valuing one feed against two independently supplied updates —
-        // `value_in_base_atoms` still applies each leg's own routed/direct logic,
-        // so a routed leg that is the base prices at exactly 1.0.
-        let base_feed = match self.base_leg {
-            Some(_) => Some(oracle_feed_identity(&vault.base_oracle)?),
+        let mut prices = OracleReadSession::new();
+        let base_price = match &self.base_leg {
+            Some(leg) => Some(prices.read(leg, clock)?),
             None => None,
         };
-        let base_price = match self.base_leg {
-            Some(accounts) => Some(read_oracle_price(&vault.base_oracle, accounts, clock)?.0),
-            None => None,
-        };
-
-        let input_feed = self.input.feed_identity()?;
-        let output_feed = self.output.feed_identity()?;
-        let input_price = if input_feed.is_some() && input_feed == base_feed {
-            base_price
-        } else {
-            self.input.read_asset_price(clock)?
-        };
-        let output_price = if output_feed.is_some() && output_feed == base_feed {
-            base_price
-        } else if output_feed.is_some() && output_feed == input_feed {
-            input_price
-        } else {
-            self.output.read_asset_price(clock)?
-        };
+        let input_price = self.input.read_asset_price(&mut prices, clock)?;
+        let output_price = self.output.read_asset_price(&mut prices, clock)?;
 
         let spent_value = self
             .input
@@ -235,8 +204,9 @@ enum LegPricing<'a, 'info> {
     /// deposits use. The asset's `enabled` flag gates deposits, not
     /// valuation, so a deposit-disabled asset still prices here.
     Asset {
-        asset: Asset,
-        oracle_accounts: &'a [AccountInfo<'info>],
+        asset_decimals: u8,
+        routed: bool,
+        oracle: OracleLeg<'a, 'info>,
     },
 }
 
@@ -256,9 +226,9 @@ where
         vault_key: &Pubkey,
         mint: &Pubkey,
         accounts: &'a [AccountInfo<'info>],
-    ) -> Result<(Self, usize), ProgramError> {
+    ) -> Result<(Self, &'a [AccountInfo<'info>]), ProgramError> {
         if mint.to_bytes() == vault.base_mint {
-            return Ok((Self::Base, 0));
+            return Ok((Self::Base, accounts));
         }
 
         let asset_account = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
@@ -269,48 +239,36 @@ where
         let asset = Account::load_as::<Asset>(asset_account)
             .map_err(|_| ProgramError::from(RoshiError::UnpriceableSwapLeg))?;
 
-        let oracle_account_count = leg_account_count(&asset.oracle)?;
-        let oracle_accounts = accounts
-            .get(1..1 + oracle_account_count)
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
+        let routed = asset.routed()?;
+        let (oracle, remaining) = OracleLeg::parse(&asset.oracle, &accounts[1..])?;
 
         Ok((
             Self::Asset {
-                asset,
-                oracle_accounts,
+                asset_decimals: asset.asset_decimals,
+                routed,
+                oracle,
             },
-            1 + oracle_account_count,
+            remaining,
         ))
     }
 
-    fn routed(&self) -> Result<bool, ProgramError> {
+    fn routed(&self) -> bool {
         match self {
-            Self::Base => Ok(false),
-            Self::Asset { asset, .. } => asset.routed(),
-        }
-    }
-
-    /// This endpoint's oracle feed identity `(kind, feed_id)`, or `None` for the
-    /// base mint. Two endpoints sharing a feed must price against one update.
-    fn feed_identity(&self) -> Result<Option<(OracleKind, [u8; 32])>, ProgramError> {
-        match self {
-            Self::Base => Ok(None),
-            Self::Asset { asset, .. } => Ok(Some(oracle_feed_identity(&asset.oracle)?)),
+            Self::Base => false,
+            Self::Asset { routed, .. } => *routed,
         }
     }
 
     /// Read this endpoint's verified asset price from its supplied oracle
     /// accounts, or `None` for the base mint (which prices one-to-one).
-    fn read_asset_price(&self, clock: &Clock) -> Result<Option<OraclePrice>, ProgramError> {
+    fn read_asset_price<'leg>(
+        &'leg self,
+        prices: &mut OracleReadSession<'leg, 'a, 'info>,
+        clock: &Clock,
+    ) -> Result<Option<OraclePrice>, ProgramError> {
         match self {
             Self::Base => Ok(None),
-            Self::Asset {
-                asset,
-                oracle_accounts,
-            } => {
-                let (asset_price, _) = read_oracle_price(&asset.oracle, oracle_accounts, clock)?;
-                Ok(Some(asset_price))
-            }
+            Self::Asset { oracle, .. } => Ok(Some(prices.read(oracle, clock)?)),
         }
     }
 
@@ -326,9 +284,13 @@ where
     ) -> Result<u64, ProgramError> {
         match self {
             Self::Base => Ok(amount),
-            Self::Asset { asset, .. } => {
+            Self::Asset {
+                asset_decimals,
+                routed,
+                ..
+            } => {
                 let asset_price = asset_price.ok_or(ProgramError::InvalidAccountData)?;
-                let base_price = if asset.routed()? {
+                let base_price = if *routed {
                     // `SwapValuation::parse` provides the shared leg whenever
                     // an endpoint routes.
                     base_price.ok_or(ProgramError::InvalidAccountData)?
@@ -340,38 +302,11 @@ where
                     amount,
                     asset_price,
                     base_price,
-                    asset.asset_decimals,
+                    *asset_decimals,
                     vault.base_decimals,
                 )
                 .map_err(Into::into)
             }
         }
-    }
-}
-
-/// An oracle config's feed identity `(kind, feed_id)`: the key a single swap
-/// dedups on so one feed is never priced against two independent updates.
-fn oracle_feed_identity(config: &OracleConfig) -> Result<(OracleKind, [u8; 32]), ProgramError> {
-    let kind = config
-        .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let feed_id = match kind {
-        OracleKind::Pyth => config.pyth.feed_id,
-        OracleKind::Switchboard => config.switchboard.feed_id,
-    };
-    Ok((kind, feed_id))
-}
-
-/// Accounts one oracle leg consumes (Pyth: 1 price update; Switchboard:
-/// quote, queue, slot-hashes sysvar, instructions sysvar).
-fn leg_account_count(config: &OracleConfig) -> Result<usize, ProgramError> {
-    // Holders of an OracleConfig validate the kind at deserialization, so an
-    // invalid kind here is corrupted state.
-    match config
-        .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?
-    {
-        OracleKind::Pyth => Ok(1),
-        OracleKind::Switchboard => Ok(4),
     }
 }

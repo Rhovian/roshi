@@ -116,28 +116,10 @@ fn load_ticket(svm: &LiteSVM, ticket: Pubkey) -> WithdrawalTicket {
     ticket
 }
 
-fn write_vault_state(
-    svm: &mut LiteSVM,
-    fixture: &RedeemFixture,
-    state: roshi::state::vault::Vault,
-) {
-    svm.set_account(
-        fixture.vault.address,
-        Account {
-            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
-            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
-            owner: roshi::ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
-}
-
 fn advance_vault_epoch(svm: &mut LiteSVM, fixture: &RedeemFixture, report_epoch: u64) {
-    let mut state = fixture.vault.load(svm);
-    state.report_epoch = report_epoch;
-    write_vault_state(svm, fixture, state);
+    fixture
+        .vault
+        .update(svm, |vault| vault.report_epoch = report_epoch);
 }
 
 fn advance_cancel_delay(svm: &mut LiteSVM) {
@@ -296,10 +278,10 @@ fn test_process_withdrawals_closes_zero_entitlement_ticket_without_payout() {
     // A NAV markdown lands before the strike; the entitlement now floors to
     // zero. The ticket can no longer be cancelled (strike-eligible), so the
     // strike must settle it as a zero payout instead of wedging.
-    let mut state = fixture.vault.load(&svm);
-    state.report_epoch = 1;
-    state.total_assets = 100;
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.report_epoch = 1;
+        vault.total_assets = 100;
+    });
 
     let custody = setup_withdraw_custody(&mut svm, &fixture, 0);
     let ix = process_withdrawals_ix(
@@ -438,11 +420,11 @@ fn test_process_withdrawals_strikes_at_effective_nav_mid_drip() {
 
     // Half the NAV is still-locked profit, half-way through its drip at
     // t=1_500: remaining 250_000, effective 750_000.
-    let mut state = fixture.vault.load(&svm);
-    state.locked_profit = 500_000;
-    state.profit_unlock_start_ts = 1_000;
-    state.profit_unlock_end_ts = 2_000;
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.locked_profit = 500_000;
+        vault.profit_unlock_start_ts = 1_000;
+        vault.profit_unlock_end_ts = 2_000;
+    });
     crate::helpers::set_clock_timestamp(&mut svm, 1_500);
 
     let expected_owed =
@@ -870,9 +852,9 @@ fn test_cancel_redeem_grace_reopens_strike_eligible_ticket() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let mut state = fixture.vault.load(&svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
+    });
 
     let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);
@@ -897,9 +879,9 @@ fn test_cancel_redeem_rejects_strike_eligible_ticket_before_grace() {
     };
     let fixture = setup_redeem(&mut svm);
 
-    let mut state = fixture.vault.load(&svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 5_000, 0, 0, 0);
+    });
 
     let (ticket, redeem) = redeem_ix(&fixture, 0, ONE_BASE_SHARES / 2);
     send_ok(&mut svm, redeem, &fixture.owner);

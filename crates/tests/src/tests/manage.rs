@@ -485,7 +485,7 @@ fn test_manage_rejects_flags_longer_than_cpi_section() {
             .unwrap(),
             &authority,
         ),
-        InstructionError::NotEnoughAccountKeys,
+        crate::helpers::NOT_ENOUGH_ACCOUNT_KEYS,
     );
 }
 

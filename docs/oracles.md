@@ -98,6 +98,38 @@ freshness within `max_age_seconds`, and confidence within
 to the configured `price_decimals` before returning the base-denominated
 `OraclePrice`.
 
+### Kamino Scope
+
+Roshi reads prices ingested and normalized by Kamino Scope from its
+`OraclePrices` account. Scope supports multiple upstream oracle sources; Roshi
+trusts the canonical Scope mainnet program to populate the cached entry and
+verifies the selected entry's identity and freshness when reading it.
+
+Scope configs pin the `OraclePrices` account, the entry index, the complete
+selected mapping entry (price-info account, price type, TWAP source/reference
+tolerance, TWAP enabled bitmask, reference price, and generic data), and a max
+observation age in seconds. The reader consumes two accounts — the prices
+account and the `OracleMappings` account the prices account itself declares —
+and requires on every read:
+
+- the prices account address matches the config, both accounts are owned by
+  the canonical Kamino Scope mainnet program, and both carry Scope's
+  discriminators and exact lengths;
+- the mapping entry at the index is unfrozen and every field stored directly
+  for it still equals the configured commitment, so a direct reconfiguration
+  fails the read loudly;
+- the cached value is positive and its observation timestamp is neither in the
+  future nor older than `max_age_seconds`.
+
+There is no configured decimal scale: Scope stores a source-dependent exponent,
+which the reader takes from the entry on every read. The reader accepts any
+exponent representable by `OraclePrice`'s `u8` decimal field; later exact
+normalization or composition fails closed if that operation cannot scale it.
+Liveness depends on Kamino's refresh crank; a stalled crank fails closed through
+the staleness check. Mapping fields and generic payloads may reference other
+Scope indices; Roshi does not recursively snapshot that dependency graph and
+trusts the canonical Scope program to resolve those references.
+
 ## Base Asset
 
 The vault base mint is native to the vault. It does not need a supported asset

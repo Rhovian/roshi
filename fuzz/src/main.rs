@@ -18,7 +18,7 @@ use roshi::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
         PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
-    oracle::{OracleConfig, PythOracleConfig},
+    oracle::{OracleConfig, OraclePrice, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         asset::Asset,
@@ -34,7 +34,10 @@ use roshi::{
 use roshi_interface::{
     access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
     find_share_mint_address,
-    math::{assets_for_redeem, performance_fee_for_nav, shares_for_deposit},
+    math::{
+        assets_for_redeem, base_atoms_from_asset_atoms, performance_fee_for_nav,
+        share_price_from_assets, shares_for_deposit,
+    },
 };
 use solana_account::Account;
 use solana_instruction::AccountMeta;
@@ -47,9 +50,9 @@ const SPL_TRANSFER_TAG: u8 = 3;
 
 mod support;
 use support::{
-    mint_supply, pyth_price_data, set_ata, set_ata_with_program, set_mint, set_pyth_price,
-    set_token_2022_mint, set_token_account, set_token_account_with_program,
-    set_transfer_fee_token_2022_mint, token_balance,
+    mint_supply, pyth_price_data, scope_oracle_data, set_ata, set_ata_with_program, set_mint,
+    set_pyth_price, set_scope_oracle, set_token_2022_mint, set_token_account,
+    set_token_account_with_program, set_transfer_fee_token_2022_mint, token_balance,
 };
 
 const NUM_USERS: usize = 3;
@@ -83,6 +86,33 @@ const PYTH_MAX_AGE_SECS: u64 = 64;
 /// Confidence ceiling: 5% of price. The setup price has conf 0 (passes); the
 /// wide-conf negative installs conf == price (10_000 bps, fails).
 const PYTH_MAX_CONF_BPS: u16 = 500;
+
+// Mock Scope entry for fuzzing the same registered asset through a second
+// oracle. The action restores Pyth after each case so existing sequences remain
+// composable. Program id and frozen bit come from the on-chain reader.
+pub(crate) use roshi::oracle::scope::{FROZEN_FLAG, SCOPE_PROGRAM_ID};
+const SCOPE_PRICE_INFO_ACCOUNT: [u8; 32] = [8u8; 32];
+const SCOPE_PRICE_INDEX: u16 = 445;
+const SCOPE_MAX_AGE_SECS: u64 = 64;
+const SCOPE_PRICE_TYPE: u8 = 26;
+const SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS: u16 = 37;
+const SCOPE_TWAP_ENABLED_BITMASK: u8 = 3;
+const SCOPE_REF_PRICE: u16 = 17;
+const SCOPE_GENERIC: [u8; 20] = [10; 20];
+const SCOPE_MAPPING: ScopeOracleMapping = ScopeOracleMapping::new(
+    SCOPE_PRICE_INFO_ACCOUNT,
+    SCOPE_PRICE_TYPE,
+    SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS,
+    SCOPE_TWAP_ENABLED_BITMASK,
+    SCOPE_REF_PRICE,
+    SCOPE_GENERIC,
+);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DepositExpectation {
+    Success,
+    Rejection,
+}
 
 #[derive(Clone)]
 struct FuzzUser {
@@ -178,7 +208,14 @@ struct RoshiFixture {
     asset_mint: Pubkey,
     asset_pda: Pubkey,
     asset_custody: Pubkey,
+    asset_swap_custody: Pubkey,
+    asset_swap_forward_action: Pubkey,
+    asset_swap_reverse_action: Pubkey,
     pyth_account: Pubkey,
+    /// Mock Kamino Scope accounts used when fuzz actions temporarily switch
+    /// the registered asset from Pyth to Scope.
+    scope_prices_account: Pubkey,
+    scope_mappings_account: Pubkey,
     /// Every asset-mint token account, for the asset conservation sum. A
     /// separate conserved quantity from base: non-base deposits move asset
     /// tokens here and credit `total_assets` in *priced base terms*, so asset
@@ -469,4 +506,46 @@ fn invariant_core(fixture: &mut RoshiFixture) {
         vault.pending_withdrawal_assets,
         pending_assets
     );
+}
+
+#[cfg(test)]
+mod scope_deposit_model_tests {
+    use super::*;
+
+    #[test]
+    fn exponent_19_scope_price_values_one_to_one() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                7,
+                OraclePrice {
+                    value: 10_000_000_000_000_000_000,
+                    decimals: 19,
+                },
+                OraclePrice::UNIT,
+                ASSET_DECIMALS,
+                BASE_DECIMALS,
+            ),
+            Ok(7)
+        );
+    }
+
+    #[test]
+    fn routed_scope_two_over_pyth_two_values_one_to_one() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                7,
+                OraclePrice {
+                    value: 200_000_000_000_000_000,
+                    decimals: 17,
+                },
+                OraclePrice {
+                    value: 200_000_000,
+                    decimals: PYTH_PRICE_DECIMALS,
+                },
+                ASSET_DECIMALS,
+                BASE_DECIMALS,
+            ),
+            Ok(7)
+        );
+    }
 }

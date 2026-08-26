@@ -92,22 +92,54 @@
         }
     }
 
-    fn fresh_asset_deposit_can_reach_transfer(&self, vault: &Vault, amount: u64) -> bool {
+    fn asset_deposit_expectation(
+        &self,
+        vault: &Vault,
+        amount: u64,
+        asset_price: OraclePrice,
+        base_price: OraclePrice,
+    ) -> DepositExpectation {
+        if vault
+            .deposits_paused()
+            .expect("loaded vault has valid flags")
+        {
+            return DepositExpectation::Rejection;
+        }
+        let Ok(base_atoms) = base_atoms_from_asset_atoms(
+            amount,
+            asset_price,
+            base_price,
+            ASSET_DECIMALS,
+            BASE_DECIMALS,
+        ) else {
+            return DepositExpectation::Rejection;
+        };
+        if vault.total_assets_after_deposit(base_atoms).is_err() {
+            return DepositExpectation::Rejection;
+        }
         let Ok(economic_share_supply) =
             vault.economic_share_supply(mint_supply(&self.ctx.svm, &self.share_mint))
         else {
-            return false;
+            return DepositExpectation::Rejection;
         };
-        let Some(base_atoms) = amount.checked_mul(2) else {
-            return false;
+        let Ok(effective_total_assets) = vault.effective_total_assets(self.unix_timestamp()) else {
+            return DepositExpectation::Rejection;
         };
-        shares_for_deposit(
+        if economic_share_supply != 0 {
+            match share_price_from_assets(effective_total_assets, economic_share_supply) {
+                Ok(0) | Err(_) => return DepositExpectation::Rejection,
+                Ok(_) => {}
+            }
+        }
+        match shares_for_deposit(
             base_atoms,
-            vault.total_assets,
+            effective_total_assets,
             economic_share_supply,
             BASE_DECIMALS,
-        )
-        .is_ok()
+        ) {
+            Ok(_) => DepositExpectation::Success,
+            Err(_) => DepositExpectation::Rejection,
+        }
     }
 
     /// Rewrite the Pyth account through `TestContext::write_account`, so
@@ -206,23 +238,17 @@
             return false;
         }
         let amount = (amount % balance) + 1;
-        let vault = self.load_vault();
-        let assert_reject = !vault.deposits_paused().unwrap_or(true)
-            && self.asset_enabled()
-            && self.fresh_asset_deposit_can_reach_transfer(&vault, amount);
         let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
         let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
         let ix = self.deposit_asset_ix(&user, amount);
         let ok = submit(&mut self.ctx, ix, &[&user.kp]);
         let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
         let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
-        if assert_reject {
-            fuzz_assert!(
-                !ok && source_after == source_before && custody_after == custody_before,
-                "asset deposit admitted despite {reason}: \
-                 ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
-            );
-        }
+        fuzz_assert!(
+            !ok && source_after == source_before && custody_after == custody_before,
+            "asset deposit admitted despite {reason}: \
+             ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}, amount={amount}"
+        );
         ok
     }
 
@@ -290,12 +316,7 @@
             self.transfer_fee_token_2022_asset_pda,
             InitializeAssetArgs {
                 asset_mint: self.transfer_fee_token_2022_mint.to_bytes(),
-                oracle: OracleConfig::pyth(PythOracleConfig::new(
-                    PYTH_FEED_ID,
-                    PYTH_PRICE_DECIMALS,
-                    PYTH_MAX_AGE_SECS,
-                    PYTH_MAX_CONF_BPS,
-                )),
+                oracle: Self::pyth_config(),
                 asset_decimals: ASSET_DECIMALS,
                 enabled: true,
                 routed: false,
@@ -323,12 +344,7 @@
         #[range(0..NUM_USERS)] user: usize,
         amount: u64,
     ) -> bool {
-        let oracle = OracleConfig::pyth(PythOracleConfig::new(
-            PYTH_FEED_ID,
-            PYTH_PRICE_DECIMALS,
-            PYTH_MAX_AGE_SECS,
-            PYTH_MAX_CONF_BPS,
-        ));
+        let oracle = Self::pyth_config();
         let disable = roshi_client::instruction::update_asset(
             self.operator.pubkey(),
             self.vault,

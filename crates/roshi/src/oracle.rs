@@ -1,10 +1,13 @@
 mod pyth;
+pub mod scope;
 mod switchboard;
 
 pub use pyth::PythOracle;
 pub use roshi_interface::oracle::{
-    OracleConfig, OracleKind, OraclePrice, PythOracleConfig, SwitchboardOracleConfig,
+    ActiveOracleConfig, OracleConfig, OracleKind, OraclePrice, PythOracleConfig, ScopeOracleConfig,
+    ScopeOracleMapping, SwitchboardOracleConfig,
 };
+pub use scope::ScopeOracle;
 pub use switchboard::SwitchboardOracle;
 
 /// Trait for oracle implementations. Implementations are expected to

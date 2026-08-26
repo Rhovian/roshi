@@ -261,6 +261,99 @@ pub fn set_pyth_price(
     .unwrap();
 }
 
+use roshi::oracle::{
+    scope::{
+        DATED_PRICES_OFFSET, DATED_PRICE_SIZE, GENERIC_OFFSET, ORACLE_MAPPINGS_DISCRIMINATOR,
+        ORACLE_MAPPINGS_LEN, ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN,
+        ORACLE_PRICES_MAPPINGS_OFFSET, PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET,
+        REF_PRICE_OFFSET, TWAP_ENABLED_BITMASK_OFFSET,
+        TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET,
+    },
+    ScopeOracleMapping,
+};
+
+/// Build the two Scope account payloads consumed by Roshi for one entry, laid
+/// out per the on-chain reader's constants. Kept in the standalone fuzz
+/// workspace so mid-action account rewrites can go through
+/// `TestContext::write_account` and participate in snapshot restore.
+#[allow(clippy::too_many_arguments)]
+pub fn scope_oracle_data(
+    declared_mappings: Pubkey,
+    price_index: u16,
+    value: u64,
+    exponent: u64,
+    timestamp: u64,
+    mapping: ScopeOracleMapping,
+    frozen: bool,
+) -> (Vec<u8>, Vec<u8>) {
+    let index = usize::from(price_index);
+
+    let mut prices = vec![0u8; ORACLE_PRICES_LEN];
+    prices[..8].copy_from_slice(ORACLE_PRICES_DISCRIMINATOR);
+    prices[ORACLE_PRICES_MAPPINGS_OFFSET..ORACLE_PRICES_MAPPINGS_OFFSET + 32]
+        .copy_from_slice(declared_mappings.as_ref());
+    let price_offset = DATED_PRICES_OFFSET + DATED_PRICE_SIZE * index;
+    prices[price_offset..price_offset + 8].copy_from_slice(&value.to_le_bytes());
+    prices[price_offset + 8..price_offset + 16].copy_from_slice(&exponent.to_le_bytes());
+    prices[price_offset + 24..price_offset + 32].copy_from_slice(&timestamp.to_le_bytes());
+
+    let mut mappings = vec![0u8; ORACLE_MAPPINGS_LEN];
+    mappings[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
+    let price_info_offset = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
+    mappings[price_info_offset..price_info_offset + 32]
+        .copy_from_slice(&mapping.price_info_account);
+    mappings[PRICE_TYPES_OFFSET + index] =
+        mapping.price_type | if frozen { crate::FROZEN_FLAG } else { 0 };
+    let twap_source_offset = TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET + 2 * index;
+    mappings[twap_source_offset..twap_source_offset + 2]
+        .copy_from_slice(&mapping.twap_source_or_ref_price_tolerance_bps.to_le_bytes());
+    mappings[TWAP_ENABLED_BITMASK_OFFSET + index] = mapping.twap_enabled_bitmask;
+    let ref_price_offset = REF_PRICE_OFFSET + 2 * index;
+    mappings[ref_price_offset..ref_price_offset + 2]
+        .copy_from_slice(&mapping.ref_price.to_le_bytes());
+    let generic_offset = GENERIC_OFFSET + 20 * index;
+    mappings[generic_offset..generic_offset + 20].copy_from_slice(&mapping.generic);
+
+    (prices, mappings)
+}
+
+/// Install a valid mock Scope account pair during fixture setup.
+#[allow(clippy::too_many_arguments)]
+pub fn set_scope_oracle(
+    svm: &mut LiteSVM,
+    prices_account: Pubkey,
+    mappings_account: Pubkey,
+    price_index: u16,
+    mapping: ScopeOracleMapping,
+    value: u64,
+    exponent: u64,
+    timestamp: u64,
+) {
+    let (prices, mappings) = scope_oracle_data(
+        mappings_account,
+        price_index,
+        value,
+        exponent,
+        timestamp,
+        mapping,
+        false,
+    );
+    for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
+        let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+        svm.set_account(
+            address,
+            Account {
+                lamports,
+                data,
+                owner: crate::SCOPE_PROGRAM_ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+    }
+}
+
 /// Read the `amount` field of an SPL token account. Every account the harness
 /// reads is installed in `setup()`, so a missing/short account is a harness bug,
 /// not a 0 balance — fail loudly rather than silently masking it.

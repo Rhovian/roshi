@@ -233,24 +233,6 @@ impl AtomicRedeemFixture {
     }
 }
 
-fn write_vault_state(
-    svm: &mut LiteSVM,
-    fixture: &AtomicRedeemFixture,
-    state: roshi::state::vault::Vault,
-) {
-    svm.set_account(
-        fixture.vault.address,
-        Account {
-            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
-            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
-            owner: ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
-}
-
 #[test]
 fn test_atomic_redeem_rejects_stale_nav_report() {
     let Some((mut svm, ..)) = setup_program() else {
@@ -260,11 +242,11 @@ fn test_atomic_redeem_rejects_stale_nav_report() {
     let fixture = AtomicRedeemFixture::setup(&mut svm);
     fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
 
-    let mut state = fixture.vault.load(&svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 100, 0, 0, 0, 0, 0);
-    state.report_epoch = 1;
-    state.last_update_ts = 1_000;
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 100, 0, 0, 0, 0, 0);
+        vault.report_epoch = 1;
+        vault.last_update_ts = 1_000;
+    });
 
     // One second past max_report_age_secs: the atomic exit would escape an
     // incurred-but-unreported loss, so it rejects.
@@ -301,11 +283,11 @@ fn test_atomic_redeem_entitlement_uses_effective_nav() {
     // Half the NAV is still-locked profit, half-way through its drip:
     // effective NAV = 750_000, so half the shares entitle ~375_000 — below
     // the 500_000 this unwind CPI would pay out.
-    let mut state = fixture.vault.load(&svm);
-    state.locked_profit = 500_000;
-    state.profit_unlock_start_ts = 1_000;
-    state.profit_unlock_end_ts = 2_000;
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.locked_profit = 500_000;
+        vault.profit_unlock_start_ts = 1_000;
+        vault.profit_unlock_end_ts = 2_000;
+    });
     crate::helpers::set_clock_timestamp(&mut svm, 1_500);
 
     assert_roshi_error(
@@ -327,9 +309,9 @@ fn test_atomic_redeem_charges_exit_fee_to_the_pool() {
     let fixture = AtomicRedeemFixture::setup(&mut svm);
     fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
 
-    let mut state = fixture.vault.load(&svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
+    });
 
     send_ok(
         &mut svm,
@@ -362,9 +344,9 @@ fn test_atomic_redeem_min_output_applies_to_net_payout() {
     let fixture = AtomicRedeemFixture::setup(&mut svm);
     fixture.install_action(&mut svm, TRANSFER_AMOUNT_OFFSET);
 
-    let mut state = fixture.vault.load(&svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
-    write_vault_state(&mut svm, &fixture, state);
+    fixture.vault.update(&mut svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 100, 0);
+    });
 
     // Gross proceeds meet min_output but the net payout does not.
     assert_roshi_error(

@@ -349,4 +349,14 @@ impl TestVault {
         };
         vault
     }
+
+    /// Mutate and rewrite the installed vault state while preserving its
+    /// account metadata.
+    pub fn update(&self, svm: &mut LiteSVM, update: impl FnOnce(&mut Vault)) {
+        let mut vault = self.load(svm);
+        update(&mut vault);
+        let mut account = svm.get_account(&self.address).unwrap();
+        account.data = serialize(&RoshiAccount::Vault(vault)).unwrap();
+        svm.set_account(self.address, account).unwrap();
+    }
 }

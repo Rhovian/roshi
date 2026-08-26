@@ -5,7 +5,7 @@ use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
 use super::{
-    oracle_price::read_oracle_price,
+    oracle_price::{OracleLeg, OracleReadSession},
     shared::{next_account, require_writable},
 };
 use crate::{
@@ -36,7 +36,10 @@ use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 /// 8. `[]` Asset PDA (non-base deposits only).
 /// 9. `..` Oracle accounts (non-base deposits only): the asset oracle's
 ///    accounts, then — for routed assets — the vault base oracle's accounts.
-///    Each leg's layout depends on its oracle kind.
+///    Each leg's layout depends on its oracle kind. The base leg is always
+///    present for routed assets; when the asset oracle is identical to the
+///    base oracle its accounts are required but not consulted (one verified
+///    price per feed).
 pub(crate) struct DepositContext<'a, 'info> {
     pub(crate) depositor: &'a AccountInfo<'info>,
     pub(crate) vault_account: &'a AccountInfo<'info>,
@@ -146,17 +149,19 @@ where
 
         let clock = Clock::get()?;
         let oracle_accounts = &self.extra[1..];
-        let (asset_price, consumed) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;
+        let (asset_leg, remaining) = OracleLeg::parse(&asset.oracle, oracle_accounts)?;
+        let base_leg = if asset.routed()? {
+            Some(OracleLeg::parse(&self.vault.base_oracle, remaining)?.0)
+        } else {
+            None
+        };
+        let mut prices = OracleReadSession::new();
+        let asset_price = prices.read(&asset_leg, &clock)?;
         // Direct feeds already quote in base; the base leg is exactly 1.
         // Routed feeds quote in a shared currency, so the vault's base oracle
         // supplies the base/quote leg from the accounts after the asset leg.
-        let base_price = if asset.routed()? {
-            let (price, _) = read_oracle_price(
-                &self.vault.base_oracle,
-                &oracle_accounts[consumed..],
-                &clock,
-            )?;
-            price
+        let base_price = if let Some(base_leg) = &base_leg {
+            prices.read(base_leg, &clock)?
         } else {
             OraclePrice::UNIT
         };

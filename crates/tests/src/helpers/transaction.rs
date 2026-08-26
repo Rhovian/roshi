@@ -10,6 +10,13 @@ use solana_transaction::Transaction;
 /// Lamports airdropped to a funded test account (10 SOL).
 pub const AIRDROP_LAMPORTS: u64 = 10_000_000_000;
 
+/// The error the runtime surfaces for `ProgramError::NotEnoughAccountKeys`.
+/// The variant is deprecated upstream in favor of `MissingAccount`, but the
+/// pinned runtime's conversion still returns `NotEnoughAccountKeys`, so tests
+/// must assert it; this const carries the one documented `allow`.
+#[allow(deprecated)]
+pub const NOT_ENOUGH_ACCOUNT_KEYS: InstructionError = InstructionError::NotEnoughAccountKeys;
+
 /// Airdrop [`AIRDROP_LAMPORTS`] to `account` so it can pay fees and sign. Use to
 /// fund a role keypair (or a fresh outsider) before it submits a transaction.
 pub fn fund(svm: &mut LiteSVM, account: &Keypair) {

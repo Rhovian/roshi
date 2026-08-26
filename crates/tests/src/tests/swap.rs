@@ -18,7 +18,7 @@ use solana_sdk::{account::Account, signer::Signer};
 use wincode::serialize;
 
 use crate::helpers::{
-    assert_instruction_error, assert_roshi_error, fund, send, send_ok,
+    assert_instruction_error, assert_roshi_error, fund, send, send_ok, set_scope_oracle,
     set_token_account_with_program, setup_program, token_balance, VaultBuilder,
     TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
@@ -473,19 +473,17 @@ fn install_delegate(svm: &mut LiteSVM, address: Pubkey) {
 // --- Oracle-bounded swap slippage (`max_swap_slippage_bps`) ---
 
 fn set_swap_slippage(svm: &mut LiteSVM, fixture_vault: &crate::helpers::TestVault, bps: u16) {
-    let mut state = fixture_vault.load(svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 0, bps);
-    svm.set_account(
-        fixture_vault.address,
-        Account {
-            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
-            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
-            owner: ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
+    fixture_vault.update(svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 0, bps);
+    });
+}
+
+fn set_base_oracle(
+    svm: &mut LiteSVM,
+    fixture_vault: &crate::helpers::TestVault,
+    oracle: roshi::oracle::OracleConfig,
+) {
+    fixture_vault.update(svm, |vault| vault.base_oracle = oracle);
 }
 
 /// Install a registered Asset directly (9 decimals, enabled, uncapped).
@@ -865,11 +863,9 @@ fn test_swap_value_bound_prices_same_feed_once() {
         0,
     );
 
-    // The input leg supplies a valid update for feed F; the output leg supplies
-    // an update for a DIFFERENT feed. If the output update were read on its own
-    // the swap would reject it (feed mismatch). Because both endpoints resolve to
-    // the same feed, the input price is reused and the output account is never
-    // consulted — the two-update comparison the finding exploits is gone.
+    // The input leg supplies a valid update for feed F. A duplicate slot must
+    // name that same account; a substituted update is rejected even though its
+    // contents are not needed to reuse the verified price.
     let input_pyth = Pubkey::new_unique();
     crate::helpers::set_pyth_price(&mut svm, input_pyth, feed_id, 200_000_000, -8, 0);
     let wrong_feed = [9u8; 32];
@@ -906,8 +902,7 @@ fn test_swap_value_bound_prices_same_feed_once() {
     )
     .unwrap();
 
-    send_ok(
-        &mut svm,
+    let swap_via = |output_oracle| {
         swap_ix_with_valuation(
             &fixture,
             input_custody,
@@ -919,15 +914,124 @@ fn test_swap_value_bound_prices_same_feed_once() {
                 AccountMeta::new_readonly(asset_pda, false),
                 AccountMeta::new_readonly(input_pyth, false),
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(output_pyth, false),
+                AccountMeta::new_readonly(output_oracle, false),
             ],
-            ix_data,
+            ix_data.clone(),
+        )
+    };
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            swap_via(output_pyth),
+            &fixture.vault.roles.strategist,
         ),
+        InstructionError::InvalidAccountData,
+    );
+
+    send_ok(
+        &mut svm,
+        swap_via(input_pyth),
         &fixture.vault.roles.strategist,
     );
 
     assert_eq!(token_balance(&svm, &input_custody), 1_000_000_000 - amount);
     assert_eq!(token_balance(&svm, &output_custody), amount);
+}
+
+#[test]
+fn test_swap_prices_routed_scope_endpoints_over_pyth_base() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let fixture = SwapFixture::setup(&mut svm);
+    fund(&mut svm, &fixture.vault.roles.strategist);
+    set_swap_slippage(&mut svm, &fixture.vault, 100);
+
+    let base_feed = [10u8; 32];
+    set_base_oracle(
+        &mut svm,
+        &fixture.vault,
+        roshi::oracle::OracleConfig::pyth(roshi::oracle::PythOracleConfig::new(
+            base_feed,
+            8,
+            i64::MAX as u64,
+            250,
+        )),
+    );
+    let base_pyth = Pubkey::new_unique();
+    crate::helpers::set_pyth_price(&mut svm, base_pyth, base_feed, 100_000_000, -8, 0);
+
+    let asset_mint = Pubkey::new_unique();
+    crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
+    let prices = Pubkey::new_unique();
+    let mappings = Pubkey::new_unique();
+    let scope_config = roshi::oracle::ScopeOracleConfig::new(
+        prices.to_bytes(),
+        roshi::oracle::ScopeOracleMapping::new([13u8; 32], 26, 11, 1, 29, [21u8; 20]),
+        445,
+        i64::MAX as u64,
+    );
+    set_scope_oracle(
+        &mut svm,
+        &scope_config,
+        mappings,
+        200_000_000_000_000_000,
+        17,
+        0,
+    );
+    let asset_pda = install_asset(
+        &mut svm,
+        &fixture.vault,
+        asset_mint,
+        roshi::oracle::OracleConfig::scope(scope_config),
+        true,
+    );
+
+    let input = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        input,
+        &asset_mint,
+        &fixture.sub_account,
+        INPUT_BALANCE,
+    );
+    let output = Pubkey::new_unique();
+    crate::helpers::set_token_account(
+        &mut svm,
+        output,
+        &asset_mint,
+        &fixture.sub_account,
+        OUTPUT_BALANCE,
+    );
+    let action = install_transfer_action(&mut svm, &fixture, input, output);
+
+    send_ok(
+        &mut svm,
+        swap_ix_with_valuation(
+            &fixture,
+            input,
+            output,
+            action,
+            input,
+            output,
+            vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(prices, false),
+                AccountMeta::new_readonly(mappings, false),
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(prices, false),
+                AccountMeta::new_readonly(mappings, false),
+                AccountMeta::new_readonly(base_pyth, false),
+            ],
+            fixture.ix_data.clone(),
+        ),
+        &fixture.vault.roles.strategist,
+    );
+
+    assert_eq!(token_balance(&svm, &input), INPUT_BALANCE - SWAP_AMOUNT);
+    assert_eq!(token_balance(&svm, &output), OUTPUT_BALANCE + SWAP_AMOUNT);
 }
 
 #[test]
@@ -1137,10 +1241,8 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
         true,
     );
 
-    // The base leg supplies a valid update for the feed. The asset legs supply an
-    // update for a DIFFERENT feed: if either were read on its own the swap would
-    // reject it (feed mismatch). Dedup against the base feed means they are never
-    // consulted.
+    // The base leg supplies a valid update for the feed. Reused asset slots
+    // must name that same account; arbitrary same-arity slots are rejected.
     let pyth_base = Pubkey::new_unique();
     crate::helpers::set_pyth_price(&mut svm, pyth_base, feed, 100_000_000, -8, 0);
     let pyth_wrong = Pubkey::new_unique();
@@ -1193,8 +1295,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
     )
     .unwrap();
 
-    send_ok(
-        &mut svm,
+    let swap_via = |asset_oracle| {
         roshi_client::instruction::swap(
             fixture_vault.roles.strategist.pubkey(),
             vault.address,
@@ -1204,9 +1305,9 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
             action,
             vec![
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(asset_oracle, false),
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(asset_oracle, false),
                 AccountMeta::new_readonly(pyth_base, false),
             ],
             vec![
@@ -1234,10 +1335,24 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                         is_writable: false,
                     },
                 ]),
-                ix_data,
+                ix_data: ix_data.clone(),
             },
         )
-        .unwrap(),
+        .unwrap()
+    };
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            swap_via(pyth_wrong),
+            &fixture_vault.roles.strategist,
+        ),
+        InstructionError::InvalidAccountData,
+    );
+
+    send_ok(
+        &mut svm,
+        swap_via(pyth_base),
         &fixture_vault.roles.strategist,
     );
 

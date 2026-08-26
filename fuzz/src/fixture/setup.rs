@@ -68,7 +68,7 @@
             withdrawal_authority: withdrawal_authority.pubkey().to_bytes(),
             base_mint: base_mint.to_bytes(),
             base_decimals: BASE_DECIMALS,
-            base_oracle: OracleConfig::default(),
+            base_oracle: Self::pyth_config(),
             deposit_sub_account: 0,
             withdraw_sub_account: 1,
             treasury: treasury.to_bytes(),
@@ -104,7 +104,7 @@
                     treasury: treasury.to_bytes(),
                     deposit_sub_account: 0,
                     withdraw_sub_account: 1,
-                    base_oracle: OracleConfig::default(),
+                    base_oracle: Self::pyth_config(),
                     performance_fee_bps: PERF_FEE_BPS,
                     withdrawal_buffer_bps: WITHDRAWAL_BUFFER_BPS,
                     deposit_cap: 0,
@@ -252,14 +252,40 @@
             ActionScope::Manager,
         );
 
-        // 4f. Register a non-base asset priced through a mock Pyth feed. The
-        //     custody is the sub-account's ATA for the asset mint; the price
-        //     account is installed fresh (publish_time == now == 0) so deposits
-        //     price through `oracle.rs` from the first action. This exercises
-        //     `initialize_asset` for real (admin-signed, PDA-funded).
+        // 4f. Register a non-base asset through Scope, then switch it to the
+        //     mock Pyth feed used by the general action set. Scope-specific
+        //     actions switch it back temporarily. This exercises both oracle
+        //     configs through real admin instructions without duplicating the
+        //     asset mint, custody, users, or conservation state.
         let asset_mint = Pubkey::new_unique();
         set_mint(&mut ctx.svm, asset_mint, &operator.pubkey(), ASSET_DECIMALS);
         let asset_custody = set_ata(&mut ctx.svm, &sub_account, &asset_mint, 0);
+        let asset_swap_custody = Pubkey::new_unique();
+        set_token_account(
+            &mut ctx.svm,
+            asset_swap_custody,
+            &asset_mint,
+            &sub_account,
+            0,
+        );
+        let (asset_swap_forward_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            asset_custody,
+            asset_swap_custody,
+            ActionScope::Swap,
+        );
+        let (asset_swap_reverse_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            asset_swap_custody,
+            asset_custody,
+            ActionScope::Swap,
+        );
         let pyth_account = Pubkey::new_unique();
         set_pyth_price(
             &mut ctx.svm,
@@ -268,6 +294,18 @@
             PYTH_BASE_PRICE,
             0,
             PYTH_EXPONENT,
+            0,
+        );
+        let scope_prices_account = Pubkey::new_unique();
+        let scope_mappings_account = Pubkey::new_unique();
+        set_scope_oracle(
+            &mut ctx.svm,
+            scope_prices_account,
+            scope_mappings_account,
+            SCOPE_PRICE_INDEX,
+            SCOPE_MAPPING,
+            200_000_000_000_000_000,
+            17,
             0,
         );
         let (asset_pda, _) = Asset::find_address(&vault, &asset_mint);
@@ -280,11 +318,11 @@
                 asset_pda,
                 InitializeAssetArgs {
                     asset_mint: asset_mint.to_bytes(),
-                    oracle: OracleConfig::pyth(PythOracleConfig::new(
-                        PYTH_FEED_ID,
-                        PYTH_PRICE_DECIMALS,
-                        PYTH_MAX_AGE_SECS,
-                        PYTH_MAX_CONF_BPS,
+                    oracle: OracleConfig::scope(ScopeOracleConfig::new(
+                        scope_prices_account.to_bytes(),
+                        SCOPE_MAPPING,
+                        SCOPE_PRICE_INDEX,
+                        SCOPE_MAX_AGE_SECS,
                     )),
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
@@ -294,7 +332,24 @@
             )
             .unwrap(),
             &[&operator],
-            "initialize_asset",
+            "initialize_asset(scope)",
+        );
+        submit_ok(
+            &mut ctx,
+            roshi_client::instruction::update_asset(
+                operator.pubkey(),
+                vault,
+                asset_pda,
+                UpdateAssetArgs {
+                    oracle: Self::pyth_config(),
+                    enabled: true,
+                    routed: false,
+                    deposit_cap_atoms: u64::MAX,
+                },
+            )
+            .unwrap(),
+            &[&operator],
+            "update_asset(pyth)",
         );
 
         // 4g. Register a bare Token-2022 asset. Extended Token-2022 mints are
@@ -353,12 +408,7 @@
                 token_2022_asset_pda,
                 InitializeAssetArgs {
                     asset_mint: token_2022_asset_mint.to_bytes(),
-                    oracle: OracleConfig::pyth(PythOracleConfig::new(
-                        PYTH_FEED_ID,
-                        PYTH_PRICE_DECIMALS,
-                        PYTH_MAX_AGE_SECS,
-                        PYTH_MAX_CONF_BPS,
-                    )),
+                    oracle: Self::pyth_config(),
                     asset_decimals: ASSET_DECIMALS,
                     enabled: true,
                     routed: false,
@@ -391,7 +441,7 @@
             external_account,
             treasury,
         ];
-        let mut asset_accounts = vec![asset_custody];
+        let mut asset_accounts = vec![asset_custody, asset_swap_custody];
         let mut token_2022_asset_accounts = vec![token_2022_asset_custody, token_2022_swap_custody];
         for _ in 0..NUM_USERS {
             let kp = Rc::new(Keypair::new());
@@ -517,7 +567,12 @@
             asset_mint,
             asset_pda,
             asset_custody,
+            asset_swap_custody,
+            asset_swap_forward_action,
+            asset_swap_reverse_action,
             pyth_account,
+            scope_prices_account,
+            scope_mappings_account,
             asset_accounts,
             initial_asset,
             token_2022_asset_mint,
