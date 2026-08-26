@@ -6,6 +6,22 @@ use crate::oracle::{
     OracleConfig, OracleKind, OraclePrice, PythOracle, ScopeOracle, SwitchboardOracle,
 };
 
+// Accounts per oracle leg. The single arity source: `split_oracle_accounts`
+// sizes leg slices from these, and `read_oracle_price` splits with the same
+// consts as array-pattern lengths, so count and consumption cannot drift.
+const PYTH_LEG_ACCOUNTS: usize = 1; // PriceUpdateV2
+const SWITCHBOARD_LEG_ACCOUNTS: usize = 4; // quote, queue, slot hashes, instructions
+const SCOPE_LEG_ACCOUNTS: usize = 2; // OraclePrices, OracleMappings
+
+/// Split one `N`-account leg from the front of `accounts`.
+fn split_leg<'a, 'info, const N: usize>(
+    accounts: &'a [AccountInfo<'info>],
+) -> Result<(&'a [AccountInfo<'info>; N], &'a [AccountInfo<'info>]), ProgramError> {
+    accounts
+        .split_first_chunk::<N>()
+        .ok_or(ProgramError::NotEnoughAccountKeys)
+}
+
 /// Read one verified oracle leg from the front of `accounts`, returning its
 /// price and the unconsumed accounts.
 pub(crate) fn read_oracle_price<'a, 'info>(
@@ -18,37 +34,33 @@ where
 {
     // Both holders of an OracleConfig (vault, asset) validate the kind at
     // deserialization, so an invalid kind here is corrupted state.
-    let kind = oracle
+    match oracle
         .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let (accounts, remaining) = split_oracle_accounts(oracle, accounts)?;
-
-    let price = match kind {
+        .map_err(|_| ProgramError::InvalidAccountData)?
+    {
         OracleKind::Pyth => {
-            let price_account = &accounts[0];
-            PythOracle::new(oracle.pyth_config())
-                .read_verified_price(price_account, clock.unix_timestamp)?
+            let ([price_account], remaining) = split_leg::<PYTH_LEG_ACCOUNTS>(accounts)?;
+            let price = PythOracle::new(oracle.pyth_config())
+                .read_verified_price(price_account, clock.unix_timestamp)?;
+            Ok((price, remaining))
         }
         OracleKind::Switchboard => {
-            let quote = &accounts[0];
-            let queue = &accounts[1];
-            let slothash = &accounts[2];
-            let ix_sysvar = &accounts[3];
-            SwitchboardOracle::new(oracle.switchboard_config())
-                .read_verified_price(quote, queue, slothash, ix_sysvar, clock.slot)?
+            let ([quote, queue, slothash, ix_sysvar], remaining) =
+                split_leg::<SWITCHBOARD_LEG_ACCOUNTS>(accounts)?;
+            let price = SwitchboardOracle::new(oracle.switchboard_config())
+                .read_verified_price(quote, queue, slothash, ix_sysvar, clock.slot)?;
+            Ok((price, remaining))
         }
         OracleKind::Scope => {
-            let prices = &accounts[0];
-            let mappings = &accounts[1];
-            ScopeOracle::new(oracle.scope_config()).read_verified_price(
+            let ([prices, mappings], remaining) = split_leg::<SCOPE_LEG_ACCOUNTS>(accounts)?;
+            let price = ScopeOracle::new(oracle.scope_config()).read_verified_price(
                 prices,
                 mappings,
                 clock.unix_timestamp,
-            )?
+            )?;
+            Ok((price, remaining))
         }
-    };
-
-    Ok((price, remaining))
+    }
 }
 
 /// Split one oracle leg from the front of `accounts`.
@@ -60,9 +72,9 @@ pub(crate) fn split_oracle_accounts<'a, 'info>(
         .kind()
         .map_err(|_| ProgramError::InvalidAccountData)?
     {
-        OracleKind::Pyth => 1,        // PriceUpdateV2
-        OracleKind::Switchboard => 4, // quote, queue, slot hashes, instructions
-        OracleKind::Scope => 2,       // OraclePrices, OracleMappings
+        OracleKind::Pyth => PYTH_LEG_ACCOUNTS,
+        OracleKind::Switchboard => SWITCHBOARD_LEG_ACCOUNTS,
+        OracleKind::Scope => SCOPE_LEG_ACCOUNTS,
     };
     if accounts.len() < count {
         return Err(ProgramError::NotEnoughAccountKeys);

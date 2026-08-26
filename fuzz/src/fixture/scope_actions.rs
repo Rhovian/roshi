@@ -25,8 +25,8 @@ pub fn action_deposit_asset_scope_fresh(
         now - age,
         SCOPE_PRICE_TYPE,
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );
@@ -85,8 +85,8 @@ pub fn action_deposit_asset_scope_routed(
         now,
         SCOPE_PRICE_TYPE,
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );
@@ -164,7 +164,7 @@ pub fn action_deposit_asset_scope_rejects_entry(
         if wrong_type {
             SCOPE_PRICE_TYPE - 1
         } else if frozen {
-            SCOPE_PRICE_TYPE | SCOPE_FROZEN_FLAG
+            SCOPE_PRICE_TYPE | FROZEN_FLAG
         } else {
             SCOPE_PRICE_TYPE
         },
@@ -173,8 +173,8 @@ pub fn action_deposit_asset_scope_rejects_entry(
         } else {
             SCOPE_PRICE_INFO_ACCOUNT
         },
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );
@@ -202,8 +202,8 @@ pub fn action_deposit_asset_scope_rejects_timestamp(
         timestamp,
         SCOPE_PRICE_TYPE,
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );
@@ -248,12 +248,12 @@ pub fn action_deposit_asset_scope_rejects_accounts(
         if wrong_prices_owner {
             Pubkey::new_unique()
         } else {
-            SCOPE_PROGRAM
+            SCOPE_PROGRAM_ID
         },
         if wrong_mappings_owner {
             Pubkey::new_unique()
         } else {
-            SCOPE_PROGRAM
+            SCOPE_PROGRAM_ID
         },
         malformed_prices,
         truncate_mappings,
@@ -313,8 +313,8 @@ pub fn action_deposit_asset_scope_rejects_config_or_clock(
         now,
         SCOPE_PRICE_TYPE,
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );
@@ -348,14 +348,17 @@ pub fn action_deposit_asset_scope_rejects_config_or_clock(
     ok
 }
 
-/// The config boundary is enforced before state changes: index 511 is legal,
-/// while 512 must reject and leave the Asset byte-for-byte unchanged.
+/// The config boundary is enforced before state changes: the last in-range
+/// index is legal, while `MAX_ENTRIES` must reject and leave the Asset
+/// byte-for-byte unchanged.
 pub fn action_scope_index_bound(&mut self) -> bool {
     let before = self.load_asset();
-    let last_ok = self.update_primary_asset_oracle(self.scope_config(511), false);
+    let last_index = ScopeOracleConfig::MAX_ENTRIES - 1;
+    let last_ok = self.update_primary_asset_oracle(self.scope_config(last_index), false);
     fuzz_assert!(last_ok, "last in-range Scope index rejected");
     let valid = self.load_asset();
-    let invalid_ok = self.update_primary_asset_oracle(self.scope_config(512), false);
+    let invalid_ok =
+        self.update_primary_asset_oracle(self.scope_config(ScopeOracleConfig::MAX_ENTRIES), false);
     let after = self.load_asset();
     fuzz_assert!(
         !invalid_ok && after == valid,
@@ -364,8 +367,8 @@ pub fn action_scope_index_bound(&mut self) -> bool {
     let frozen_type = OracleConfig::scope(ScopeOracleConfig::new(
         self.scope_prices_account.to_bytes(),
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_FROZEN_FLAG,
-        511,
+        FROZEN_FLAG,
+        last_index,
         SCOPE_MAX_AGE_SECS,
     ));
     let invalid_type_ok = self.update_primary_asset_oracle(frozen_type, false);

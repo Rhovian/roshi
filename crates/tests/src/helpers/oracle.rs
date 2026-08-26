@@ -1,45 +1,47 @@
 use litesvm::LiteSVM;
+use roshi::oracle::scope::{
+    DATED_PRICES_OFFSET, DATED_PRICE_SIZE, ORACLE_MAPPINGS_DISCRIMINATOR, ORACLE_MAPPINGS_LEN,
+    ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN, ORACLE_PRICES_MAPPINGS_OFFSET,
+    PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET, SCOPE_PROGRAM_ID,
+};
+use roshi::oracle::ScopeOracleConfig;
 use solana_pubkey::Pubkey;
 use solana_sdk::account::Account;
 
 /// Pyth Solana Receiver program id (owner of `PriceUpdateV2` accounts).
 pub const PYTH_RECEIVER_ID: Pubkey =
     solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
-/// Canonical Kamino Scope mainnet program.
-pub const SCOPE_PROGRAM_ID: Pubkey =
-    solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 
-/// Install a mock Kamino Scope `OraclePrices` + `OracleMappings` account pair
-/// holding one unfrozen entry, matching the layout the program reads: prices =
-/// 8-byte discriminator, mappings pubkey, 512 56-byte `DatedPrice` entries;
-/// mappings = 8-byte discriminator, 512 price-info pubkeys, then 512
-/// price-type bytes.
-#[allow(clippy::too_many_arguments)]
+/// Install the mock Kamino Scope `OraclePrices` + `OracleMappings` account
+/// pair a config points at, holding one unfrozen entry with the given
+/// observation. The account shape comes from the reader's layout constants,
+/// the addresses and entry binding from the config — except the mappings
+/// address, which by design lives in the prices account, not the config.
 pub fn set_scope_oracle(
     svm: &mut LiteSVM,
-    prices_account: Pubkey,
+    config: &ScopeOracleConfig,
     mappings_account: Pubkey,
-    price_index: u16,
-    price_info_account: [u8; 32],
-    price_type: u8,
     value: u64,
     exp: u64,
     unix_timestamp: u64,
 ) {
-    let index = usize::from(price_index);
+    let prices_account = Pubkey::new_from_array(config.prices_account);
+    let index = usize::from(config.price_index);
 
-    let mut prices = vec![0u8; 28_712];
-    prices[..8].copy_from_slice(&[89, 128, 118, 221, 6, 72, 180, 146]);
-    prices[8..40].copy_from_slice(&mappings_account.to_bytes());
-    let base = 40 + 56 * index;
+    let mut prices = vec![0u8; ORACLE_PRICES_LEN];
+    prices[..8].copy_from_slice(ORACLE_PRICES_DISCRIMINATOR);
+    prices[ORACLE_PRICES_MAPPINGS_OFFSET..ORACLE_PRICES_MAPPINGS_OFFSET + 32]
+        .copy_from_slice(&mappings_account.to_bytes());
+    let base = DATED_PRICES_OFFSET + DATED_PRICE_SIZE * index;
     prices[base..base + 8].copy_from_slice(&value.to_le_bytes());
     prices[base + 8..base + 16].copy_from_slice(&exp.to_le_bytes());
     prices[base + 24..base + 32].copy_from_slice(&unix_timestamp.to_le_bytes());
 
-    let mut mappings = vec![0u8; 29_704];
-    mappings[..8].copy_from_slice(&[40, 244, 110, 80, 255, 214, 243, 188]);
-    mappings[8 + 32 * index..8 + 32 * index + 32].copy_from_slice(&price_info_account);
-    mappings[16_392 + index] = price_type;
+    let mut mappings = vec![0u8; ORACLE_MAPPINGS_LEN];
+    mappings[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
+    let info = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
+    mappings[info..info + 32].copy_from_slice(&config.price_info_account);
+    mappings[PRICE_TYPES_OFFSET + index] = config.price_type;
 
     for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
         let lamports = svm.minimum_balance_for_rent_exemption(data.len());

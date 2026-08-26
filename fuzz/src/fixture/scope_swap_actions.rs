@@ -18,8 +18,8 @@ pub fn action_swap_scope_asset(
         now,
         SCOPE_PRICE_TYPE,
         SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PROGRAM,
-        SCOPE_PROGRAM,
+        SCOPE_PROGRAM_ID,
+        SCOPE_PROGRAM_ID,
         false,
         false,
     );

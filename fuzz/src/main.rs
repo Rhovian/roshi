@@ -88,14 +88,12 @@ const PYTH_MAX_CONF_BPS: u16 = 500;
 
 // Mock Scope entry for fuzzing the same registered asset through a second
 // oracle. The action restores Pyth after each case so existing sequences remain
-// composable.
-const SCOPE_PROGRAM: Pubkey =
-    solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
+// composable. Program id and frozen bit come from the on-chain reader.
+pub(crate) use roshi::oracle::scope::{FROZEN_FLAG, SCOPE_PROGRAM_ID};
 const SCOPE_PRICE_INFO_ACCOUNT: [u8; 32] = [8u8; 32];
 const SCOPE_PRICE_INDEX: u16 = 445;
 const SCOPE_MAX_AGE_SECS: u64 = 64;
 const SCOPE_PRICE_TYPE: u8 = 26;
-const SCOPE_FROZEN_FLAG: u8 = 0x80;
 
 #[derive(Clone)]
 struct FuzzUser {

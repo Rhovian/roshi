@@ -1,5 +1,5 @@
 mod pyth;
-mod scope;
+pub mod scope;
 mod switchboard;
 
 pub use pyth::PythOracle;

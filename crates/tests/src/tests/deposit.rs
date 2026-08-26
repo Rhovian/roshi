@@ -531,9 +531,7 @@ fn install_scope_priced_asset(
 
     let prices_account = solana_pubkey::Pubkey::new_unique();
     let mappings_account = solana_pubkey::Pubkey::new_unique();
-    let price_info_account = [7u8; 32];
-    let price_type = 26;
-    let price_index = 445;
+    let scope_config = ScopeOracleConfig::new(prices_account.to_bytes(), [7u8; 32], 26, 445, 300);
 
     fund(svm, &vault.roles.admin);
     send_ok(
@@ -545,13 +543,7 @@ fn install_scope_priced_asset(
             asset_pda,
             InitializeAssetArgs {
                 asset_mint: asset_mint.to_bytes(),
-                oracle: OracleConfig::scope(ScopeOracleConfig::new(
-                    prices_account.to_bytes(),
-                    price_info_account,
-                    price_type,
-                    price_index,
-                    300,
-                )),
+                oracle: OracleConfig::scope(scope_config),
                 asset_decimals: 9,
                 enabled: true,
                 routed,
@@ -564,11 +556,8 @@ fn install_scope_priced_asset(
 
     set_scope_oracle(
         svm,
-        prices_account,
+        &scope_config,
         mappings_account,
-        price_index,
-        price_info_account,
-        price_type,
         200_000_000_000_000_000, // 2.0 at exp 17
         17,
         NOW as u64 - age_seconds,
@@ -686,7 +675,7 @@ fn test_deposit_routed_scope_asset_advances_to_pyth_base_leg() {
             ]),
             &depositor,
         ),
-        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
+        crate::helpers::NOT_ENOUGH_ACCOUNT_KEYS,
     );
     assert_eq!(token_balance(&svm, &source), amount);
 
@@ -932,7 +921,7 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
             ]),
             &depositor,
         ),
-        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
+        crate::helpers::NOT_ENOUGH_ACCOUNT_KEYS,
     );
     assert_eq!(token_balance(&svm, &source), amount);
 
@@ -1046,7 +1035,7 @@ fn test_deposit_routed_asset_dedups_against_base_feed() {
             ]),
             &depositor,
         ),
-        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
+        crate::helpers::NOT_ENOUGH_ACCOUNT_KEYS,
     );
     assert_eq!(token_balance(&svm, &source), amount);
 

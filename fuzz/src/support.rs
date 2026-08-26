@@ -261,19 +261,16 @@ pub fn set_pyth_price(
     .unwrap();
 }
 
-/// Kamino Scope account sizes and discriminators pinned by the on-chain reader.
-const SCOPE_PRICES_LEN: usize = 28_712;
-const SCOPE_PRICES_DISCRIMINATOR: [u8; 8] = [89, 128, 118, 221, 6, 72, 180, 146];
-const SCOPE_MAPPINGS_LEN: usize = 29_704;
-const SCOPE_MAPPINGS_DISCRIMINATOR: [u8; 8] = [40, 244, 110, 80, 255, 214, 243, 188];
-const SCOPE_PRICES_OFFSET: usize = 40;
-const SCOPE_PRICE_SIZE: usize = 56;
-const SCOPE_PRICE_INFO_OFFSET: usize = 8;
-const SCOPE_PRICE_TYPES_OFFSET: usize = 16_392;
+use roshi::oracle::scope::{
+    DATED_PRICES_OFFSET, DATED_PRICE_SIZE, ORACLE_MAPPINGS_DISCRIMINATOR, ORACLE_MAPPINGS_LEN,
+    ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN, ORACLE_PRICES_MAPPINGS_OFFSET,
+    PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET,
+};
 
-/// Build the two Scope account payloads consumed by Roshi for one entry.
-/// Kept in the standalone fuzz workspace so mid-action account rewrites can go
-/// through `TestContext::write_account` and participate in snapshot restore.
+/// Build the two Scope account payloads consumed by Roshi for one entry, laid
+/// out per the on-chain reader's constants. Kept in the standalone fuzz
+/// workspace so mid-action account rewrites can go through
+/// `TestContext::write_account` and participate in snapshot restore.
 #[allow(clippy::too_many_arguments)]
 pub fn scope_oracle_data(
     declared_mappings: Pubkey,
@@ -286,20 +283,21 @@ pub fn scope_oracle_data(
 ) -> (Vec<u8>, Vec<u8>) {
     let index = usize::from(price_index);
 
-    let mut prices = vec![0u8; SCOPE_PRICES_LEN];
-    prices[..8].copy_from_slice(&SCOPE_PRICES_DISCRIMINATOR);
-    prices[8..40].copy_from_slice(declared_mappings.as_ref());
-    let price_offset = SCOPE_PRICES_OFFSET + SCOPE_PRICE_SIZE * index;
+    let mut prices = vec![0u8; ORACLE_PRICES_LEN];
+    prices[..8].copy_from_slice(ORACLE_PRICES_DISCRIMINATOR);
+    prices[ORACLE_PRICES_MAPPINGS_OFFSET..ORACLE_PRICES_MAPPINGS_OFFSET + 32]
+        .copy_from_slice(declared_mappings.as_ref());
+    let price_offset = DATED_PRICES_OFFSET + DATED_PRICE_SIZE * index;
     prices[price_offset..price_offset + 8].copy_from_slice(&value.to_le_bytes());
     prices[price_offset + 8..price_offset + 16].copy_from_slice(&exponent.to_le_bytes());
     prices[price_offset + 24..price_offset + 32].copy_from_slice(&timestamp.to_le_bytes());
 
-    let mut mappings = vec![0u8; SCOPE_MAPPINGS_LEN];
-    mappings[..8].copy_from_slice(&SCOPE_MAPPINGS_DISCRIMINATOR);
-    let price_info_offset = SCOPE_PRICE_INFO_OFFSET + 32 * index;
+    let mut mappings = vec![0u8; ORACLE_MAPPINGS_LEN];
+    mappings[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
+    let price_info_offset = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
     mappings[price_info_offset..price_info_offset + 32]
         .copy_from_slice(&mapped_price_info_account);
-    mappings[SCOPE_PRICE_TYPES_OFFSET + index] = price_type;
+    mappings[PRICE_TYPES_OFFSET + index] = price_type;
 
     (prices, mappings)
 }
@@ -333,7 +331,7 @@ pub fn set_scope_oracle(
             Account {
                 lamports,
                 data,
-                owner: crate::SCOPE_PROGRAM,
+                owner: crate::SCOPE_PROGRAM_ID,
                 executable: false,
                 rent_epoch: 0,
             },

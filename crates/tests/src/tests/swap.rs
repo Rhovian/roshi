@@ -978,16 +978,17 @@ fn test_swap_prices_routed_scope_endpoints_over_pyth_base() {
     crate::helpers::set_mint(&mut svm, asset_mint, &Pubkey::new_unique(), 9);
     let prices = Pubkey::new_unique();
     let mappings = Pubkey::new_unique();
-    let price_info = [13u8; 32];
-    let price_type = 26;
-    let price_index = 445;
+    let scope_config = roshi::oracle::ScopeOracleConfig::new(
+        prices.to_bytes(),
+        [13u8; 32],
+        26,
+        445,
+        i64::MAX as u64,
+    );
     set_scope_oracle(
         &mut svm,
-        prices,
+        &scope_config,
         mappings,
-        price_index,
-        price_info,
-        price_type,
         200_000_000_000_000_000,
         17,
         0,
@@ -996,13 +997,7 @@ fn test_swap_prices_routed_scope_endpoints_over_pyth_base() {
         &mut svm,
         &fixture.vault,
         asset_mint,
-        roshi::oracle::OracleConfig::scope(roshi::oracle::ScopeOracleConfig::new(
-            prices.to_bytes(),
-            price_info,
-            price_type,
-            price_index,
-            i64::MAX as u64,
-        )),
+        roshi::oracle::OracleConfig::scope(scope_config),
         true,
     );
 

@@ -13,22 +13,39 @@ use super::{Oracle, OraclePrice, ScopeOracleConfig};
 // `OracleMappings` is a struct of arrays; the two Roshi reads are
 // `price_info_accounts: [Pubkey; 512]` and `price_types: [u8; 512]`, with the
 // frozen flag in bit 7 of each price type.
-const ORACLE_PRICES_DISCRIMINATOR: &[u8; 8] = &[89, 128, 118, 221, 6, 72, 180, 146];
-const ORACLE_PRICES_LEN: usize = 28_712;
-const ORACLE_PRICES_MAPPINGS_OFFSET: usize = 8;
-const DATED_PRICES_OFFSET: usize = 40;
-const DATED_PRICE_SIZE: usize = 56;
+//
+// These constants are the one in-tree encoding of that layout; test and fuzz
+// account builders import them rather than restating the numbers.
 
-const ORACLE_MAPPINGS_DISCRIMINATOR: &[u8; 8] = &[40, 244, 110, 80, 255, 214, 243, 188];
-const ORACLE_MAPPINGS_LEN: usize = 29_704;
-const PRICE_INFO_ACCOUNTS_OFFSET: usize = 8;
-const PRICE_TYPES_OFFSET: usize = 16_392;
+/// Anchor discriminator of Scope's `OraclePrices` account.
+pub const ORACLE_PRICES_DISCRIMINATOR: &[u8; 8] = &[89, 128, 118, 221, 6, 72, 180, 146];
+/// Offset of the declared `oracle_mappings` pubkey inside `OraclePrices`.
+pub const ORACLE_PRICES_MAPPINGS_OFFSET: usize = 8;
+/// Offset of the `prices` array inside `OraclePrices`.
+pub const DATED_PRICES_OFFSET: usize = 40;
+/// Stride of one `DatedPrice` entry.
+pub const DATED_PRICE_SIZE: usize = 56;
+/// Exact `OraclePrices` account length: header plus the full entry array.
+pub const ORACLE_PRICES_LEN: usize =
+    DATED_PRICES_OFFSET + DATED_PRICE_SIZE * ScopeOracleConfig::MAX_ENTRIES as usize;
+
+/// Anchor discriminator of Scope's `OracleMappings` account.
+pub const ORACLE_MAPPINGS_DISCRIMINATOR: &[u8; 8] = &[40, 244, 110, 80, 255, 214, 243, 188];
+/// Offset of the `price_info_accounts` array inside `OracleMappings`.
+pub const PRICE_INFO_ACCOUNTS_OFFSET: usize = 8;
+/// Offset of the `price_types` array, directly after `price_info_accounts`.
+pub const PRICE_TYPES_OFFSET: usize =
+    PRICE_INFO_ACCOUNTS_OFFSET + 32 * ScopeOracleConfig::MAX_ENTRIES as usize;
+/// Exact `OracleMappings` account length. Unlike the prices account this is
+/// not derivable from the arrays Roshi reads: the account carries further
+/// unread arrays whose observed total is pinned here.
+pub const ORACLE_MAPPINGS_LEN: usize = 29_704;
 
 /// Canonical Kamino Scope mainnet program.
-const SCOPE_PROGRAM_ID: Pubkey =
+pub const SCOPE_PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 /// Bit 7 of `price_types[i]` marks the entry frozen by the Scope admin.
-const FROZEN_FLAG: u8 = 0x80;
+pub const FROZEN_FLAG: u8 = 0x80;
 
 /// Scope exponents never exceed 18 (`decimal_to_price` caps them); a larger
 /// value is corrupted or foreign data.
@@ -53,7 +70,7 @@ impl ScopeOracle {
     /// without account pinning, mapping, or freshness checks. This is useful
     /// for tests and off-chain inspection.
     pub fn parse_unverified_price(&self, data: &[u8]) -> Option<OraclePrice> {
-        if data.len() != ORACLE_PRICES_LEN || &data[..8] != ORACLE_PRICES_DISCRIMINATOR {
+        if !well_formed(data, ORACLE_PRICES_LEN, ORACLE_PRICES_DISCRIMINATOR) {
             return None;
         }
 
@@ -85,9 +102,7 @@ impl ScopeOracle {
         }
 
         let prices_data = prices_account.data.borrow();
-        if prices_data.len() != ORACLE_PRICES_LEN
-            || &prices_data[..8] != ORACLE_PRICES_DISCRIMINATOR
-        {
+        if !well_formed(&prices_data, ORACLE_PRICES_LEN, ORACLE_PRICES_DISCRIMINATOR) {
             return Err(ProgramError::InvalidAccountData);
         }
 
@@ -114,16 +129,22 @@ impl ScopeOracle {
     /// index changes its price type or price-info account and the read fails
     /// loudly.
     fn verify_mapping_entry(&self, mappings_data: &[u8]) -> Result<(), ProgramError> {
-        if mappings_data.len() != ORACLE_MAPPINGS_LEN
-            || &mappings_data[..8] != ORACLE_MAPPINGS_DISCRIMINATOR
-        {
+        if !well_formed(
+            mappings_data,
+            ORACLE_MAPPINGS_LEN,
+            ORACLE_MAPPINGS_DISCRIMINATOR,
+        ) {
             return Err(ProgramError::InvalidAccountData);
         }
 
-        let index = usize::from(self.config.price_index);
+        // The single runtime bound on the configured index; together with the
+        // exact-length gate above it makes the indexing below in-bounds.
+        // `OracleConfig::validate` already rejects such configs at every
+        // account load, so this is only reachable through a hand-built config.
         if self.config.price_index >= ScopeOracleConfig::MAX_ENTRIES {
             return Err(ProgramError::InvalidAccountData);
         }
+        let index = usize::from(self.config.price_index);
 
         let price_type = mappings_data[PRICE_TYPES_OFFSET + index];
         if price_type & FROZEN_FLAG != 0 {
@@ -167,6 +188,12 @@ impl Oracle for ScopeOracle {
     }
 }
 
+/// A well-formed Scope account: the pinned exact length and the Anchor
+/// discriminator.
+fn well_formed(data: &[u8], len: usize, discriminator: &[u8; 8]) -> bool {
+    data.len() == len && data.get(..8) == Some(discriminator.as_slice())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DatedPrice {
     value: u64,
@@ -176,12 +203,10 @@ struct DatedPrice {
 
 impl DatedPrice {
     /// Read the entry at `price_index` from `OraclePrices` account bytes the
-    /// caller has already length-checked.
+    /// caller has already length-checked. An out-of-range index lands past the
+    /// exact account length and yields `None` through the checked reads — no
+    /// separate bound check is needed.
     fn parse(data: &[u8], price_index: u16) -> Option<Self> {
-        if price_index >= ScopeOracleConfig::MAX_ENTRIES {
-            return None;
-        }
-
         let base = DATED_PRICES_OFFSET + DATED_PRICE_SIZE * usize::from(price_index);
         let field = |offset: usize| {
             data.get(base + offset..base + offset + 8)
@@ -225,8 +250,6 @@ mod tests {
     const PRICE_VALUE: u64 = 109_679_858_068_090_600;
     const PRICE_EXP: u64 = 17;
     const PRICE_TIMESTAMP: u64 = 1_787_619_070;
-    const FIXTURE_PRICES_DISCRIMINATOR: [u8; 8] = [89, 128, 118, 221, 6, 72, 180, 146];
-    const FIXTURE_MAPPINGS_DISCRIMINATOR: [u8; 8] = [40, 244, 110, 80, 255, 214, 243, 188];
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -293,8 +316,11 @@ mod tests {
     }
 
     fn prices_data(mappings: &Pubkey, index: u16, value: u64, exp: u64, timestamp: u64) -> Vec<u8> {
-        assert_eq!(core::mem::size_of::<FixtureDatedPrice>(), 56);
-        assert_eq!(8 + core::mem::size_of::<FixtureOraclePrices>(), 28_712);
+        assert_eq!(core::mem::size_of::<FixtureDatedPrice>(), DATED_PRICE_SIZE);
+        assert_eq!(
+            8 + core::mem::size_of::<FixtureOraclePrices>(),
+            ORACLE_PRICES_LEN
+        );
         let mut fixture = FixtureOraclePrices {
             oracle_mappings: mappings.to_bytes(),
             prices: [FixtureDatedPrice::default(); 512],
@@ -305,11 +331,14 @@ mod tests {
             unix_timestamp: timestamp,
             generic_data: [0; 24],
         };
-        encode_fixture(&FIXTURE_PRICES_DISCRIMINATOR, &fixture)
+        encode_fixture(ORACLE_PRICES_DISCRIMINATOR, &fixture)
     }
 
     fn mappings_data(index: u16, price_type: u8, price_info_account: [u8; 32]) -> Vec<u8> {
-        assert_eq!(8 + core::mem::size_of::<FixtureOracleMappings>(), 29_704);
+        assert_eq!(
+            8 + core::mem::size_of::<FixtureOracleMappings>(),
+            ORACLE_MAPPINGS_LEN
+        );
         let mut fixture = FixtureOracleMappings {
             price_info_accounts: [[0; 32]; 512],
             price_types: [0; 512],
@@ -317,7 +346,7 @@ mod tests {
         };
         fixture.price_info_accounts[usize::from(index)] = price_info_account;
         fixture.price_types[usize::from(index)] = price_type;
-        encode_fixture(&FIXTURE_MAPPINGS_DISCRIMINATOR, &fixture)
+        encode_fixture(ORACLE_MAPPINGS_DISCRIMINATOR, &fixture)
     }
 
     fn scope_prices_data() -> Vec<u8> {
