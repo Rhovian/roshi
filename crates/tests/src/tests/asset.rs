@@ -9,7 +9,7 @@ use litesvm::LiteSVM;
 use roshi::{
     error::RoshiError,
     instructions::{InitializeAssetArgs, UpdateAssetArgs},
-    oracle::{OracleConfig, PythOracleConfig},
+    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{asset::Asset, Account as RoshiAccount},
     ID,
 };
@@ -285,6 +285,46 @@ fn test_update_asset() {
     expected.oracle = new_oracle;
     expected.set_enabled(false);
     assert_eq!(load_asset(&svm, asset_pda), expected);
+}
+
+#[test]
+fn test_update_asset_rejects_noncanonical_scope_bytes() {
+    let Some((mut svm, ..)) = setup_program() else {
+        return;
+    };
+
+    let vault = VaultBuilder::new().install(&mut svm);
+    let asset_pda = create_asset(&mut svm, &vault, Pubkey::new_unique());
+    let before = load_asset(&svm, asset_pda);
+    let oracle = OracleConfig::scope(ScopeOracleConfig::new(
+        [4; 32],
+        ScopeOracleMapping::new([5; 32], 26, 9, 3, 17, [6; 20]),
+        445,
+        300,
+    ));
+
+    // Instruction tag precedes UpdateAssetArgs; its OracleConfig is first.
+    for oracle_offset in [90, 106, 112] {
+        let mut ix = roshi_client::instruction::update_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_pda,
+            UpdateAssetArgs {
+                oracle,
+                enabled: true,
+                routed: false,
+                deposit_cap_atoms: u64::MAX,
+            },
+        )
+        .unwrap();
+        ix.data[1 + oracle_offset] = 1;
+
+        assert_roshi_error(
+            send(&mut svm, ix, &vault.roles.admin),
+            RoshiError::InvalidAssetAccount,
+        );
+        assert_eq!(load_asset(&svm, asset_pda), before);
+    }
 }
 
 #[test]

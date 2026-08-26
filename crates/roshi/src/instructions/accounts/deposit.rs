@@ -5,7 +5,7 @@ use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
 use super::{
-    oracle_price::{feeds_match, oracle_feed_identity, read_oracle_price, split_oracle_accounts},
+    oracle_price::{OracleLeg, OracleReadSession},
     shared::{next_account, require_writable},
 };
 use crate::{
@@ -149,24 +149,19 @@ where
 
         let clock = Clock::get()?;
         let oracle_accounts = &self.extra[1..];
-        let (asset_price, remaining) = read_oracle_price(&asset.oracle, oracle_accounts, &clock)?;
+        let (asset_leg, remaining) = OracleLeg::parse(&asset.oracle, oracle_accounts)?;
+        let base_leg = if asset.routed()? {
+            Some(OracleLeg::parse(&self.vault.base_oracle, remaining)?.0)
+        } else {
+            None
+        };
+        let mut prices = OracleReadSession::new();
+        let asset_price = prices.read(&asset_leg, &clock)?;
         // Direct feeds already quote in base; the base leg is exactly 1.
         // Routed feeds quote in a shared currency, so the vault's base oracle
         // supplies the base/quote leg from the accounts after the asset leg.
-        // When both legs name the same feed under the same policy, the base
-        // leg reuses the asset leg's verified price: valuing one feed against
-        // two independently supplied updates would let a depositor pair a high
-        // asset-leg update with a lower still-fresh base-leg update.
-        let base_price = if asset.routed()? {
-            let asset_feed = oracle_feed_identity(&asset.oracle)?;
-            let base_feed = oracle_feed_identity(&self.vault.base_oracle)?;
-            if feeds_match(Some(asset_feed), Some(base_feed))? {
-                split_oracle_accounts(&self.vault.base_oracle, remaining)?;
-                asset_price
-            } else {
-                let (price, _) = read_oracle_price(&self.vault.base_oracle, remaining, &clock)?;
-                price
-            }
+        let base_price = if let Some(base_leg) = &base_leg {
+            prices.read(base_leg, &clock)?
         } else {
             OraclePrice::UNIT
         };

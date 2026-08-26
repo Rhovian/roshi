@@ -473,19 +473,9 @@ fn install_delegate(svm: &mut LiteSVM, address: Pubkey) {
 // --- Oracle-bounded swap slippage (`max_swap_slippage_bps`) ---
 
 fn set_swap_slippage(svm: &mut LiteSVM, fixture_vault: &crate::helpers::TestVault, bps: u16) {
-    let mut state = fixture_vault.load(svm);
-    state.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 0, bps);
-    svm.set_account(
-        fixture_vault.address,
-        Account {
-            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
-            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
-            owner: ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
+    fixture_vault.update(svm, |vault| {
+        vault.controls = roshi::state::vault::VaultControls::new(0, 0, 0, 0, 0, 0, bps);
+    });
 }
 
 fn set_base_oracle(
@@ -493,19 +483,7 @@ fn set_base_oracle(
     fixture_vault: &crate::helpers::TestVault,
     oracle: roshi::oracle::OracleConfig,
 ) {
-    let mut state = fixture_vault.load(svm);
-    state.base_oracle = oracle;
-    svm.set_account(
-        fixture_vault.address,
-        Account {
-            lamports: svm.minimum_balance_for_rent_exemption(roshi::state::vault::Vault::SPACE),
-            data: serialize(&RoshiAccount::Vault(state)).unwrap(),
-            owner: ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )
-    .unwrap();
+    fixture_vault.update(svm, |vault| vault.base_oracle = oracle);
 }
 
 /// Install a registered Asset directly (9 decimals, enabled, uncapped).
@@ -885,11 +863,9 @@ fn test_swap_value_bound_prices_same_feed_once() {
         0,
     );
 
-    // The input leg supplies a valid update for feed F; the output leg supplies
-    // an update for a DIFFERENT feed. If the output update were read on its own
-    // the swap would reject it (feed mismatch). Because both endpoints resolve to
-    // the same feed, the input price is reused and the output account is never
-    // consulted — the two-update comparison the finding exploits is gone.
+    // The input leg supplies a valid update for feed F. A duplicate slot must
+    // name that same account; a substituted update is rejected even though its
+    // contents are not needed to reuse the verified price.
     let input_pyth = Pubkey::new_unique();
     crate::helpers::set_pyth_price(&mut svm, input_pyth, feed_id, 200_000_000, -8, 0);
     let wrong_feed = [9u8; 32];
@@ -926,8 +902,7 @@ fn test_swap_value_bound_prices_same_feed_once() {
     )
     .unwrap();
 
-    send_ok(
-        &mut svm,
+    let swap_via = |output_oracle| {
         swap_ix_with_valuation(
             &fixture,
             input_custody,
@@ -939,10 +914,24 @@ fn test_swap_value_bound_prices_same_feed_once() {
                 AccountMeta::new_readonly(asset_pda, false),
                 AccountMeta::new_readonly(input_pyth, false),
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(output_pyth, false),
+                AccountMeta::new_readonly(output_oracle, false),
             ],
-            ix_data,
+            ix_data.clone(),
+        )
+    };
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            swap_via(output_pyth),
+            &fixture.vault.roles.strategist,
         ),
+        InstructionError::InvalidAccountData,
+    );
+
+    send_ok(
+        &mut svm,
+        swap_via(input_pyth),
         &fixture.vault.roles.strategist,
     );
 
@@ -1252,10 +1241,8 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
         true,
     );
 
-    // The base leg supplies a valid update for the feed. The asset legs supply an
-    // update for a DIFFERENT feed: if either were read on its own the swap would
-    // reject it (feed mismatch). Dedup against the base feed means they are never
-    // consulted.
+    // The base leg supplies a valid update for the feed. Reused asset slots
+    // must name that same account; arbitrary same-arity slots are rejected.
     let pyth_base = Pubkey::new_unique();
     crate::helpers::set_pyth_price(&mut svm, pyth_base, feed, 100_000_000, -8, 0);
     let pyth_wrong = Pubkey::new_unique();
@@ -1308,8 +1295,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
     )
     .unwrap();
 
-    send_ok(
-        &mut svm,
+    let swap_via = |asset_oracle| {
         roshi_client::instruction::swap(
             fixture_vault.roles.strategist.pubkey(),
             vault.address,
@@ -1319,9 +1305,9 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
             action,
             vec![
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(asset_oracle, false),
                 AccountMeta::new_readonly(asset_pda, false),
-                AccountMeta::new_readonly(pyth_wrong, false),
+                AccountMeta::new_readonly(asset_oracle, false),
                 AccountMeta::new_readonly(pyth_base, false),
             ],
             vec![
@@ -1349,10 +1335,24 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                         is_writable: false,
                     },
                 ]),
-                ix_data,
+                ix_data: ix_data.clone(),
             },
         )
-        .unwrap(),
+        .unwrap()
+    };
+
+    assert_instruction_error(
+        send(
+            &mut svm,
+            swap_via(pyth_wrong),
+            &fixture_vault.roles.strategist,
+        ),
+        InstructionError::InvalidAccountData,
+    );
+
+    send_ok(
+        &mut svm,
+        swap_via(pyth_base),
         &fixture_vault.roles.strategist,
     );
 

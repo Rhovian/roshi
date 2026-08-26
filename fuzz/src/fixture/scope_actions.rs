@@ -43,22 +43,31 @@ pub fn action_deposit_asset_scope_fresh(
     }
     let amount = (amount % balance) + 1;
     let vault = self.load_vault();
-    let should_succeed = !vault
-        .deposits_paused()
-        .expect("loaded vault has valid flags")
-        && self.fresh_asset_deposit_can_reach_transfer(&vault, amount);
+    let expectation = self.asset_deposit_expectation(
+        &vault,
+        amount,
+        OraclePrice {
+            value: u128::from(value),
+            decimals: exponent as u8,
+        },
+        OraclePrice::UNIT,
+    );
     let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
     let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
     let ix = self.deposit_scope_asset_ix(&user, amount, false);
     let ok = submit(&mut self.ctx, ix, &[&user.kp]);
     let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
     let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
-    if should_succeed {
-        fuzz_assert!(
+    match expectation {
+        DepositExpectation::Success => fuzz_assert!(
             ok && source_after == source_before - amount
                 && custody_after == custody_before + amount,
             "fresh Scope price rejected or moved wrong amount: ok={ok}, exp={exponent}, age={age}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}"
-        );
+        ),
+        DepositExpectation::Rejection => fuzz_assert!(
+            !ok && source_after == source_before && custody_after == custody_before,
+            "fresh Scope deposit succeeded despite pre-transfer rejection: ok={ok}, exp={exponent}, age={age}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}"
+        ),
     }
     self.restore_primary_asset_pyth();
     ok
@@ -111,22 +120,34 @@ pub fn action_deposit_asset_scope_routed(
     }
     let amount = (amount % balance) + 1;
     let vault = self.load_vault();
-    let should_succeed = !vault
-        .deposits_paused()
-        .expect("loaded vault has valid flags")
-        && self.fresh_asset_deposit_can_reach_transfer(&vault, amount);
+    let expectation = self.asset_deposit_expectation(
+        &vault,
+        amount,
+        OraclePrice {
+            value: 200_000_000_000_000_000,
+            decimals: 17,
+        },
+        OraclePrice {
+            value: PYTH_BASE_PRICE as u128,
+            decimals: PYTH_PRICE_DECIMALS,
+        },
+    );
     let source_before = token_balance(&self.ctx.svm, &user.asset_ata);
     let custody_before = token_balance(&self.ctx.svm, &self.asset_custody);
     let ix = self.deposit_scope_asset_ix(&user, amount, true);
     let ok = submit(&mut self.ctx, ix, &[&user.kp]);
     let source_after = token_balance(&self.ctx.svm, &user.asset_ata);
     let custody_after = token_balance(&self.ctx.svm, &self.asset_custody);
-    if should_succeed {
-        fuzz_assert!(
+    match expectation {
+        DepositExpectation::Success => fuzz_assert!(
             ok && source_after == source_before - amount
                 && custody_after == custody_before + amount,
             "routed Scope deposit rejected or moved wrong amount: ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}"
-        );
+        ),
+        DepositExpectation::Rejection => fuzz_assert!(
+            !ok && source_after == source_before && custody_after == custody_before,
+            "routed Scope deposit succeeded despite pre-transfer rejection: ok={ok}, source {source_before}->{source_after}, custody {custody_before}->{custody_after}"
+        ),
     }
     self.restore_primary_asset_pyth();
     fuzz_assert!(

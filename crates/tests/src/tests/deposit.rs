@@ -952,9 +952,8 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
 }
 
 /// A routed asset whose oracle is identical to the vault base oracle prices at
-/// ratio 1 from a single verified update: the base leg's accounts stay in the
-/// layout but are never consulted, so a depositor cannot pair a high asset-leg
-/// update with a lower still-fresh update of the same feed.
+/// ratio 1 from a single verified update. The base leg's slot stays in the
+/// layout and must name the same account whose price is reused.
 #[test]
 fn test_deposit_routed_asset_dedups_against_base_feed() {
     let Some((mut svm, _authority, _config_pda)) = setup_program() else {
@@ -1030,7 +1029,7 @@ fn test_deposit_routed_asset_dedups_against_base_feed() {
         .unwrap()
     };
 
-    // The base leg stays part of the layout even though it is not consulted.
+    // The base leg stays part of the layout.
     assert_instruction_error(
         send(
             &mut svm,
@@ -1044,12 +1043,26 @@ fn test_deposit_routed_asset_dedups_against_base_feed() {
     );
     assert_eq!(token_balance(&svm, &source), amount);
 
+    assert_instruction_error(
+        send(
+            &mut svm,
+            deposit_via(vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(asset_pyth, false),
+                AccountMeta::new_readonly(cheaper_pyth, false),
+            ]),
+            &depositor,
+        ),
+        solana_sdk::instruction::InstructionError::InvalidAccountData,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+
     send_ok(
         &mut svm,
         deposit_via(vec![
             AccountMeta::new_readonly(asset_pda, false),
             AccountMeta::new_readonly(asset_pyth, false),
-            AccountMeta::new_readonly(cheaper_pyth, false),
+            AccountMeta::new_readonly(asset_pyth, false),
         ]),
         &depositor,
     );

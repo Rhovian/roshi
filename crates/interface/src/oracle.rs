@@ -1,5 +1,11 @@
 use wincode::{SchemaRead, SchemaWrite};
 
+mod configs;
+
+pub use configs::{
+    PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping, SwitchboardOracleConfig,
+};
+
 /// A fixed-point oracle price: `value / 10^decimals` quote units per one
 /// *whole* token of the priced asset (standard market convention).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,208 +55,14 @@ impl OracleKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InvalidOracleConfig;
 
-/// Switchboard On-Demand oracle configuration stored with the asset it prices.
-///
-/// `price_decimals` is the scale of the raw oracle price. A price of `123`
-/// with `price_decimals = 2` represents `1.23`.
-#[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
-)]
-#[wincode(assert_zero_copy)]
-#[repr(C)]
-pub struct SwitchboardOracleConfig {
-    pub quote_account: [u8; 32],
-    pub queue_account: [u8; 32],
-    pub feed_id: [u8; 32],
-    pub max_age_slots: u64,
-    pub price_decimals: u8,
-    _padding: [u8; 7],
-}
-
-impl SwitchboardOracleConfig {
-    pub const fn new(
-        quote_account: [u8; 32],
-        queue_account: [u8; 32],
-        feed_id: [u8; 32],
-        price_decimals: u8,
-        max_age_slots: u64,
-    ) -> Self {
-        Self {
-            quote_account,
-            queue_account,
-            feed_id,
-            max_age_slots,
-            price_decimals,
-            _padding: [0; 7],
-        }
-    }
-}
-
-/// Pyth pull-oracle configuration stored with the asset it prices.
-///
-/// `feed_id` is the 32-byte Pyth price feed id expected inside the submitted
-/// price update account. `price_decimals` is the scale Roshi exposes through
-/// `OraclePrice`; for example, a Pyth price of `123456789 * 10^-8` with
-/// `price_decimals = 8` is returned as `123456789`.
-///
-/// `max_confidence_bps` must be nonzero for an active Pyth leg —
-/// [`OracleConfig::validate`] rejects an unbounded confidence interval. The
-/// raw reader still treats `0` as "no width check" for inactive configs.
-///
-/// `price_update_account` optionally pins the price update account by address;
-/// all-zeros (the default) accepts any Pyth-verified update account carrying
-/// `feed_id`, which is the intended pull-oracle posture.
-#[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
-)]
-#[wincode(assert_zero_copy)]
-#[repr(C)]
-pub struct PythOracleConfig {
-    pub feed_id: [u8; 32],
-    pub price_update_account: [u8; 32],
-    pub max_age_seconds: u64,
-    pub max_confidence_bps: u16,
-    pub price_decimals: u8,
-    _padding: [u8; 5],
-}
-
-impl PythOracleConfig {
-    pub const fn new(
-        feed_id: [u8; 32],
-        price_decimals: u8,
-        max_age_seconds: u64,
-        max_confidence_bps: u16,
-    ) -> Self {
-        Self {
-            feed_id,
-            price_update_account: [0; 32],
-            max_age_seconds,
-            max_confidence_bps,
-            price_decimals,
-            _padding: [0; 5],
-        }
-    }
-
-    /// Pin pricing to one specific price update account (e.g. a sponsored
-    /// Pyth feed account) instead of accepting any verified update for
-    /// `feed_id`.
-    pub const fn pin_price_update_account(mut self, price_update_account: [u8; 32]) -> Self {
-        self.price_update_account = price_update_account;
-        self
-    }
-
-    /// The pinned price update account, or `None` when any verified update
-    /// for `feed_id` is accepted (`price_update_account` all-zeros).
-    pub fn pinned_price_update_account(&self) -> Option<[u8; 32]> {
-        if self.price_update_account == [0; 32] {
-            return None;
-        }
-
-        Some(self.price_update_account)
-    }
-}
-
-/// The complete source mapping committed for one Kamino Scope price index.
-///
-/// Scope's `OracleMappings` account stores these fields in separate arrays;
-/// this is a compact canonical commitment to the values selected from all of
-/// those arrays at one index, not a wire representation of that account. The
-/// `price_type` excludes Scope's high frozen bit, which is mapping state rather
-/// than part of the underlying oracle type.
-#[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
-)]
-#[wincode(assert_zero_copy)]
-#[repr(C)]
-pub struct ScopeOracleMapping {
-    pub price_info_account: [u8; 32],
-    pub twap_source_or_ref_price_tolerance_bps: u16,
-    pub ref_price: u16,
-    pub generic: [u8; 20],
-    pub price_type: u8,
-    pub twap_enabled_bitmask: u8,
-    _padding: [u8; 6],
-}
-
-impl ScopeOracleMapping {
-    pub const fn new(
-        price_info_account: [u8; 32],
-        price_type: u8,
-        twap_source_or_ref_price_tolerance_bps: u16,
-        twap_enabled_bitmask: u8,
-        ref_price: u16,
-        generic: [u8; 20],
-    ) -> Self {
-        Self {
-            price_info_account,
-            twap_source_or_ref_price_tolerance_bps,
-            ref_price,
-            generic,
-            price_type,
-            twap_enabled_bitmask,
-            _padding: [0; 6],
-        }
-    }
-
-    const fn has_canonical_padding(&self) -> bool {
-        let mut index = 0;
-        while index < self._padding.len() {
-            if self._padding[index] != 0 {
-                return false;
-            }
-            index += 1;
-        }
-        true
-    }
-}
-
-/// Kamino Scope oracle configuration stored with the asset it prices.
-///
-/// Scope ingests prices from multiple oracle sources and caches them in its
-/// `OraclePrices` account, so Roshi only reads: `prices_account` pins that
-/// account and `price_index` selects the entry. `mapping` pins every field
-/// stored directly for that entry, so a direct admin reconfiguration fails
-/// loudly. Mapping fields that reference other indices remain part of the
-/// trust placed in the canonical Kamino Scope mainnet program, which must own
-/// both accounts read by Roshi.
-///
-/// There is no `price_decimals`: Scope stores a source-dependent exponent,
-/// which the reader takes from the entry on every read.
-#[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
-)]
-#[wincode(assert_zero_copy)]
-#[repr(C)]
-pub struct ScopeOracleConfig {
-    pub prices_account: [u8; 32],
-    pub mapping: ScopeOracleMapping,
-    pub max_age_seconds: u64,
-    pub price_index: u16,
-    _padding: [u8; 6],
-}
-
-impl ScopeOracleConfig {
-    /// Entries in a Scope `OraclePrices` account (`MAX_ENTRIES` in
-    /// Kamino-Finance/scope). `price_index` must be below this.
-    pub const MAX_ENTRIES: u16 = 512;
-    /// Scope reserves the high bit of a mapping's price type as its frozen
-    /// flag. Configurations identify the underlying type without that flag.
-    pub const MAX_PRICE_TYPE: u8 = 0x7f;
-
-    pub const fn new(
-        prices_account: [u8; 32],
-        mapping: ScopeOracleMapping,
-        price_index: u16,
-        max_age_seconds: u64,
-    ) -> Self {
-        Self {
-            prices_account,
-            mapping,
-            max_age_seconds,
-            price_index,
-            _padding: [0; 6],
-        }
-    }
+/// The one typed configuration selected by an [`OracleConfig`]'s tag.
+/// Decode this once at the pricing boundary and thread it through account
+/// splitting, feed comparison, and price verification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActiveOracleConfig {
+    Switchboard(SwitchboardOracleConfig),
+    Pyth(PythOracleConfig),
+    Scope(ScopeOracleConfig),
 }
 
 /// Size of the [`OracleConfig`] leg region shared by all implementations.
@@ -389,28 +201,39 @@ impl OracleConfig {
         }
     }
 
-    pub const fn validate(&self) -> Result<(), InvalidOracleConfig> {
+    pub const fn active(&self) -> Result<ActiveOracleConfig, InvalidOracleConfig> {
         match self.kind() {
+            Ok(OracleKind::Switchboard) => {
+                Ok(ActiveOracleConfig::Switchboard(self.switchboard_config()))
+            }
+            Ok(OracleKind::Pyth) => Ok(ActiveOracleConfig::Pyth(self.pyth_config())),
+            Ok(OracleKind::Scope) => Ok(ActiveOracleConfig::Scope(self.scope_config())),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub const fn validate(&self) -> Result<(), InvalidOracleConfig> {
+        match self.active() {
             // An active Pyth leg must carry a confidence-width guardrail: an
             // unbounded confidence interval admits an arbitrarily uncertain,
             // technically-fresh price. Only the active leg is checked, so
             // zeroed inactive configs stay legal.
-            Ok(OracleKind::Pyth) => {
-                if self.pyth_config().max_confidence_bps == 0 {
+            Ok(ActiveOracleConfig::Pyth(config)) => {
+                if config.max_confidence_bps == 0 {
                     return Err(InvalidOracleConfig);
                 }
                 Ok(())
             }
-            Ok(OracleKind::Switchboard) => Ok(()),
+            Ok(ActiveOracleConfig::Switchboard(_)) => Ok(()),
             // An active Scope leg must address a real entry and identify an
             // underlying price type rather than mapping state. Everything
             // else fails closed at read time (owner, address, source mapping,
             // and freshness checks).
-            Ok(OracleKind::Scope) => {
-                let config = self.scope_config();
+            Ok(ActiveOracleConfig::Scope(config)) => {
                 if config.price_index >= ScopeOracleConfig::MAX_ENTRIES
                     || config.mapping.price_type > ScopeOracleConfig::MAX_PRICE_TYPE
-                    || !config.mapping.has_canonical_padding()
+                    || !config.has_canonical_padding()
+                    || !self.scope_tail_is_zero()
                 {
                     return Err(InvalidOracleConfig);
                 }
@@ -420,25 +243,27 @@ impl OracleConfig {
         }
     }
 
-    /// The Switchboard view of the leg region. Meaningful when `kind` is
-    /// [`OracleKind::Switchboard`]; under other kinds it reads whatever bytes
-    /// the active leg wrote.
-    pub const fn switchboard_config(&self) -> SwitchboardOracleConfig {
+    const fn switchboard_config(&self) -> SwitchboardOracleConfig {
         SwitchboardOracleConfig::from_leg_bytes(read_leg(&self.legs, SWITCHBOARD_LEG_OFFSET))
     }
 
-    /// The Pyth view of the leg region. Meaningful when `kind` is
-    /// [`OracleKind::Pyth`]; under other kinds it reads whatever bytes the
-    /// active leg wrote.
-    pub const fn pyth_config(&self) -> PythOracleConfig {
+    const fn pyth_config(&self) -> PythOracleConfig {
         PythOracleConfig::from_leg_bytes(read_leg(&self.legs, PYTH_LEG_OFFSET))
     }
 
-    /// The Scope view of the leg region. Meaningful when `kind` is
-    /// [`OracleKind::Scope`]; under other kinds it reads whatever bytes the
-    /// active leg wrote.
-    pub const fn scope_config(&self) -> ScopeOracleConfig {
+    const fn scope_config(&self) -> ScopeOracleConfig {
         ScopeOracleConfig::from_leg_bytes(read_leg(&self.legs, SCOPE_LEG_OFFSET))
+    }
+
+    const fn scope_tail_is_zero(&self) -> bool {
+        let mut index = core::mem::size_of::<ScopeOracleConfig>();
+        while index < self.legs.len() {
+            if self.legs[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
     }
 
     pub const fn switchboard(config: SwitchboardOracleConfig) -> Self {
@@ -637,7 +462,10 @@ mod tests {
         let config = OracleConfig::scope(scope_config());
 
         assert_eq!(config.kind(), Ok(OracleKind::Scope));
-        assert_eq!(config.scope_config(), scope_config());
+        assert_eq!(
+            config.active(),
+            Ok(ActiveOracleConfig::Scope(scope_config()))
+        );
         assert_eq!(config.validate(), Ok(()));
 
         let bytes = serialize(&config).unwrap();
@@ -702,14 +530,16 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_noncanonical_scope_mapping_padding() {
-        let mut bytes = serialize(&OracleConfig::scope(scope_config())).unwrap();
-        // Scope mapping starts at byte 32, and its six explicit padding bytes
-        // occupy mapping offsets 58..64.
-        bytes[90] = 1;
-        let config: OracleConfig = deserialize(&bytes).unwrap();
-
-        assert_eq!(config.validate(), Err(InvalidOracleConfig));
+    fn validate_rejects_noncanonical_scope_bytes() {
+        // Mapping padding, ScopeOracleConfig padding, and the dead tail of the
+        // new Scope leg must all stay zero. Legacy kinds retain their historical
+        // inactive-leg compatibility.
+        for offset in [90, 106, 112] {
+            let mut bytes = serialize(&OracleConfig::scope(scope_config())).unwrap();
+            bytes[offset] = 1;
+            let config: OracleConfig = deserialize(&bytes).unwrap();
+            assert_eq!(config.validate(), Err(InvalidOracleConfig));
+        }
     }
 
     #[test]

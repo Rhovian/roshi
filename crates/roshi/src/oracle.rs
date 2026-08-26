@@ -4,8 +4,8 @@ mod switchboard;
 
 pub use pyth::PythOracle;
 pub use roshi_interface::oracle::{
-    OracleConfig, OracleKind, OraclePrice, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping,
-    SwitchboardOracleConfig,
+    ActiveOracleConfig, OracleConfig, OracleKind, OraclePrice, PythOracleConfig, ScopeOracleConfig,
+    ScopeOracleMapping, SwitchboardOracleConfig,
 };
 pub use scope::ScopeOracle;
 pub use switchboard::SwitchboardOracle;

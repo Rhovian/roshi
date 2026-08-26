@@ -18,7 +18,7 @@ use roshi::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
         PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
-    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
+    oracle::{OracleConfig, OraclePrice, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         asset::Asset,
@@ -35,7 +35,8 @@ use roshi_interface::{
     access::{access_merkle_leaf, access_merkle_node, verify_access_merkle_proof},
     find_share_mint_address,
     math::{
-        assets_for_redeem, performance_fee_for_nav, share_price_from_assets, shares_for_deposit,
+        assets_for_redeem, base_atoms_from_asset_atoms, performance_fee_for_nav,
+        share_price_from_assets, shares_for_deposit,
     },
 };
 use solana_account::Account;
@@ -106,6 +107,12 @@ const SCOPE_MAPPING: ScopeOracleMapping = ScopeOracleMapping::new(
     SCOPE_REF_PRICE,
     SCOPE_GENERIC,
 );
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DepositExpectation {
+    Success,
+    Rejection,
+}
 
 #[derive(Clone)]
 struct FuzzUser {
@@ -499,4 +506,46 @@ fn invariant_core(fixture: &mut RoshiFixture) {
         vault.pending_withdrawal_assets,
         pending_assets
     );
+}
+
+#[cfg(test)]
+mod scope_deposit_model_tests {
+    use super::*;
+
+    #[test]
+    fn exponent_19_scope_price_values_one_to_one() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                7,
+                OraclePrice {
+                    value: 10_000_000_000_000_000_000,
+                    decimals: 19,
+                },
+                OraclePrice::UNIT,
+                ASSET_DECIMALS,
+                BASE_DECIMALS,
+            ),
+            Ok(7)
+        );
+    }
+
+    #[test]
+    fn routed_scope_two_over_pyth_two_values_one_to_one() {
+        assert_eq!(
+            base_atoms_from_asset_atoms(
+                7,
+                OraclePrice {
+                    value: 200_000_000_000_000_000,
+                    decimals: 17,
+                },
+                OraclePrice {
+                    value: 200_000_000,
+                    decimals: PYTH_PRICE_DECIMALS,
+                },
+                ASSET_DECIMALS,
+                BASE_DECIMALS,
+            ),
+            Ok(7)
+        );
+    }
 }
