@@ -686,7 +686,7 @@ fn test_deposit_routed_scope_asset_advances_to_pyth_base_leg() {
             ]),
             &depositor,
         ),
-        solana_instruction::error::InstructionError::MissingAccount,
+        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
     );
     assert_eq!(token_balance(&svm, &source), amount);
 
@@ -955,6 +955,206 @@ fn test_deposit_routed_asset_composes_asset_and_base_oracle_legs() {
 
     let state = vault.load(&svm);
     assert_eq!(state.total_assets, base_atoms);
+}
+
+/// A routed asset whose oracle is identical to the vault base oracle prices at
+/// ratio 1 from a single verified update: the base leg's accounts stay in the
+/// layout but are never consulted, so a depositor cannot pair a high asset-leg
+/// update with a lower still-fresh update of the same feed.
+#[test]
+fn test_deposit_routed_asset_dedups_against_base_feed() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let feed_id = [11u8; 32];
+    let oracle = OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, i64::MAX as u64, 250));
+    let vault = VaultBuilder::new()
+        .base_mint(base_mint)
+        .base_oracle(oracle)
+        .install(&mut svm);
+    let share_mint = vault.share_mint;
+    set_mint(&mut svm, share_mint, &vault.address, 9);
+
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    fund(&mut svm, &vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                oracle,
+                asset_decimals: 9,
+                enabled: true,
+                routed: true,
+                deposit_cap_atoms: u64::MAX,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    // Two verified updates of the one feed disagreeing 2x: the asset leg at
+    // 2.0 and a still-fresh base-leg candidate at 1.0.
+    let asset_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, asset_pyth, feed_id, 200_000_000, -8, 0);
+    let cheaper_pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, cheaper_pyth, feed_id, 100_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000_000u64; // one whole 9-decimal asset token
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let deposit_via = |oracle_accounts: Vec<AccountMeta>| {
+        roshi_client::instruction::deposit(
+            depositor.pubkey(),
+            vault.address,
+            source,
+            custody,
+            share_dest,
+            share_mint,
+            TOKEN_PROGRAM_ID,
+            asset_mint,
+            amount,
+            0,
+            vec![],
+            oracle_accounts,
+        )
+        .unwrap()
+    };
+
+    // The base leg stays part of the layout even though it is not consulted.
+    assert_instruction_error(
+        send(
+            &mut svm,
+            deposit_via(vec![
+                AccountMeta::new_readonly(asset_pda, false),
+                AccountMeta::new_readonly(asset_pyth, false),
+            ]),
+            &depositor,
+        ),
+        solana_instruction::error::InstructionError::NotEnoughAccountKeys,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+
+    send_ok(
+        &mut svm,
+        deposit_via(vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(asset_pyth, false),
+            AccountMeta::new_readonly(cheaper_pyth, false),
+        ]),
+        &depositor,
+    );
+
+    // Ratio 1 from the single asset-leg read: one whole asset token values as
+    // one whole base token (1_000_000 six-decimal base atoms). Pricing the
+    // legs from the two disagreeing updates would have minted 2x.
+    let base_atoms = 1_000_000u64;
+    assert_eq!(token_balance(&svm, &source), 0);
+    assert_eq!(token_balance(&svm, &custody), amount);
+    assert_eq!(token_balance(&svm, &share_dest), base_atoms * 1_000);
+    assert_eq!(vault.load(&svm).total_assets, base_atoms);
+}
+
+/// The same feed under two validation policies is one feed read two ways, not
+/// two feeds; a routed deposit configured that way fails closed.
+#[test]
+fn test_deposit_routed_asset_same_feed_policy_mismatch_rejected() {
+    let Some((mut svm, _authority, _config_pda)) = setup_program() else {
+        return;
+    };
+
+    let base_mint = solana_pubkey::Pubkey::new_unique();
+    let feed_id = [11u8; 32];
+    let vault = VaultBuilder::new()
+        .base_mint(base_mint)
+        .base_oracle(OracleConfig::pyth(PythOracleConfig::new(
+            feed_id,
+            8,
+            i64::MAX as u64,
+            250,
+        )))
+        .install(&mut svm);
+    let share_mint = vault.share_mint;
+    set_mint(&mut svm, share_mint, &vault.address, 9);
+
+    let asset_mint = solana_pubkey::Pubkey::new_unique();
+    set_mint(&mut svm, asset_mint, &vault.roles.admin.pubkey(), 9);
+    let sub_account = VaultSubAccount::find_address(&vault.address, 0).0;
+    let custody = associated_token_address(&sub_account, &asset_mint);
+    let (asset_pda, _) = Asset::find_address(&vault.address, &asset_mint);
+
+    fund(&mut svm, &vault.roles.admin);
+    send_ok(
+        &mut svm,
+        roshi_client::instruction::initialize_asset(
+            vault.roles.admin.pubkey(),
+            vault.address,
+            asset_mint,
+            asset_pda,
+            InitializeAssetArgs {
+                asset_mint: asset_mint.to_bytes(),
+                // Same feed as the base oracle but a different max age.
+                oracle: OracleConfig::pyth(PythOracleConfig::new(feed_id, 8, 3_600, 250)),
+                asset_decimals: 9,
+                enabled: true,
+                routed: true,
+                deposit_cap_atoms: u64::MAX,
+            },
+        )
+        .unwrap(),
+        &vault.roles.admin,
+    );
+
+    let pyth = solana_pubkey::Pubkey::new_unique();
+    set_pyth_price(&mut svm, pyth, feed_id, 200_000_000, -8, 0);
+
+    let depositor = Keypair::new();
+    fund(&mut svm, &depositor);
+    let amount = 1_000_000_000u64;
+    let source = set_ata(&mut svm, &depositor.pubkey(), &asset_mint, amount);
+    crate::helpers::set_token_account(&mut svm, custody, &asset_mint, &sub_account, 0);
+    let share_dest = set_ata(&mut svm, &depositor.pubkey(), &share_mint, 0);
+
+    let ix = roshi_client::instruction::deposit(
+        depositor.pubkey(),
+        vault.address,
+        source,
+        custody,
+        share_dest,
+        share_mint,
+        TOKEN_PROGRAM_ID,
+        asset_mint,
+        amount,
+        0,
+        vec![],
+        vec![
+            AccountMeta::new_readonly(asset_pda, false),
+            AccountMeta::new_readonly(pyth, false),
+            AccountMeta::new_readonly(pyth, false),
+        ],
+    )
+    .unwrap();
+    assert_instruction_error(
+        send(&mut svm, ix, &depositor),
+        solana_instruction::error::InstructionError::InvalidAccountData,
+    );
+    assert_eq!(token_balance(&svm, &source), amount);
+    assert_eq!(token_balance(&svm, &share_dest), 0);
 }
 
 #[test]

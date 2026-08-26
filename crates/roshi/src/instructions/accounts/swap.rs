@@ -4,12 +4,15 @@ use solana_pubkey::Pubkey;
 use solana_sysvar::clock::Clock;
 
 use super::{
-    oracle_price::{read_oracle_price, split_oracle_accounts},
+    oracle_price::{
+        feeds_match, oracle_feed_identity, read_oracle_price, split_oracle_accounts,
+        OracleFeedIdentity,
+    },
     shared::{next_account, require_writable},
 };
 use crate::{
     instructions::{token, SwapArgs},
-    oracle::{OracleConfig, OracleKind, OraclePrice},
+    oracle::OraclePrice,
     state::{
         action::{Action, ActionScope},
         asset::Asset,
@@ -338,190 +341,5 @@ where
                 .map_err(Into::into)
             }
         }
-    }
-}
-
-/// The semantic active oracle configuration used to decide whether two swap
-/// legs may reuse one verified price. Explicit fields keep serialized padding
-/// from becoming part of pricing behavior.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OracleFeedIdentity {
-    Switchboard {
-        quote_account: [u8; 32],
-        queue_account: [u8; 32],
-        feed_id: [u8; 32],
-        max_age_slots: u64,
-        price_decimals: u8,
-    },
-    Pyth {
-        feed_id: [u8; 32],
-        price_update_account: [u8; 32],
-        max_age_seconds: u64,
-        max_confidence_bps: u16,
-        price_decimals: u8,
-    },
-    Scope {
-        prices_account: [u8; 32],
-        price_info_account: [u8; 32],
-        max_age_seconds: u64,
-        price_index: u16,
-        price_type: u8,
-    },
-}
-
-/// Provider-specific identity of the underlying feed, independent of the
-/// validation and interpretation policy applied to it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OracleFeedKey {
-    Switchboard([u8; 32]),
-    Pyth([u8; 32]),
-    Scope {
-        price_info_account: [u8; 32],
-        price_type: u8,
-    },
-}
-
-impl OracleFeedIdentity {
-    const fn key(self) -> OracleFeedKey {
-        match self {
-            Self::Switchboard { feed_id, .. } => OracleFeedKey::Switchboard(feed_id),
-            Self::Pyth { feed_id, .. } => OracleFeedKey::Pyth(feed_id),
-            Self::Scope {
-                price_info_account,
-                price_type,
-                ..
-            } => OracleFeedKey::Scope {
-                price_info_account,
-                price_type,
-            },
-        }
-    }
-}
-
-fn oracle_feed_identity(config: &OracleConfig) -> Result<OracleFeedIdentity, ProgramError> {
-    match config
-        .kind()
-        .map_err(|_| ProgramError::InvalidAccountData)?
-    {
-        OracleKind::Switchboard => {
-            let config = config.switchboard_config();
-            Ok(OracleFeedIdentity::Switchboard {
-                quote_account: config.quote_account,
-                queue_account: config.queue_account,
-                feed_id: config.feed_id,
-                max_age_slots: config.max_age_slots,
-                price_decimals: config.price_decimals,
-            })
-        }
-        OracleKind::Pyth => {
-            let config = config.pyth_config();
-            Ok(OracleFeedIdentity::Pyth {
-                feed_id: config.feed_id,
-                price_update_account: config.price_update_account,
-                max_age_seconds: config.max_age_seconds,
-                max_confidence_bps: config.max_confidence_bps,
-                price_decimals: config.price_decimals,
-            })
-        }
-        OracleKind::Scope => {
-            let config = config.scope_config();
-            Ok(OracleFeedIdentity::Scope {
-                prices_account: config.prices_account,
-                price_info_account: config.price_info_account,
-                max_age_seconds: config.max_age_seconds,
-                price_index: config.price_index,
-                price_type: config.price_type,
-            })
-        }
-    }
-}
-
-/// Reuse is safe only when both legs name the same feed and apply the same
-/// policy. Treating a policy mismatch as two feeds would let a caller compare
-/// two independently supplied updates for one feed.
-fn feeds_match(
-    left: Option<OracleFeedIdentity>,
-    right: Option<OracleFeedIdentity>,
-) -> Result<bool, ProgramError> {
-    let (Some(left), Some(right)) = (left, right) else {
-        return Ok(false);
-    };
-    if left.key() != right.key() {
-        return Ok(false);
-    }
-    if left != right {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(true)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::oracle::{PythOracleConfig, ScopeOracleConfig, SwitchboardOracleConfig};
-
-    fn scope_config(
-        price_info_account: [u8; 32],
-        price_type: u8,
-        max_age_seconds: u64,
-    ) -> OracleConfig {
-        OracleConfig::scope(ScopeOracleConfig::new(
-            [2; 32],
-            price_info_account,
-            price_type,
-            445,
-            max_age_seconds,
-        ))
-    }
-
-    #[test]
-    fn same_feed_rejects_mismatched_validation_policy() {
-        let base = oracle_feed_identity(&scope_config([3; 32], 26, 30)).unwrap();
-
-        let different_policy = oracle_feed_identity(&scope_config([3; 32], 26, 31)).unwrap();
-        assert_eq!(
-            feeds_match(Some(base), Some(different_policy)),
-            Err(ProgramError::InvalidAccountData)
-        );
-
-        for config in [scope_config([8; 32], 26, 30), scope_config([3; 32], 27, 30)] {
-            let different_feed = oracle_feed_identity(&config).unwrap();
-            assert_eq!(feeds_match(Some(base), Some(different_feed)), Ok(false));
-        }
-        assert_eq!(feeds_match(Some(base), Some(base)), Ok(true));
-    }
-
-    #[test]
-    fn pyth_same_feed_rejects_mismatched_validation_policy() {
-        let base = oracle_feed_identity(&OracleConfig::pyth(PythOracleConfig::new(
-            [9; 32], 8, 30, 250,
-        )))
-        .unwrap();
-        let different_policy = oracle_feed_identity(&OracleConfig::pyth(PythOracleConfig::new(
-            [9; 32], 8, 31, 250,
-        )))
-        .unwrap();
-
-        assert_eq!(
-            feeds_match(Some(base), Some(different_policy)),
-            Err(ProgramError::InvalidAccountData)
-        );
-    }
-
-    #[test]
-    fn switchboard_same_feed_rejects_mismatched_validation_policy() {
-        let base = oracle_feed_identity(&OracleConfig::switchboard(SwitchboardOracleConfig::new(
-            [1; 32], [2; 32], [9; 32], 8, 30,
-        )))
-        .unwrap();
-        let different_policy = oracle_feed_identity(&OracleConfig::switchboard(
-            SwitchboardOracleConfig::new([1; 32], [2; 32], [9; 32], 8, 31),
-        ))
-        .unwrap();
-
-        assert_eq!(
-            feeds_match(Some(base), Some(different_policy)),
-            Err(ProgramError::InvalidAccountData)
-        );
     }
 }

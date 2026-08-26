@@ -5,7 +5,7 @@ use solana_sysvar::{clock::Clock, Sysvar};
 use wincode::serialize;
 
 use super::{
-    oracle_price::read_oracle_price,
+    oracle_price::{feeds_match, oracle_feed_identity, read_oracle_price, split_oracle_accounts},
     shared::{next_account, require_writable},
 };
 use crate::{
@@ -36,7 +36,10 @@ use roshi_interface::{error::RoshiError, math::base_atoms_from_asset_atoms};
 /// 8. `[]` Asset PDA (non-base deposits only).
 /// 9. `..` Oracle accounts (non-base deposits only): the asset oracle's
 ///    accounts, then — for routed assets — the vault base oracle's accounts.
-///    Each leg's layout depends on its oracle kind.
+///    Each leg's layout depends on its oracle kind. The base leg is always
+///    present for routed assets; when the asset oracle is identical to the
+///    base oracle its accounts are required but not consulted (one verified
+///    price per feed).
 pub(crate) struct DepositContext<'a, 'info> {
     pub(crate) depositor: &'a AccountInfo<'info>,
     pub(crate) vault_account: &'a AccountInfo<'info>,
@@ -150,9 +153,20 @@ where
         // Direct feeds already quote in base; the base leg is exactly 1.
         // Routed feeds quote in a shared currency, so the vault's base oracle
         // supplies the base/quote leg from the accounts after the asset leg.
+        // When both legs name the same feed under the same policy, the base
+        // leg reuses the asset leg's verified price: valuing one feed against
+        // two independently supplied updates would let a depositor pair a high
+        // asset-leg update with a lower still-fresh base-leg update.
         let base_price = if asset.routed()? {
-            let (price, _) = read_oracle_price(&self.vault.base_oracle, remaining, &clock)?;
-            price
+            let asset_feed = oracle_feed_identity(&asset.oracle)?;
+            let base_feed = oracle_feed_identity(&self.vault.base_oracle)?;
+            if feeds_match(Some(asset_feed), Some(base_feed))? {
+                split_oracle_accounts(&self.vault.base_oracle, remaining)?;
+                asset_price
+            } else {
+                let (price, _) = read_oracle_price(&self.vault.base_oracle, remaining, &clock)?;
+                price
+            }
         } else {
             OraclePrice::UNIT
         };
