@@ -18,7 +18,7 @@ use roshi::{
         AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
         PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
     },
-    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig},
+    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{
         action::{compute_action_hash_from_metas, Action, ActionScope, Op, Ops},
         asset::Asset,
@@ -94,6 +94,18 @@ const SCOPE_PRICE_INFO_ACCOUNT: [u8; 32] = [8u8; 32];
 const SCOPE_PRICE_INDEX: u16 = 445;
 const SCOPE_MAX_AGE_SECS: u64 = 64;
 const SCOPE_PRICE_TYPE: u8 = 26;
+const SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS: u16 = 37;
+const SCOPE_TWAP_ENABLED_BITMASK: u8 = 3;
+const SCOPE_REF_PRICE: u16 = 17;
+const SCOPE_GENERIC: [u8; 20] = [10; 20];
+const SCOPE_MAPPING: ScopeOracleMapping = ScopeOracleMapping::new(
+    SCOPE_PRICE_INFO_ACCOUNT,
+    SCOPE_PRICE_TYPE,
+    SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS,
+    SCOPE_TWAP_ENABLED_BITMASK,
+    SCOPE_REF_PRICE,
+    SCOPE_GENERIC,
+);
 
 #[derive(Clone)]
 struct FuzzUser {

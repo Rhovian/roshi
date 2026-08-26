@@ -1,8 +1,10 @@
 use litesvm::LiteSVM;
 use roshi::oracle::scope::{
-    DATED_PRICES_OFFSET, DATED_PRICE_SIZE, ORACLE_MAPPINGS_DISCRIMINATOR, ORACLE_MAPPINGS_LEN,
-    ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN, ORACLE_PRICES_MAPPINGS_OFFSET,
-    PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET, SCOPE_PROGRAM_ID,
+    DATED_PRICES_OFFSET, DATED_PRICE_SIZE, GENERIC_OFFSET, ORACLE_MAPPINGS_DISCRIMINATOR,
+    ORACLE_MAPPINGS_LEN, ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN,
+    ORACLE_PRICES_MAPPINGS_OFFSET, PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET,
+    REF_PRICE_OFFSET, SCOPE_PROGRAM_ID, TWAP_ENABLED_BITMASK_OFFSET,
+    TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET,
 };
 use roshi::oracle::ScopeOracleConfig;
 use solana_pubkey::Pubkey;
@@ -15,8 +17,9 @@ pub const PYTH_RECEIVER_ID: Pubkey =
 /// Install the mock Kamino Scope `OraclePrices` + `OracleMappings` account
 /// pair a config points at, holding one unfrozen entry with the given
 /// observation. The account shape comes from the reader's layout constants,
-/// the addresses and entry binding from the config — except the mappings
-/// address, which by design lives in the prices account, not the config.
+/// the addresses and complete selected mapping from the config — except the
+/// mappings address, which by design lives in the prices account, not the
+/// config.
 pub fn set_scope_oracle(
     svm: &mut LiteSVM,
     config: &ScopeOracleConfig,
@@ -40,8 +43,22 @@ pub fn set_scope_oracle(
     let mut mappings = vec![0u8; ORACLE_MAPPINGS_LEN];
     mappings[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
     let info = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
-    mappings[info..info + 32].copy_from_slice(&config.price_info_account);
-    mappings[PRICE_TYPES_OFFSET + index] = config.price_type;
+    mappings[info..info + 32].copy_from_slice(&config.mapping.price_info_account);
+    mappings[PRICE_TYPES_OFFSET + index] = config.mapping.price_type;
+    let twap_source_or_ref_price_tolerance =
+        TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET + 2 * index;
+    mappings[twap_source_or_ref_price_tolerance..twap_source_or_ref_price_tolerance + 2]
+        .copy_from_slice(
+            &config
+                .mapping
+                .twap_source_or_ref_price_tolerance_bps
+                .to_le_bytes(),
+        );
+    mappings[TWAP_ENABLED_BITMASK_OFFSET + index] = config.mapping.twap_enabled_bitmask;
+    let ref_price = REF_PRICE_OFFSET + 2 * index;
+    mappings[ref_price..ref_price + 2].copy_from_slice(&config.mapping.ref_price.to_le_bytes());
+    let generic = GENERIC_OFFSET + 20 * index;
+    mappings[generic..generic + 20].copy_from_slice(&config.mapping.generic);
 
     for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
         let lamports = svm.minimum_balance_for_rent_exemption(data.len());

@@ -1,10 +1,11 @@
-/// Exercise every supported Scope exponent and fresh-age boundary through a
-/// real asset deposit. The encoded value always represents exactly 2.0.
+/// Exercise Scope exponents through 19 and the fresh-age boundary through a
+/// real asset deposit. The encoded value represents 2.0 through exponent 18
+/// and 1.0 at exponent 19, the largest power of ten that fits a `u64`.
 pub fn action_deposit_asset_scope_fresh(
     &mut self,
     #[range(0..NUM_USERS)] user: usize,
     amount: u64,
-    #[range(0..19)] exponent: u32,
+    #[range(0..20)] exponent: u32,
     #[range(0..SCOPE_MAX_AGE_SECS + 1)] age: u64,
     last_index: bool,
 ) -> bool {
@@ -14,17 +15,16 @@ pub fn action_deposit_asset_scope_fresh(
     } else {
         SCOPE_PRICE_INDEX
     };
-    let value = 2u64
-        .checked_mul(10u64.pow(exponent))
-        .expect("2 * 10^18 fits u64");
+    let scale = 10u64.pow(exponent);
+    let value = if exponent == 19 { scale } else { 2 * scale };
     self.write_scope_pair(
         self.scope_mappings_account,
         price_index,
         value,
         u64::from(exponent),
         now - age,
-        SCOPE_PRICE_TYPE,
-        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_MAPPING,
+        false,
         SCOPE_PROGRAM_ID,
         SCOPE_PROGRAM_ID,
         false,
@@ -83,8 +83,8 @@ pub fn action_deposit_asset_scope_routed(
         200_000_000_000_000_000,
         17,
         now,
-        SCOPE_PRICE_TYPE,
-        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_MAPPING,
+        false,
         SCOPE_PROGRAM_ID,
         SCOPE_PROGRAM_ID,
         false,
@@ -146,11 +146,54 @@ pub fn action_deposit_asset_scope_rejects_entry(
     bad_exponent: bool,
     wrong_price_info_account: bool,
     wrong_type: bool,
+    wrong_twap_source_or_tolerance: bool,
+    wrong_twap_enabled_bitmask: bool,
+    wrong_ref_price: bool,
+    wrong_generic: bool,
     frozen: bool,
 ) -> bool {
-    let no_flag =
-        !(zero_value || bad_exponent || wrong_price_info_account || wrong_type || frozen);
+    let no_flag = !(zero_value
+        || bad_exponent
+        || wrong_price_info_account
+        || wrong_type
+        || wrong_twap_source_or_tolerance
+        || wrong_twap_enabled_bitmask
+        || wrong_ref_price
+        || wrong_generic
+        || frozen);
     let now = self.scope_now();
+    let mapping = ScopeOracleMapping::new(
+        if wrong_price_info_account {
+            [9; 32]
+        } else {
+            SCOPE_PRICE_INFO_ACCOUNT
+        },
+        if wrong_type {
+            SCOPE_PRICE_TYPE - 1
+        } else {
+            SCOPE_PRICE_TYPE
+        },
+        if wrong_twap_source_or_tolerance {
+            SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS + 1
+        } else {
+            SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS
+        },
+        if wrong_twap_enabled_bitmask {
+            SCOPE_TWAP_ENABLED_BITMASK + 1
+        } else {
+            SCOPE_TWAP_ENABLED_BITMASK
+        },
+        if wrong_ref_price {
+            SCOPE_REF_PRICE + 1
+        } else {
+            SCOPE_REF_PRICE
+        },
+        if wrong_generic {
+            [11; 20]
+        } else {
+            SCOPE_GENERIC
+        },
+    );
     self.write_scope_pair(
         self.scope_mappings_account,
         SCOPE_PRICE_INDEX,
@@ -159,20 +202,10 @@ pub fn action_deposit_asset_scope_rejects_entry(
         } else {
             200_000_000_000_000_000
         },
-        if bad_exponent { 19 } else { 17 },
+        if bad_exponent { 256 } else { 17 },
         now,
-        if wrong_type {
-            SCOPE_PRICE_TYPE - 1
-        } else if frozen {
-            SCOPE_PRICE_TYPE | FROZEN_FLAG
-        } else {
-            SCOPE_PRICE_TYPE
-        },
-        if wrong_price_info_account {
-            [9; 32]
-        } else {
-            SCOPE_PRICE_INFO_ACCOUNT
-        },
+        mapping,
+        frozen,
         SCOPE_PROGRAM_ID,
         SCOPE_PROGRAM_ID,
         false,
@@ -200,8 +233,8 @@ pub fn action_deposit_asset_scope_rejects_timestamp(
         200_000_000_000_000_000,
         17,
         timestamp,
-        SCOPE_PRICE_TYPE,
-        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_MAPPING,
+        false,
         SCOPE_PROGRAM_ID,
         SCOPE_PROGRAM_ID,
         false,
@@ -243,8 +276,8 @@ pub fn action_deposit_asset_scope_rejects_accounts(
         200_000_000_000_000_000,
         17,
         now,
-        SCOPE_PRICE_TYPE,
-        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_MAPPING,
+        false,
         if wrong_prices_owner {
             Pubkey::new_unique()
         } else {
@@ -311,8 +344,8 @@ pub fn action_deposit_asset_scope_rejects_config_or_clock(
         200_000_000_000_000_000,
         17,
         now,
-        SCOPE_PRICE_TYPE,
-        SCOPE_PRICE_INFO_ACCOUNT,
+        SCOPE_MAPPING,
+        false,
         SCOPE_PROGRAM_ID,
         SCOPE_PROGRAM_ID,
         false,
@@ -325,8 +358,7 @@ pub fn action_deposit_asset_scope_rejects_config_or_clock(
         } else {
             self.scope_prices_account.to_bytes()
         },
-        SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PRICE_TYPE,
+        SCOPE_MAPPING,
         SCOPE_PRICE_INDEX,
         SCOPE_MAX_AGE_SECS,
     ));
@@ -366,8 +398,14 @@ pub fn action_scope_index_bound(&mut self) -> bool {
     );
     let frozen_type = OracleConfig::scope(ScopeOracleConfig::new(
         self.scope_prices_account.to_bytes(),
-        SCOPE_PRICE_INFO_ACCOUNT,
-        FROZEN_FLAG,
+        ScopeOracleMapping::new(
+            SCOPE_PRICE_INFO_ACCOUNT,
+            FROZEN_FLAG,
+            SCOPE_TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS,
+            SCOPE_TWAP_ENABLED_BITMASK,
+            SCOPE_REF_PRICE,
+            SCOPE_GENERIC,
+        ),
         last_index,
         SCOPE_MAX_AGE_SECS,
     ));

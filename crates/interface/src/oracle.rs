@@ -150,18 +150,72 @@ impl PythOracleConfig {
     }
 }
 
+/// The complete source mapping committed for one Kamino Scope price index.
+///
+/// Scope's `OracleMappings` account stores these fields in separate arrays;
+/// this is a compact canonical commitment to the values selected from all of
+/// those arrays at one index, not a wire representation of that account. The
+/// `price_type` excludes Scope's high frozen bit, which is mapping state rather
+/// than part of the underlying oracle type.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
+)]
+#[wincode(assert_zero_copy)]
+#[repr(C)]
+pub struct ScopeOracleMapping {
+    pub price_info_account: [u8; 32],
+    pub twap_source_or_ref_price_tolerance_bps: u16,
+    pub ref_price: u16,
+    pub generic: [u8; 20],
+    pub price_type: u8,
+    pub twap_enabled_bitmask: u8,
+    _padding: [u8; 6],
+}
+
+impl ScopeOracleMapping {
+    pub const fn new(
+        price_info_account: [u8; 32],
+        price_type: u8,
+        twap_source_or_ref_price_tolerance_bps: u16,
+        twap_enabled_bitmask: u8,
+        ref_price: u16,
+        generic: [u8; 20],
+    ) -> Self {
+        Self {
+            price_info_account,
+            twap_source_or_ref_price_tolerance_bps,
+            ref_price,
+            generic,
+            price_type,
+            twap_enabled_bitmask,
+            _padding: [0; 6],
+        }
+    }
+
+    const fn has_canonical_padding(&self) -> bool {
+        let mut index = 0;
+        while index < self._padding.len() {
+            if self._padding[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+}
+
 /// Kamino Scope oracle configuration stored with the asset it prices.
 ///
 /// Scope ingests prices from multiple oracle sources and caches them in its
 /// `OraclePrices` account, so Roshi only reads: `prices_account` pins that
-/// account and `price_index` selects the entry. `price_type` and
-/// `price_info_account` pin the selected entry's source mapping, so an admin
-/// rebinding of the index fails loudly. The reader requires both Scope
-/// accounts to be owned by the canonical Kamino Scope mainnet program.
+/// account and `price_index` selects the entry. `mapping` pins every field
+/// stored directly for that entry, so a direct admin reconfiguration fails
+/// loudly. Mapping fields that reference other indices remain part of the
+/// trust placed in the canonical Kamino Scope mainnet program, which must own
+/// both accounts read by Roshi.
 ///
-/// There is no `price_decimals`: Scope stores a value-dependent exponent
-/// (it maximizes precision, exponent <= 18), which the reader takes from the
-/// entry on every read.
+/// There is no `price_decimals`: Scope stores a source-dependent exponent,
+/// which the reader takes from the entry on every read.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead,
 )]
@@ -169,11 +223,10 @@ impl PythOracleConfig {
 #[repr(C)]
 pub struct ScopeOracleConfig {
     pub prices_account: [u8; 32],
-    pub price_info_account: [u8; 32],
+    pub mapping: ScopeOracleMapping,
     pub max_age_seconds: u64,
     pub price_index: u16,
-    pub price_type: u8,
-    _padding: [u8; 5],
+    _padding: [u8; 6],
 }
 
 impl ScopeOracleConfig {
@@ -186,18 +239,16 @@ impl ScopeOracleConfig {
 
     pub const fn new(
         prices_account: [u8; 32],
-        price_info_account: [u8; 32],
-        price_type: u8,
+        mapping: ScopeOracleMapping,
         price_index: u16,
         max_age_seconds: u64,
     ) -> Self {
         Self {
             prices_account,
-            price_info_account,
+            mapping,
             max_age_seconds,
             price_index,
-            price_type,
-            _padding: [0; 5],
+            _padding: [0; 6],
         }
     }
 }
@@ -286,24 +337,23 @@ impl PythOracleConfig {
 }
 
 impl ScopeOracleConfig {
-    const fn to_leg_bytes(self) -> [u8; 80] {
+    const fn to_leg_bytes(self) -> [u8; 112] {
         // SAFETY: `repr(C)` fixes this byte layout:
         //
-        // Bytes   Field                 Type
-        // 0..32   prices_account        [u8; 32]
-        // 32..64  price_info_account    [u8; 32]
-        // 64..72  max_age_seconds       u64
-        // 72..74  price_index           u16
-        // 74..75  price_type            u8
-        // 75..80  _padding              [u8; 5]
+        // Bytes    Field             Type
+        // 0..32    prices_account    [u8; 32]
+        // 32..96   mapping           ScopeOracleMapping
+        // 96..104  max_age_seconds   u64
+        // 104..106 price_index       u16
+        // 106..112 _padding          [u8; 6]
         //
         // The integer fields begin at their required alignments, and
-        // `_padding` extends the initialized fields to the struct's 80-byte
+        // `_padding` extends the initialized fields to the struct's 112-byte
         // aligned size. There is no implicit or uninitialized padding.
         unsafe { core::mem::transmute(self) }
     }
 
-    const fn from_leg_bytes(bytes: [u8; 80]) -> Self {
+    const fn from_leg_bytes(bytes: [u8; 112]) -> Self {
         // SAFETY: The exact layout is above; every field type accepts every bit pattern.
         unsafe { core::mem::transmute(bytes) }
     }
@@ -315,13 +365,13 @@ impl ScopeOracleConfig {
 /// switching implementations only changes `kind` and account data size never
 /// changes. Each kind's configuration occupies a fixed sub-range of the
 /// region: Switchboard at `0..112` and Pyth at `112..192` (the historical
-/// field layout, byte-for-byte), Scope at `0..80`. Bytes outside the active
+/// field layout, byte-for-byte), Scope at `0..112`. Bytes outside the active
 /// kind's sub-range are dead; constructors zero them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 #[wincode(assert_zero_copy)]
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct OracleConfig {
-    #[codama(type = fixed_size(number(u8), 192))]
+    #[codama(type = fixed_size(bytes, 192))]
     legs: [u8; LEGS_SIZE],
     kind: u8,
     _padding: [u8; 7],
@@ -359,7 +409,8 @@ impl OracleConfig {
             Ok(OracleKind::Scope) => {
                 let config = self.scope_config();
                 if config.price_index >= ScopeOracleConfig::MAX_ENTRIES
-                    || config.price_type > ScopeOracleConfig::MAX_PRICE_TYPE
+                    || config.mapping.price_type > ScopeOracleConfig::MAX_PRICE_TYPE
+                    || !config.mapping.has_canonical_padding()
                 {
                     return Err(InvalidOracleConfig);
                 }
@@ -428,7 +479,12 @@ impl Default for OracleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wincode::{config::DefaultConfig, serialize, SchemaRead, SchemaWrite, TypeMeta};
+    use codama::{Codama, NodeTrait};
+    use serde_json::Value;
+    use std::path::Path;
+    use wincode::{
+        config::DefaultConfig, deserialize, serialize, SchemaRead, SchemaWrite, TypeMeta,
+    };
 
     fn assert_zero_copy<T>()
     where
@@ -451,8 +507,12 @@ mod tests {
         );
     }
 
+    fn scope_mapping(price_type: u8) -> ScopeOracleMapping {
+        ScopeOracleMapping::new([7; 32], price_type, 9, 3, 17, [8; 20])
+    }
+
     fn scope_config() -> ScopeOracleConfig {
-        ScopeOracleConfig::new([6; 32], [7; 32], 26, 445, 300)
+        ScopeOracleConfig::new([6; 32], scope_mapping(26), 445, 300)
     }
 
     fn legacy_pyth_config(
@@ -508,16 +568,46 @@ mod tests {
     fn oracle_configs_are_zero_copy() {
         assert_zero_copy::<SwitchboardOracleConfig>();
         assert_zero_copy::<PythOracleConfig>();
+        assert_zero_copy::<ScopeOracleMapping>();
         assert_zero_copy::<ScopeOracleConfig>();
         assert_zero_copy::<OracleConfig>();
         assert_eq!(core::mem::size_of::<SwitchboardOracleConfig>(), 112);
         assert_eq!(core::mem::size_of::<PythOracleConfig>(), 80);
-        assert_eq!(core::mem::size_of::<ScopeOracleConfig>(), 80);
+        assert_eq!(core::mem::size_of::<ScopeOracleMapping>(), 64);
+        assert_eq!(core::mem::size_of::<ScopeOracleConfig>(), 112);
         assert_eq!(core::mem::size_of::<OracleConfig>(), 200);
+        assert_eq!(core::mem::align_of::<ScopeOracleMapping>(), 2);
+        assert_eq!(core::mem::align_of::<ScopeOracleConfig>(), 8);
+        assert_eq!(core::mem::align_of::<OracleConfig>(), 8);
         assert_eq!(
             serialize(&OracleConfig::default()).unwrap().len(),
             core::mem::size_of::<OracleConfig>()
         );
+    }
+
+    #[test]
+    fn codama_oracle_config_uses_fixed_size_bytes_for_legs() {
+        let idl = Codama::load(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap()
+            .get_idl()
+            .unwrap();
+        let idl: Value = serde_json::from_str(&idl.to_json().unwrap()).unwrap();
+        let oracle_config = idl["program"]["definedTypes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|defined_type| defined_type["name"] == "oracleConfig")
+            .unwrap();
+        let legs = oracle_config["type"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["name"] == "legs")
+            .unwrap();
+
+        assert_eq!(legs["type"]["kind"], "fixedSizeTypeNode");
+        assert_eq!(legs["type"]["size"], LEGS_SIZE);
+        assert_eq!(legs["type"]["type"]["kind"], "bytesTypeNode");
     }
 
     /// The leg region must keep the exact byte layout of the historical
@@ -553,7 +643,7 @@ mod tests {
         let bytes = serialize(&config).unwrap();
         let mut expected = Vec::new();
         expected.extend_from_slice(&serialize(&scope_config()).unwrap());
-        expected.extend_from_slice(&[0; 112]);
+        expected.extend_from_slice(&[0; 80]);
         expected.push(OracleKind::Scope.as_u8());
         expected.extend_from_slice(&[0; 7]);
         assert_eq!(bytes, expected);
@@ -588,8 +678,7 @@ mod tests {
     fn validate_requires_in_range_scope_index() {
         let out_of_range = OracleConfig::scope(ScopeOracleConfig::new(
             [6; 32],
-            [7; 32],
-            26,
+            scope_mapping(26),
             ScopeOracleConfig::MAX_ENTRIES,
             300,
         ));
@@ -597,8 +686,7 @@ mod tests {
 
         let last_entry = OracleConfig::scope(ScopeOracleConfig::new(
             [6; 32],
-            [7; 32],
-            26,
+            scope_mapping(26),
             ScopeOracleConfig::MAX_ENTRIES - 1,
             300,
         ));
@@ -606,12 +694,22 @@ mod tests {
 
         let frozen_type = OracleConfig::scope(ScopeOracleConfig::new(
             [6; 32],
-            [7; 32],
-            0x80,
+            scope_mapping(0x80),
             ScopeOracleConfig::MAX_ENTRIES - 1,
             300,
         ));
         assert_eq!(frozen_type.validate(), Err(InvalidOracleConfig));
+    }
+
+    #[test]
+    fn validate_rejects_noncanonical_scope_mapping_padding() {
+        let mut bytes = serialize(&OracleConfig::scope(scope_config())).unwrap();
+        // Scope mapping starts at byte 32, and its six explicit padding bytes
+        // occupy mapping offsets 58..64.
+        bytes[90] = 1;
+        let config: OracleConfig = deserialize(&bytes).unwrap();
+
+        assert_eq!(config.validate(), Err(InvalidOracleConfig));
     }
 
     #[test]

@@ -261,10 +261,15 @@ pub fn set_pyth_price(
     .unwrap();
 }
 
-use roshi::oracle::scope::{
-    DATED_PRICES_OFFSET, DATED_PRICE_SIZE, ORACLE_MAPPINGS_DISCRIMINATOR, ORACLE_MAPPINGS_LEN,
-    ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN, ORACLE_PRICES_MAPPINGS_OFFSET,
-    PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET,
+use roshi::oracle::{
+    scope::{
+        DATED_PRICES_OFFSET, DATED_PRICE_SIZE, GENERIC_OFFSET, ORACLE_MAPPINGS_DISCRIMINATOR,
+        ORACLE_MAPPINGS_LEN, ORACLE_PRICES_DISCRIMINATOR, ORACLE_PRICES_LEN,
+        ORACLE_PRICES_MAPPINGS_OFFSET, PRICE_INFO_ACCOUNTS_OFFSET, PRICE_TYPES_OFFSET,
+        REF_PRICE_OFFSET, TWAP_ENABLED_BITMASK_OFFSET,
+        TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET,
+    },
+    ScopeOracleMapping,
 };
 
 /// Build the two Scope account payloads consumed by Roshi for one entry, laid
@@ -278,8 +283,8 @@ pub fn scope_oracle_data(
     value: u64,
     exponent: u64,
     timestamp: u64,
-    price_type: u8,
-    mapped_price_info_account: [u8; 32],
+    mapping: ScopeOracleMapping,
+    frozen: bool,
 ) -> (Vec<u8>, Vec<u8>) {
     let index = usize::from(price_index);
 
@@ -296,8 +301,18 @@ pub fn scope_oracle_data(
     mappings[..8].copy_from_slice(ORACLE_MAPPINGS_DISCRIMINATOR);
     let price_info_offset = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
     mappings[price_info_offset..price_info_offset + 32]
-        .copy_from_slice(&mapped_price_info_account);
-    mappings[PRICE_TYPES_OFFSET + index] = price_type;
+        .copy_from_slice(&mapping.price_info_account);
+    mappings[PRICE_TYPES_OFFSET + index] =
+        mapping.price_type | if frozen { crate::FROZEN_FLAG } else { 0 };
+    let twap_source_offset = TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET + 2 * index;
+    mappings[twap_source_offset..twap_source_offset + 2]
+        .copy_from_slice(&mapping.twap_source_or_ref_price_tolerance_bps.to_le_bytes());
+    mappings[TWAP_ENABLED_BITMASK_OFFSET + index] = mapping.twap_enabled_bitmask;
+    let ref_price_offset = REF_PRICE_OFFSET + 2 * index;
+    mappings[ref_price_offset..ref_price_offset + 2]
+        .copy_from_slice(&mapping.ref_price.to_le_bytes());
+    let generic_offset = GENERIC_OFFSET + 20 * index;
+    mappings[generic_offset..generic_offset + 20].copy_from_slice(&mapping.generic);
 
     (prices, mappings)
 }
@@ -309,8 +324,7 @@ pub fn set_scope_oracle(
     prices_account: Pubkey,
     mappings_account: Pubkey,
     price_index: u16,
-    price_info_account: [u8; 32],
-    price_type: u8,
+    mapping: ScopeOracleMapping,
     value: u64,
     exponent: u64,
     timestamp: u64,
@@ -321,8 +335,8 @@ pub fn set_scope_oracle(
         value,
         exponent,
         timestamp,
-        price_type,
-        price_info_account,
+        mapping,
+        false,
     );
     for (address, data) in [(prices_account, prices), (mappings_account, mappings)] {
         let lamports = svm.minimum_balance_for_rent_exemption(data.len());

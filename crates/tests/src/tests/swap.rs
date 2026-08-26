@@ -980,8 +980,7 @@ fn test_swap_prices_routed_scope_endpoints_over_pyth_base() {
     let mappings = Pubkey::new_unique();
     let scope_config = roshi::oracle::ScopeOracleConfig::new(
         prices.to_bytes(),
-        [13u8; 32],
-        26,
+        roshi::oracle::ScopeOracleMapping::new([13u8; 32], 26, 11, 1, 29, [21u8; 20]),
         445,
         i64::MAX as u64,
     );

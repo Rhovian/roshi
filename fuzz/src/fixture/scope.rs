@@ -14,8 +14,7 @@ fn scope_config(&self, price_index: u16) -> OracleConfig {
 fn scope_config_with_max_age(&self, price_index: u16, max_age_seconds: u64) -> OracleConfig {
     OracleConfig::scope(ScopeOracleConfig::new(
         self.scope_prices_account.to_bytes(),
-        SCOPE_PRICE_INFO_ACCOUNT,
-        SCOPE_PRICE_TYPE,
+        SCOPE_MAPPING,
         price_index,
         max_age_seconds,
     ))
@@ -108,8 +107,8 @@ fn write_scope_pair(
     value: u64,
     exponent: u64,
     timestamp: u64,
-    price_type: u8,
-    mapped_price_info_account: [u8; 32],
+    mapping: ScopeOracleMapping,
+    frozen: bool,
     prices_owner: Pubkey,
     mappings_owner: Pubkey,
     malformed_prices: bool,
@@ -121,8 +120,8 @@ fn write_scope_pair(
         value,
         exponent,
         timestamp,
-        price_type,
-        mapped_price_info_account,
+        mapping,
+        frozen,
     );
     if malformed_prices {
         prices[0] ^= 0xff;

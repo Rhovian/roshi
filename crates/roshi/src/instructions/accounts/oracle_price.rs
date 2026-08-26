@@ -3,7 +3,8 @@ use solana_program_error::ProgramError;
 use solana_sysvar::clock::Clock;
 
 use crate::oracle::{
-    OracleConfig, OracleKind, OraclePrice, PythOracle, ScopeOracle, SwitchboardOracle,
+    OracleConfig, OracleKind, OraclePrice, PythOracle, ScopeOracle, ScopeOracleMapping,
+    SwitchboardOracle,
 };
 
 // Accounts per oracle leg. The single arity source: `split_oracle_accounts`
@@ -103,10 +104,9 @@ pub(crate) enum OracleFeedIdentity {
     },
     Scope {
         prices_account: [u8; 32],
-        price_info_account: [u8; 32],
+        mapping: ScopeOracleMapping,
         max_age_seconds: u64,
         price_index: u16,
-        price_type: u8,
     },
 }
 
@@ -114,7 +114,7 @@ pub(crate) enum OracleFeedIdentity {
 /// validation and interpretation policy applied to it. Scope's feed is the
 /// pinned `OraclePrices` account plus the entry index: both legs read the same
 /// on-chain account, so distinct entries are distinct feeds, while the source
-/// pin (`price_info_account`, `price_type`) is validation policy on the entry.
+/// mapping commitment is validation policy on the entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OracleFeedKey {
     Switchboard([u8; 32]),
@@ -173,10 +173,9 @@ pub(crate) fn oracle_feed_identity(
             let config = config.scope_config();
             Ok(OracleFeedIdentity::Scope {
                 prices_account: config.prices_account,
-                price_info_account: config.price_info_account,
+                mapping: config.mapping,
                 max_age_seconds: config.max_age_seconds,
                 price_index: config.price_index,
-                price_type: config.price_type,
             })
         }
     }
@@ -204,18 +203,22 @@ pub(crate) fn feeds_match(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oracle::{PythOracleConfig, ScopeOracleConfig, SwitchboardOracleConfig};
+    use crate::oracle::{
+        PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping, SwitchboardOracleConfig,
+    };
+
+    fn scope_mapping() -> ScopeOracleMapping {
+        ScopeOracleMapping::new([3; 32], 26, 9, 3, 17, [4; 20])
+    }
 
     fn scope_config(
-        price_info_account: [u8; 32],
-        price_type: u8,
+        mapping: ScopeOracleMapping,
         price_index: u16,
         max_age_seconds: u64,
     ) -> OracleConfig {
         OracleConfig::scope(ScopeOracleConfig::new(
             [2; 32],
-            price_info_account,
-            price_type,
+            mapping,
             price_index,
             max_age_seconds,
         ))
@@ -223,15 +226,38 @@ mod tests {
 
     #[test]
     fn same_feed_rejects_mismatched_validation_policy() {
-        let base = oracle_feed_identity(&scope_config([3; 32], 26, 445, 30)).unwrap();
+        let mapping = scope_mapping();
+        let base = oracle_feed_identity(&scope_config(mapping, 445, 30)).unwrap();
 
-        // Same entry under a different max age or source pin is one feed with
+        // Same entry under a different max age or source mapping is one feed with
         // two policies, not two feeds.
-        for config in [
-            scope_config([3; 32], 26, 445, 31),
-            scope_config([8; 32], 26, 445, 30),
-            scope_config([3; 32], 27, 445, 30),
-        ] {
+        let mut different_mappings = Vec::new();
+        let mut changed = mapping;
+        changed.price_info_account = [8; 32];
+        different_mappings.push(changed);
+        changed = mapping;
+        changed.price_type += 1;
+        different_mappings.push(changed);
+        changed = mapping;
+        changed.twap_source_or_ref_price_tolerance_bps += 1;
+        different_mappings.push(changed);
+        changed = mapping;
+        changed.twap_enabled_bitmask += 1;
+        different_mappings.push(changed);
+        changed = mapping;
+        changed.ref_price += 1;
+        different_mappings.push(changed);
+        changed = mapping;
+        changed.generic[0] ^= 1;
+        different_mappings.push(changed);
+
+        let mut different_policies = vec![scope_config(mapping, 445, 31)];
+        different_policies.extend(
+            different_mappings
+                .into_iter()
+                .map(|mapping| scope_config(mapping, 445, 30)),
+        );
+        for config in different_policies {
             let different_policy = oracle_feed_identity(&config).unwrap();
             assert_eq!(
                 feeds_match(Some(base), Some(different_policy)),
@@ -240,10 +266,10 @@ mod tests {
         }
 
         // A different entry, or a different prices account, is a different feed.
-        let different_entry = oracle_feed_identity(&scope_config([3; 32], 26, 446, 30)).unwrap();
+        let different_entry = oracle_feed_identity(&scope_config(mapping, 446, 30)).unwrap();
         assert_eq!(feeds_match(Some(base), Some(different_entry)), Ok(false));
         let different_account = oracle_feed_identity(&OracleConfig::scope(ScopeOracleConfig::new(
-            [9; 32], [3; 32], 26, 445, 30,
+            [9; 32], mapping, 445, 30,
         )))
         .unwrap();
         assert_eq!(feeds_match(Some(base), Some(different_account)), Ok(false));

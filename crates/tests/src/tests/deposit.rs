@@ -5,7 +5,7 @@
 use roshi::{
     error::RoshiError,
     instructions::InitializeAssetArgs,
-    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig},
+    oracle::{OracleConfig, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{asset::Asset, sub_account::VaultSubAccount},
 };
 use roshi_interface::access::access_merkle_leaf;
@@ -531,7 +531,12 @@ fn install_scope_priced_asset(
 
     let prices_account = solana_pubkey::Pubkey::new_unique();
     let mappings_account = solana_pubkey::Pubkey::new_unique();
-    let scope_config = ScopeOracleConfig::new(prices_account.to_bytes(), [7u8; 32], 26, 445, 300);
+    let scope_config = ScopeOracleConfig::new(
+        prices_account.to_bytes(),
+        ScopeOracleMapping::new([7u8; 32], 26, 9, 3, 17, [8u8; 20]),
+        445,
+        300,
+    );
 
     fund(svm, &vault.roles.admin);
     send_ok(

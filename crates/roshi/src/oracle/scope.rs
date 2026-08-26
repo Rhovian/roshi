@@ -2,7 +2,7 @@ use solana_account_info::AccountInfo;
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 
-use super::{Oracle, OraclePrice, ScopeOracleConfig};
+use super::{Oracle, OraclePrice, ScopeOracleConfig, ScopeOracleMapping};
 
 // Kamino Scope account layout (Kamino-Finance/scope, Anchor zero-copy).
 //
@@ -10,9 +10,11 @@ use super::{Oracle, OraclePrice, ScopeOracleConfig};
 // `DatedPrice { price: Price { value: u64, exp: u64 }, last_updated_slot: u64,
 // unix_timestamp: u64, generic_data: [u8; 24] }` (56 bytes per entry).
 //
-// `OracleMappings` is a struct of arrays; the two Roshi reads are
-// `price_info_accounts: [Pubkey; 512]` and `price_types: [u8; 512]`, with the
-// frozen flag in bit 7 of each price type.
+// `OracleMappings` is a struct of arrays. Roshi commits the selected value
+// from every array: price-info account, price type, TWAP source/reference
+// tolerance, TWAP enabled bitmask, reference price, and generic data. The
+// frozen flag occupies bit 7 of each live price type and is checked as runtime
+// mapping state rather than stored in the commitment.
 //
 // These constants are the one in-tree encoding of that layout; test and fuzz
 // account builders import them rather than restating the numbers.
@@ -36,20 +38,27 @@ pub const PRICE_INFO_ACCOUNTS_OFFSET: usize = 8;
 /// Offset of the `price_types` array, directly after `price_info_accounts`.
 pub const PRICE_TYPES_OFFSET: usize =
     PRICE_INFO_ACCOUNTS_OFFSET + 32 * ScopeOracleConfig::MAX_ENTRIES as usize;
-/// Exact `OracleMappings` account length. Unlike the prices account this is
-/// not derivable from the arrays Roshi reads: the account carries further
-/// unread arrays whose observed total is pinned here.
-pub const ORACLE_MAPPINGS_LEN: usize = 29_704;
+/// Offset of the `twap_source_or_ref_price_tolerance_bps` array.
+pub const TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET: usize =
+    PRICE_TYPES_OFFSET + ScopeOracleConfig::MAX_ENTRIES as usize;
+/// Offset of the `twap_enabled_bitmask` array.
+pub const TWAP_ENABLED_BITMASK_OFFSET: usize =
+    TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET + 2 * ScopeOracleConfig::MAX_ENTRIES as usize;
+/// Offset of the `ref_price` array.
+pub const REF_PRICE_OFFSET: usize =
+    TWAP_ENABLED_BITMASK_OFFSET + ScopeOracleConfig::MAX_ENTRIES as usize;
+/// Offset of the `generic` array.
+pub const GENERIC_OFFSET: usize = REF_PRICE_OFFSET + 2 * ScopeOracleConfig::MAX_ENTRIES as usize;
+/// Exact `OracleMappings` account length: discriminator plus every mapping
+/// array in Scope's zero-copy layout.
+pub const ORACLE_MAPPINGS_LEN: usize =
+    GENERIC_OFFSET + 20 * ScopeOracleConfig::MAX_ENTRIES as usize;
 
 /// Canonical Kamino Scope mainnet program.
 pub const SCOPE_PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 /// Bit 7 of `price_types[i]` marks the entry frozen by the Scope admin.
 pub const FROZEN_FLAG: u8 = 0x80;
-
-/// Scope exponents never exceed 18 (`decimal_to_price` caps them); a larger
-/// value is corrupted or foreign data.
-const MAX_EXP: u64 = 18;
 
 /// Kamino Scope cached-price reader.
 ///
@@ -83,10 +92,10 @@ impl ScopeOracle {
     /// Checks, in order: the prices account address and owner pin, both
     /// account discriminators and lengths, that `mappings_account` is the one
     /// the prices account declares, that the mapping entry is unfrozen and
-    /// still bound to the configured price type and price-info account, and
-    /// that the cached observation is positive, sanely scaled, not from the
-    /// future, and within `max_age_seconds` of `unix_timestamp` (the current
-    /// cluster time).
+    /// still matches the complete configured source mapping, and that the
+    /// cached observation is positive, representable by [`OraclePrice`], not
+    /// from the future, and within `max_age_seconds` of `unix_timestamp` (the
+    /// current cluster time).
     pub fn read_verified_price(
         &self,
         prices_account: &AccountInfo,
@@ -125,9 +134,8 @@ impl ScopeOracle {
     }
 
     /// Require the mapping entry at the configured index to be unfrozen and
-    /// still bound to the configured source. A Scope admin rebinding of the
-    /// index changes its price type or price-info account and the read fails
-    /// loudly.
+    /// still equal to the complete configured source mapping. Any Scope admin
+    /// reconfiguration of that index makes the read fail loudly.
     fn verify_mapping_entry(&self, mappings_data: &[u8]) -> Result<(), ProgramError> {
         if !well_formed(
             mappings_data,
@@ -146,18 +154,35 @@ impl ScopeOracle {
         }
         let index = usize::from(self.config.price_index);
 
-        let price_type = mappings_data[PRICE_TYPES_OFFSET + index];
+        let price_type = *mappings_data
+            .get(PRICE_TYPES_OFFSET + index)
+            .ok_or(ProgramError::InvalidAccountData)?;
         if price_type & FROZEN_FLAG != 0 {
             return Err(ProgramError::InvalidAccountData);
         }
-        if price_type & !FROZEN_FLAG != self.config.price_type {
-            return Err(ProgramError::InvalidAccountData);
-        }
 
-        let price_info_offset = PRICE_INFO_ACCOUNTS_OFFSET + 32 * index;
-        if mappings_data[price_info_offset..price_info_offset + 32]
-            != self.config.price_info_account
-        {
+        let mapping = ScopeOracleMapping::new(
+            mapping_array_entry::<32>(mappings_data, PRICE_INFO_ACCOUNTS_OFFSET, index)
+                .ok_or(ProgramError::InvalidAccountData)?,
+            price_type & !FROZEN_FLAG,
+            u16::from_le_bytes(
+                mapping_array_entry::<2>(
+                    mappings_data,
+                    TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS_OFFSET,
+                    index,
+                )
+                .ok_or(ProgramError::InvalidAccountData)?,
+            ),
+            mapping_array_entry::<1>(mappings_data, TWAP_ENABLED_BITMASK_OFFSET, index)
+                .ok_or(ProgramError::InvalidAccountData)?[0],
+            u16::from_le_bytes(
+                mapping_array_entry::<2>(mappings_data, REF_PRICE_OFFSET, index)
+                    .ok_or(ProgramError::InvalidAccountData)?,
+            ),
+            mapping_array_entry::<20>(mappings_data, GENERIC_OFFSET, index)
+                .ok_or(ProgramError::InvalidAccountData)?,
+        );
+        if mapping != self.config.mapping {
             return Err(ProgramError::InvalidAccountData);
         }
 
@@ -194,6 +219,17 @@ fn well_formed(data: &[u8], len: usize, discriminator: &[u8; 8]) -> bool {
     data.len() == len && data.get(..8) == Some(discriminator.as_slice())
 }
 
+/// Read one element from a fixed-width array embedded in Scope's
+/// `OracleMappings` struct-of-arrays layout.
+fn mapping_array_entry<const N: usize>(
+    data: &[u8],
+    offset: usize,
+    index: usize,
+) -> Option<[u8; N]> {
+    let start = offset.checked_add(N.checked_mul(index)?)?;
+    data.get(start..start.checked_add(N)?)?.try_into().ok()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DatedPrice {
     value: u64,
@@ -223,7 +259,7 @@ impl DatedPrice {
 }
 
 fn price_from_entry(entry: &DatedPrice) -> Option<OraclePrice> {
-    if entry.value == 0 || entry.exp > MAX_EXP {
+    if entry.value == 0 {
         return None;
     }
 
@@ -231,7 +267,7 @@ fn price_from_entry(entry: &DatedPrice) -> Option<OraclePrice> {
         value: u128::from(entry.value),
         // Scope's exponent is value-dependent; it is taken from the entry on
         // every read, never assumed constant.
-        decimals: entry.exp as u8,
+        decimals: u8::try_from(entry.exp).ok()?,
     })
 }
 
@@ -246,6 +282,10 @@ mod tests {
 
     const PRICE_INFO_ACCOUNT: [u8; 32] = [7; 32];
     const PRICE_TYPE: u8 = 26;
+    const TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS: u16 = 9;
+    const TWAP_ENABLED_BITMASK: u8 = 3;
+    const REF_PRICE: u16 = 17;
+    const GENERIC: [u8; 20] = [8; 20];
     const PRICE_INDEX: u16 = 445;
     const PRICE_VALUE: u64 = 109_679_858_068_090_600;
     const PRICE_EXP: u64 = 17;
@@ -277,7 +317,10 @@ mod tests {
     struct FixtureOracleMappings {
         price_info_accounts: [[u8; 32]; 512],
         price_types: [u8; 512],
-        unread_suffix: [u8; 12_800],
+        twap_source_or_ref_price_tolerance_bps: [u16; 512],
+        twap_enabled_bitmask: [u8; 512],
+        ref_price: [u16; 512],
+        generic: [[u8; 20]; 512],
     }
 
     /// Marker for fully initialized fixture layouts with no implicit padding.
@@ -286,8 +329,9 @@ mod tests {
     // SAFETY: Every field is an integer, byte array, or `FixtureDatedPrice`;
     // their alignments divide their offsets and the final size exactly.
     unsafe impl FixtureBytes for FixtureOraclePrices {}
-    // SAFETY: Every field is a byte array, so the struct has alignment one and
-    // cannot contain implicit padding.
+    // SAFETY: Each u16 array begins at an even offset, and the final size is a
+    // multiple of the struct's two-byte alignment, so there is no implicit
+    // padding.
     unsafe impl FixtureBytes for FixtureOracleMappings {}
 
     fn encode_fixture<T: FixtureBytes>(discriminator: &[u8; 8], fixture: &T) -> Vec<u8> {
@@ -305,14 +349,19 @@ mod tests {
         data
     }
 
-    fn config() -> ScopeOracleConfig {
-        ScopeOracleConfig::new(
-            PRICES_KEY.to_bytes(),
+    fn mapping() -> ScopeOracleMapping {
+        ScopeOracleMapping::new(
             PRICE_INFO_ACCOUNT,
             PRICE_TYPE,
-            PRICE_INDEX,
-            300,
+            TWAP_SOURCE_OR_REF_PRICE_TOLERANCE_BPS,
+            TWAP_ENABLED_BITMASK,
+            REF_PRICE,
+            GENERIC,
         )
+    }
+
+    fn config() -> ScopeOracleConfig {
+        ScopeOracleConfig::new(PRICES_KEY.to_bytes(), mapping(), PRICE_INDEX, 300)
     }
 
     fn prices_data(mappings: &Pubkey, index: u16, value: u64, exp: u64, timestamp: u64) -> Vec<u8> {
@@ -334,7 +383,7 @@ mod tests {
         encode_fixture(ORACLE_PRICES_DISCRIMINATOR, &fixture)
     }
 
-    fn mappings_data(index: u16, price_type: u8, price_info_account: [u8; 32]) -> Vec<u8> {
+    fn mappings_data(index: u16, mapping: ScopeOracleMapping, frozen: bool) -> Vec<u8> {
         assert_eq!(
             8 + core::mem::size_of::<FixtureOracleMappings>(),
             ORACLE_MAPPINGS_LEN
@@ -342,10 +391,19 @@ mod tests {
         let mut fixture = FixtureOracleMappings {
             price_info_accounts: [[0; 32]; 512],
             price_types: [0; 512],
-            unread_suffix: [0; 12_800],
+            twap_source_or_ref_price_tolerance_bps: [0; 512],
+            twap_enabled_bitmask: [0; 512],
+            ref_price: [0; 512],
+            generic: [[0; 20]; 512],
         };
-        fixture.price_info_accounts[usize::from(index)] = price_info_account;
-        fixture.price_types[usize::from(index)] = price_type;
+        let index = usize::from(index);
+        fixture.price_info_accounts[index] = mapping.price_info_account;
+        fixture.price_types[index] = mapping.price_type | if frozen { FROZEN_FLAG } else { 0 };
+        fixture.twap_source_or_ref_price_tolerance_bps[index] =
+            mapping.twap_source_or_ref_price_tolerance_bps;
+        fixture.twap_enabled_bitmask[index] = mapping.twap_enabled_bitmask;
+        fixture.ref_price[index] = mapping.ref_price;
+        fixture.generic[index] = mapping.generic;
         encode_fixture(ORACLE_MAPPINGS_DISCRIMINATOR, &fixture)
     }
 
@@ -360,7 +418,7 @@ mod tests {
     }
 
     fn scope_mappings_data() -> Vec<u8> {
-        mappings_data(PRICE_INDEX, PRICE_TYPE, PRICE_INFO_ACCOUNT)
+        mappings_data(PRICE_INDEX, mapping(), false)
     }
 
     fn read(
@@ -415,6 +473,66 @@ mod tests {
             mappings_data,
             unix_timestamp,
         )
+    }
+
+    fn hex_bytes<const N: usize>(hex: &str) -> [u8; N] {
+        assert_eq!(hex.len(), 2 * N);
+        let mut bytes = [0; N];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[2 * index..2 * index + 2], 16).unwrap();
+        }
+        bytes
+    }
+
+    /// Captured from the canonical mainnet Scope accounts at index 445. All
+    /// offsets and lengths in this fixture are numeric literals on purpose:
+    /// the golden must fail if the production layout constants drift.
+    #[test]
+    fn decodes_captured_mainnet_scope_slices_at_independent_offsets() {
+        let mut prices = vec![0xa5; 28_712];
+        prices[..40].copy_from_slice(&hex_bytes::<40>(
+            "598076dd0648b4923b5a811357e565086200fba2a64ee76c5c9068c72a2f6e9741361e19843a53b3",
+        ));
+        prices[24_960..25_016].copy_from_slice(&hex_bytes::<56>(
+            "2e2ce9739dba8501110000000000000084be541a000000009e458e6a000000009e458e6a0000000000000000000000000000000000000000",
+        ));
+
+        let price_info_account =
+            hex_bytes::<32>("00072c74e4a28e4cb93cf0551e1bd992af743db37ce791d65cccadd7556f5c40");
+        let mut mappings = vec![0xa5; 29_704];
+        mappings[..8].copy_from_slice(&[40, 244, 110, 80, 255, 214, 243, 188]);
+        mappings[14_248..14_280].copy_from_slice(&price_info_account);
+        mappings[16_837] = 38;
+        mappings[17_794..17_796].copy_from_slice(&[0xf4, 0x01]);
+        mappings[18_373] = 1;
+        mappings[19_330..19_332].copy_from_slice(&[0xfc, 0x00]);
+        mappings[28_364..28_384].copy_from_slice(&[0; 20]);
+
+        let config = ScopeOracleConfig::new(
+            PRICES_KEY.to_bytes(),
+            ScopeOracleMapping::new(price_info_account, 38, 500, 1, 252, [0; 20]),
+            445,
+            300,
+        );
+        let price = read(
+            config,
+            &PRICES_KEY,
+            &SCOPE_PROGRAM_ID,
+            &mut prices,
+            &MAPPINGS_KEY,
+            &SCOPE_PROGRAM_ID,
+            &mut mappings,
+            1_787_708_890,
+        )
+        .unwrap();
+
+        assert_eq!(
+            price,
+            OraclePrice {
+                value: 109_698_951_357_738_030,
+                decimals: 17,
+            }
+        );
     }
 
     #[test]
@@ -588,34 +706,77 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rebound_or_frozen_mapping_entry() {
+    fn rejects_reconfigured_or_frozen_mapping_entry() {
         let now = PRICE_TIMESTAMP as i64;
 
-        // Price-info account rebound while retaining the configured type.
-        let mut rebound = mappings_data(PRICE_INDEX, PRICE_TYPE, [9; 32]);
-        assert!(read_scope(&mut scope_prices_data(), &mut rebound, now).is_err());
+        let mut reconfigured = Vec::new();
+        let mut changed = mapping();
+        changed.price_info_account = [9; 32];
+        reconfigured.push(changed);
+        changed = mapping();
+        changed.price_type += 1;
+        reconfigured.push(changed);
+        changed = mapping();
+        changed.twap_source_or_ref_price_tolerance_bps += 1;
+        reconfigured.push(changed);
+        changed = mapping();
+        changed.twap_enabled_bitmask += 1;
+        reconfigured.push(changed);
+        changed = mapping();
+        changed.ref_price += 1;
+        reconfigured.push(changed);
+        changed = mapping();
+        changed.generic[0] ^= 1;
+        reconfigured.push(changed);
 
-        // Type rebound while retaining the configured price-info account.
-        let mut retyped = mappings_data(PRICE_INDEX, PRICE_TYPE + 1, PRICE_INFO_ACCOUNT);
-        assert!(read_scope(&mut scope_prices_data(), &mut retyped, now).is_err());
+        for changed in reconfigured {
+            let mut mappings = mappings_data(PRICE_INDEX, changed, false);
+            assert!(read_scope(&mut scope_prices_data(), &mut mappings, now).is_err());
+        }
 
         // Frozen entry: correct source binding with the frozen flag set.
-        let mut frozen = mappings_data(PRICE_INDEX, PRICE_TYPE | FROZEN_FLAG, PRICE_INFO_ACCOUNT);
+        let mut frozen = mappings_data(PRICE_INDEX, mapping(), true);
         assert!(read_scope(&mut scope_prices_data(), &mut frozen, now).is_err());
     }
 
     #[test]
-    fn rejects_non_positive_value_and_bad_exponent() {
+    fn rejects_non_positive_value_and_unrepresentable_exponent() {
         let now = PRICE_TIMESTAMP as i64;
 
         let mut zeroed = prices_data(&MAPPINGS_KEY, PRICE_INDEX, 0, PRICE_EXP, PRICE_TIMESTAMP);
         assert!(read_scope(&mut zeroed, &mut scope_mappings_data(), now).is_err());
 
+        // Scope source types are not all capped to 18 decimals. The reader
+        // preserves any exponent representable by OraclePrice; downstream
+        // arithmetic fails loudly if a particular operation cannot scale it.
+        let mut larger_valid_exp =
+            prices_data(&MAPPINGS_KEY, PRICE_INDEX, PRICE_VALUE, 19, PRICE_TIMESTAMP);
+        assert_eq!(
+            read_scope(&mut larger_valid_exp, &mut scope_mappings_data(), now)
+                .unwrap()
+                .decimals,
+            19
+        );
+
+        let mut largest_valid_exp = prices_data(
+            &MAPPINGS_KEY,
+            PRICE_INDEX,
+            PRICE_VALUE,
+            u64::from(u8::MAX),
+            PRICE_TIMESTAMP,
+        );
+        assert_eq!(
+            read_scope(&mut largest_valid_exp, &mut scope_mappings_data(), now)
+                .unwrap()
+                .decimals,
+            u8::MAX
+        );
+
         let mut bad_exp = prices_data(
             &MAPPINGS_KEY,
             PRICE_INDEX,
             PRICE_VALUE,
-            MAX_EXP + 1,
+            u64::from(u8::MAX) + 1,
             PRICE_TIMESTAMP,
         );
         assert!(read_scope(&mut bad_exp, &mut scope_mappings_data(), now).is_err());
@@ -625,8 +786,7 @@ mod tests {
     fn rejects_out_of_range_index() {
         let bad_config = ScopeOracleConfig::new(
             PRICES_KEY.to_bytes(),
-            PRICE_INFO_ACCOUNT,
-            PRICE_TYPE,
+            mapping(),
             ScopeOracleConfig::MAX_ENTRIES,
             300,
         );
@@ -646,13 +806,7 @@ mod tests {
     #[test]
     fn reads_last_entry() {
         let last = ScopeOracleConfig::MAX_ENTRIES - 1;
-        let config = ScopeOracleConfig::new(
-            PRICES_KEY.to_bytes(),
-            PRICE_INFO_ACCOUNT,
-            PRICE_TYPE,
-            last,
-            300,
-        );
+        let config = ScopeOracleConfig::new(PRICES_KEY.to_bytes(), mapping(), last, 300);
         let price = read(
             config,
             &PRICES_KEY,
@@ -660,7 +814,7 @@ mod tests {
             &mut prices_data(&MAPPINGS_KEY, last, PRICE_VALUE, PRICE_EXP, PRICE_TIMESTAMP),
             &MAPPINGS_KEY,
             &SCOPE_PROGRAM_ID,
-            &mut mappings_data(last, PRICE_TYPE, PRICE_INFO_ACCOUNT),
+            &mut mappings_data(last, mapping(), false),
             PRICE_TIMESTAMP as i64,
         )
         .unwrap();
