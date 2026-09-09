@@ -15,8 +15,9 @@ use std::rc::Rc;
 
 use roshi::{
     instructions::{
-        AccountFlags, AtomicRedeemArgs, InitializeAssetArgs, InitializeVaultArgs, ManageArgs,
-        PackedAccountFlags, SwapArgs, UpdateAssetArgs, UpdateVaultConfigArgs,
+        AccountFlags, AtomicRedeemArgs, DepositAndDeployArgs, InitializeAssetArgs,
+        InitializeVaultArgs, ManageArgs, PackedAccountFlags, SwapArgs, UpdateAssetArgs,
+        UpdateVaultConfigArgs,
     },
     oracle::{OracleConfig, OraclePrice, PythOracleConfig, ScopeOracleConfig, ScopeOracleMapping},
     state::{
@@ -183,9 +184,10 @@ struct RoshiFixture {
     /// Sub-account-owned base account standing in for deployed venue capital,
     /// the source the `atomic_redeem` unwind CPI pulls into custody.
     atomic_venue: Pubkey,
-    /// Authorized AtomicRedeem action (empty ops: bounded by the on-chain
-    /// entitlement and the custody-increase check, not the action hash).
+    /// Fully bound AtomicRedeem route, further bounded by share entitlement.
     atomic_action: Pubkey,
+    /// Base deposit relay into the same tracked venue custody.
+    deploy_action: Pubkey,
     /// A revocable Manager action (custody -> treasury) and its hash, toggled by
     /// `action_revoke_action` to drive `revoke_action` and prove a revoked
     /// action can no longer move funds.
@@ -320,8 +322,8 @@ fn build_access_tree(leaves: &[[u8; 32]]) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
     (level[0].0, proofs)
 }
 
-/// Authorize a transfer-only action (`Manager` or `Swap` scope) that moves base
-/// `input -> output`, where `input` is owned by `sub_account` (the transfer
+/// Authorize a transfer-only action (`Manager`, `Swap`, or `Deploy` scope) moving
+/// base `input -> output`, where `input` is owned by `sub_account` (the transfer
 /// source, with `sub_account` as the signing authority; `output` may be any base
 /// token account — `swap` additionally requires it to be sub-account-owned).
 /// Pins the three accounts and the transfer discriminator, leaving only the
@@ -384,7 +386,10 @@ fn authorize_transfer_action_with_program(
             action_hash,
             scope,
             ops,
-            0,
+            match scope {
+                ActionScope::Deploy | ActionScope::AtomicRedeem => 1,
+                ActionScope::Manager | ActionScope::Swap | ActionScope::FlashApprove => 0,
+            },
             0,
             0,
         )

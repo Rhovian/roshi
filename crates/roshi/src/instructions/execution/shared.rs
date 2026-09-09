@@ -145,7 +145,7 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
     /// Post-validation: every *writable* account in the CPI must be pinned by the
     /// action hash (folded via an [`Op::IngestAccount`]).
     ///
-    /// `AtomicRedeem` is the one relay scope an untrusted public caller drives, so
+    /// `AtomicRedeem` is driven by an untrusted public caller, so
     /// its route must leave the caller no account freedom. Only ingested accounts
     /// are committed to the action hash; an un-ingested writable meta is therefore
     /// free for the caller to substitute, which lets them redirect the unwind to
@@ -163,6 +163,16 @@ impl<'a, 'info> AuthorizedCpi<'a, 'info> {
             }
         }
 
+        Ok(())
+    }
+
+    /// Public deployment pins readonly accounts and all effective meta flags too.
+    pub(crate) fn require_all_metas_bound(&self, ops: &Ops) -> ProgramResult {
+        for index in 0..self.instruction.accounts.len() {
+            if !ingests_account(ops, index)? {
+                return Err(RoshiError::UnboundDeployAccount.into());
+            }
+        }
         Ok(())
     }
 
@@ -433,7 +443,7 @@ pub(crate) fn invoke_authorized_cpi(authorized_cpi: &AuthorizedCpi<'_, '_>) -> P
 /// account from the standard reverify, and instead binds its one-shot delegate
 /// to the bound flash-borrow amount so a forced `flash_repay` consumes it
 /// exactly. Reachable scopes are gated to the strategist by
-/// `verify_action_executor`; `Swap`/`AtomicRedeem` never relay here.
+/// `verify_action_executor`; `Swap`/`AtomicRedeem`/`Deploy` never relay here.
 pub(crate) fn settle_authorized_cpi(
     authorized_cpi: &AuthorizedCpi<'_, '_>,
     action: &Action,
@@ -462,7 +472,9 @@ pub(crate) fn settle_authorized_cpi(
             authorized_cpi.reverify_subaccount_custody_except(&custody, Some(&source_key))?;
             authorized_cpi.verify_flash_delegate(expected)
         }
-        ActionScope::Swap | ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
+        ActionScope::Swap | ActionScope::AtomicRedeem | ActionScope::Deploy => {
+            Err(RoshiError::UnauthorizedAction.into())
+        }
     }
 }
 

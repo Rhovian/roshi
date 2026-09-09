@@ -21,3 +21,5 @@ mod share_metadata;
 mod swap;
 mod vault_config;
 mod write_down_fees;
+
+mod deposit_and_deploy;

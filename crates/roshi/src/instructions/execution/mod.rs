@@ -1,4 +1,7 @@
+mod amount;
+pub mod deposit_and_deploy;
 mod shared;
+pub use deposit_and_deploy::try_deposit_and_deploy;
 
 pub mod assert_delegate_cleared;
 pub mod atomic_redeem;

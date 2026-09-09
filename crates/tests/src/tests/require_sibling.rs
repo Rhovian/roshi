@@ -139,7 +139,7 @@ impl SiblingFixture {
                     scope: ActionScope::Manager,
                     fee_num: 0,
                     fee_den: 0,
-                    redeem_amount_offset: 0,
+                    amount_offset: 0,
                     bump: action_bump,
                 }))
                 .unwrap(),

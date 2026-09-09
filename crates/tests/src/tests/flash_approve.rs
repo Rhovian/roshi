@@ -169,7 +169,7 @@ impl FlashFixture {
                     fee_num,
                     fee_den,
                     scope: ActionScope::FlashApprove,
-                    redeem_amount_offset: 0,
+                    amount_offset: 0,
                     bump: action_bump,
                 }))
                 .unwrap(),

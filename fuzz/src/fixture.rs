@@ -2,6 +2,7 @@
 impl RoshiFixture {
     include!("fixture/setup.rs");
     include!("fixture/deposits.rs");
+    include!("fixture/deploy.rs");
     include!("fixture/scope.rs");
     include!("fixture/scope_actions.rs");
     include!("fixture/scope_swap_actions.rs");

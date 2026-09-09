@@ -26,6 +26,9 @@ pub enum ActionScope {
     /// custody reverify in favor of a bounded-delegate check.
     #[wincode(tag = 3)]
     FlashApprove,
+    /// Public relay bound to a base deposit through `DepositAndDeploy`.
+    #[wincode(tag = 4)]
+    Deploy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, codama_macros::CodamaType, SchemaWrite, SchemaRead)]

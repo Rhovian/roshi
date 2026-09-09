@@ -19,7 +19,7 @@ pub fn authorize_action(
     action_hash: [u8; 32],
     scope: ActionScope,
     ops: Ops,
-    redeem_amount_offset: u16,
+    amount_offset: u16,
     fee_num: u64,
     fee_den: u64,
 ) -> Result<Instruction> {
@@ -34,7 +34,7 @@ pub fn authorize_action(
             action_hash,
             scope,
             ops,
-            redeem_amount_offset,
+            amount_offset,
             fee_num,
             fee_den,
         },

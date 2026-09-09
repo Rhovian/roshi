@@ -293,3 +293,7 @@ changing whether the CPI sees that account as writable or signed.
 The execution system authorizes CPI shape; it does not make downstream programs
 safe. Admins still need to understand what a target CPI does, which accounts it
 can modify, and which signer authorities are being exposed.
+
+
+See [Deposit and deploy](deposit-and-deploy.md) for the public deposit-bound relay
+and klend supply authoring.
