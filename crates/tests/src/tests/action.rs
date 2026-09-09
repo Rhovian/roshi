@@ -87,7 +87,7 @@ fn test_authorize_action() {
     assert_eq!(action.action_hash, ACTION_HASH);
     assert_eq!(action.scope, ActionScope::Manager);
     assert_eq!(action.ops, Ops::empty());
-    assert_eq!(action.redeem_amount_offset, 13);
+    assert_eq!(action.amount_offset, 13);
     assert_eq!(action.bump, bump);
 }
 
@@ -208,7 +208,7 @@ fn test_authorize_action_requires_admin_signature() {
             action_hash: ACTION_HASH,
             scope: ActionScope::Manager,
             ops: Ops::empty(),
-            redeem_amount_offset: 0,
+            amount_offset: 0,
             fee_num: 0,
             fee_den: 0,
         },
@@ -247,7 +247,7 @@ fn test_authorize_action_rejects_non_writable_admin() {
             action_hash: ACTION_HASH,
             scope: ActionScope::Manager,
             ops: Ops::empty(),
-            redeem_amount_offset: 0,
+            amount_offset: 0,
             fee_num: 0,
             fee_den: 0,
         },

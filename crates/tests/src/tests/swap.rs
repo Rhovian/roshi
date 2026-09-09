@@ -110,7 +110,7 @@ impl SwapFixture {
                     scope: ActionScope::Swap,
                     fee_num: 0,
                     fee_den: 0,
-                    redeem_amount_offset: 0,
+                    amount_offset: 0,
                     bump: action_bump,
                 }))
                 .unwrap(),
@@ -549,7 +549,7 @@ fn install_transfer_action(
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -785,7 +785,7 @@ fn test_swap_value_bound_prices_asset_input_through_oracle() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -891,7 +891,7 @@ fn test_swap_value_bound_prices_same_feed_once() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -1125,7 +1125,7 @@ fn test_swap_value_bound_prices_routed_asset_swap() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -1284,7 +1284,7 @@ fn test_swap_value_bound_dedups_routed_asset_against_base_feed() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -1435,7 +1435,7 @@ fn test_swap_value_bound_shares_one_base_leg_across_routed_endpoints() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),
@@ -1534,7 +1534,7 @@ fn install_floating_swap_action(svm: &mut LiteSVM, fixture: &SwapFixture) -> Pub
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump,
             }))
             .unwrap(),

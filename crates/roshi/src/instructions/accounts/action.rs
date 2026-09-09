@@ -68,22 +68,27 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
         action_hash: [u8; 32],
         scope: ActionScope,
         ops: Ops,
-        redeem_amount_offset: u16,
+        amount_offset: u16,
         fee_num: u64,
         fee_den: u64,
     ) -> ProgramResult {
         validate_ops(&ops)?;
 
-        // An AtomicRedeem action with no ops folds only the CPI program id into
-        // the action hash — neither the account metas nor `ix_data` (which
-        // `redeem_amount_offset` decodes) would be bound, leaving the route and
-        // the decoded withdrawal amount caller-controlled. Require it to commit
+        // A public relay action (AtomicRedeem or Deploy) with no ops folds only
+        // the CPI program id into the hash — neither the metas nor `ix_data` (which
+        // `amount_offset` decodes) would be bound, leaving the route and
+        // the decoded route amount caller-controlled. Require it to commit
         // at least one op. `validate_ops` above already proved `ops` well-formed,
         // so the length is readable here.
-        if scope == ActionScope::AtomicRedeem
+        if matches!(scope, ActionScope::AtomicRedeem | ActionScope::Deploy)
             && ops.is_empty().map_err(|_| RoshiError::InvalidOp)?
         {
-            return Err(RoshiError::EmptyAtomicRedeemOps.into());
+            return Err(if scope == ActionScope::Deploy {
+                RoshiError::EmptyDeployOps
+            } else {
+                RoshiError::EmptyAtomicRedeemOps
+            }
+            .into());
         }
 
         let bump = [self.action_bump];
@@ -103,7 +108,7 @@ impl<'a, 'info> AuthorizeActionContext<'a, 'info> {
             fee_num,
             fee_den,
             scope,
-            redeem_amount_offset,
+            amount_offset,
             bump: self.action_bump,
         };
         let serialized =

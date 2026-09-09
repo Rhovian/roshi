@@ -151,6 +151,8 @@ fn verify_action_executor(
             vault::verify_role(vault, Role::Strategist, executor)
         }
         ActionScope::Swap => Err(RoshiError::UnauthorizedAction.into()),
-        ActionScope::AtomicRedeem => Err(RoshiError::UnauthorizedAction.into()),
+        ActionScope::AtomicRedeem | ActionScope::Deploy => {
+            Err(RoshiError::UnauthorizedAction.into())
+        }
     }
 }

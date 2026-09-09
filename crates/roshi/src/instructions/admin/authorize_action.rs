@@ -21,7 +21,7 @@ pub fn try_authorize_action(accounts: &[AccountInfo], args: AuthorizeActionArgs)
         args.action_hash,
         args.scope,
         args.ops,
-        args.redeem_amount_offset,
+        args.amount_offset,
         args.fee_num,
         args.fee_den,
     )

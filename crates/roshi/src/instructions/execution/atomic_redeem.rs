@@ -3,6 +3,7 @@ use solana_program_error::{ProgramError, ProgramResult};
 use solana_pubkey::Pubkey;
 use solana_sysvar::{clock::Clock, Sysvar};
 
+use super::amount::decode_withdrawal_amount;
 use super::shared::{invoke_authorized_cpi, validate_authorized_cpi};
 use crate::{
     instructions::{
@@ -210,16 +211,4 @@ fn settle_atomic_redeem(
 
     context.vault.debit_assets_at_effective(payout, now)?;
     context.store_vault()
-}
-
-fn decode_withdrawal_amount(ix_data: &[u8], action: &Action) -> Result<u64, ProgramError> {
-    let start = usize::from(action.redeem_amount_offset);
-    let end = start
-        .checked_add(8)
-        .ok_or(ProgramError::InvalidInstructionData)?;
-    let bytes = ix_data
-        .get(start..end)
-        .ok_or(ProgramError::from(RoshiError::InstructionSliceOutOfBounds))?;
-
-    Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
 }
