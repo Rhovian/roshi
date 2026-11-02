@@ -1,4 +1,6 @@
-use roshi_interface::instructions::{CancelRedeemArgs, DepositArgs, RedeemArgs};
+use roshi_interface::instructions::{
+    CancelRedeemArgs, DepositAndDeployArgs, DepositArgs, RedeemArgs,
+};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 use solana_system_interface::program as system_program;
@@ -92,4 +94,36 @@ pub fn cancel_redeem(
         ],
         &CancelRedeemArgs { min_shares_out },
     )
+}
+
+/// Base deposit followed atomically by a fully bound Deploy CPI. The supplied
+/// sub-account PDA must be derived from the vault's configured deposit index.
+#[allow(clippy::too_many_arguments)]
+pub fn deposit_and_deploy(
+    depositor: Pubkey,
+    vault: Pubkey,
+    user_source_token_account: Pubkey,
+    vault_custody_token_account: Pubkey,
+    user_share_account: Pubkey,
+    share_mint: Pubkey,
+    base_token_program: Pubkey,
+    sub_account_pda: Pubkey,
+    action: Pubkey,
+    cpi_accounts: Vec<AccountMeta>,
+    args: DepositAndDeployArgs,
+) -> Result<Instruction> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(depositor, true),
+        AccountMeta::new(vault, false),
+        AccountMeta::new(user_source_token_account, false),
+        AccountMeta::new(vault_custody_token_account, false),
+        AccountMeta::new(user_share_account, false),
+        AccountMeta::new(share_mint, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        AccountMeta::new_readonly(base_token_program, false),
+        AccountMeta::new_readonly(sub_account_pda, false),
+        AccountMeta::new_readonly(action, false),
+    ];
+    accounts.extend(cpi_accounts);
+    new(accounts, &args)
 }

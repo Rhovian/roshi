@@ -8,12 +8,13 @@ pub mod user;
 
 pub use roshi_interface::instructions::{
     AccountFlags, AdminSetFlashFeeRateArgs, AtomicRedeemArgs, AuthorizeActionArgs,
-    CancelRedeemArgs, CollectFeesArgs, DepositArgs, InitializeAssetArgs, InitializeProgramArgs,
-    InitializeVaultArgs, InvestExternalArgs, ManageArgs, ManageBatchArgs, PackedAccountFlags,
-    ProcessWithdrawalsArgs, RecoverNavArgs, RedeemArgs, RegisterExternalDestinationArgs,
-    ReportNavArgs, ReturnExternalArgs, RevokeActionArgs, RevokeExternalDestinationArgs,
-    RoshiInstruction, SetNavAuthorityArgs, SetPauseFlagsArgs, SetShareMetadataArgs,
-    SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs, SetWithdrawalAuthorityArgs,
-    StrategistLowerFlashFeeRateArgs, SwapArgs, TransferProgramAuthorityArgs,
-    TransferVaultAuthorityArgs, UpdateAssetArgs, UpdateVaultConfigArgs, WriteDownFeesArgs,
+    CancelRedeemArgs, CollectFeesArgs, DepositAndDeployArgs, DepositArgs, InitializeAssetArgs,
+    InitializeProgramArgs, InitializeVaultArgs, InvestExternalArgs, ManageArgs, ManageBatchArgs,
+    PackedAccountFlags, ProcessWithdrawalsArgs, RecoverNavArgs, RedeemArgs,
+    RegisterExternalDestinationArgs, ReportNavArgs, ReturnExternalArgs, RevokeActionArgs,
+    RevokeExternalDestinationArgs, RoshiInstruction, SetNavAuthorityArgs, SetPauseFlagsArgs,
+    SetShareMetadataArgs, SetStrategistArgs, SetSwapAuthorityArgs, SetVaultAccessArgs,
+    SetWithdrawalAuthorityArgs, StrategistLowerFlashFeeRateArgs, SwapArgs,
+    TransferProgramAuthorityArgs, TransferVaultAuthorityArgs, UpdateAssetArgs,
+    UpdateVaultConfigArgs, WriteDownFeesArgs,
 };

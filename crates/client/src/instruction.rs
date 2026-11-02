@@ -842,7 +842,7 @@ mod tests {
         assert_eq!(args.action_hash, [9; 32]);
         assert_eq!(args.scope, ActionScope::Manager);
         assert_eq!(args.ops, Ops::empty());
-        assert_eq!(args.redeem_amount_offset, 7);
+        assert_eq!(args.amount_offset, 7);
     }
 
     #[test]

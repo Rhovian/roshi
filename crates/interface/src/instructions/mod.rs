@@ -46,6 +46,7 @@ pub mod tags {
     pub const ADMIN_SET_FLASH_FEE_RATE: u8 = 32;
     pub const STRATEGIST_LOWER_FLASH_FEE_RATE: u8 = 33;
     pub const RECOVER_NAV: u8 = 34;
+    pub const DEPOSIT_AND_DEPLOY: u8 = 35;
 }
 
 // Codama parses the enum source directly and currently requires literal
@@ -280,6 +281,18 @@ pub enum RoshiInstruction {
     #[codama(account(name = "deposit_base_custody"))]
     #[codama(account(name = "withdraw_base_custody"))]
     RecoverNav(#[codama(name = "args")] RecoverNavArgs) = 34,
+
+    #[codama(account(name = "depositor", signer))]
+    #[codama(account(name = "vault", writable))]
+    #[codama(account(name = "user_source_token_account", writable))]
+    #[codama(account(name = "vault_custody_token_account", writable))]
+    #[codama(account(name = "user_share_account", writable))]
+    #[codama(account(name = "share_mint", writable))]
+    #[codama(account(name = "share_token_program", default_value = program("token")))]
+    #[codama(account(name = "base_token_program"))]
+    #[codama(account(name = "sub_account"))]
+    #[codama(account(name = "action"))]
+    DepositAndDeploy(#[codama(name = "args")] DepositAndDeployArgs) = 35,
 }
 
 impl RoshiInstruction {
@@ -320,6 +333,7 @@ impl RoshiInstruction {
             Self::AdminSetFlashFeeRate(_) => tags::ADMIN_SET_FLASH_FEE_RATE,
             Self::StrategistLowerFlashFeeRate(_) => tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
             Self::RecoverNav(_) => tags::RECOVER_NAV,
+            Self::DepositAndDeploy(_) => tags::DEPOSIT_AND_DEPLOY,
         }
     }
 
@@ -385,6 +399,7 @@ impl RoshiInstruction {
                 Ok(Self::StrategistLowerFlashFeeRate(decode_payload(payload)?))
             }
             tags::RECOVER_NAV => Ok(Self::RecoverNav(decode_payload(payload)?)),
+            tags::DEPOSIT_AND_DEPLOY => Ok(Self::DepositAndDeploy(decode_payload(payload)?)),
             _ => Err(()),
         }
     }
@@ -401,6 +416,7 @@ impl RoshiInstruction {
             Self::ManageBatch(args) => wincode::serialize_into(&mut data, args)?,
             Self::ReportNav(args) => wincode::serialize_into(&mut data, args)?,
             Self::Deposit(args) => wincode::serialize_into(&mut data, args)?,
+            Self::DepositAndDeploy(args) => wincode::serialize_into(&mut data, args)?,
             Self::Redeem(args) => wincode::serialize_into(&mut data, args)?,
             Self::CancelRedeem(args) => wincode::serialize_into(&mut data, args)?,
             Self::ProcessWithdrawals => {
@@ -502,6 +518,7 @@ impl_instruction_args! {
     AdminSetFlashFeeRateArgs = tags::ADMIN_SET_FLASH_FEE_RATE,
     StrategistLowerFlashFeeRateArgs = tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
     RecoverNavArgs = tags::RECOVER_NAV,
+    DepositAndDeployArgs = tags::DEPOSIT_AND_DEPLOY,
 }
 
 pub fn serialize_instruction<T>(args: &T) -> Result<Vec<u8>, wincode::WriteError>
@@ -527,7 +544,7 @@ mod tests {
             TAG_CASES,
             &[
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
             ]
         );
         assert_eq!(
@@ -690,5 +707,6 @@ mod tests {
             tags::STRATEGIST_LOWER_FLASH_FEE_RATE,
         ),
         ("recoverNav", tags::RECOVER_NAV),
+        ("depositAndDeploy", tags::DEPOSIT_AND_DEPLOY),
     ];
 }

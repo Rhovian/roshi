@@ -20,14 +20,14 @@ pub struct Action {
     pub action_hash: [u8; 32],
     pub ops: Ops,
     /// `FlashApprove` flash-fee rate as an opaque committed fraction
-    /// `fee_num / fee_den` (#21). Like `scope`/`redeem_amount_offset`, this is
+    /// `fee_num / fee_den` (#21). Like `scope`/`amount_offset`, this is
     /// stored config that is **not** folded into `action_hash`, so the PDA is
     /// independent of the rate and the gated update instructions (#22) can
     /// mutate it in place. `fee_num == 0` is a fee-free action.
     pub fee_num: u64,
     pub fee_den: u64,
     pub scope: ActionScope,
-    pub redeem_amount_offset: u16,
+    pub amount_offset: u16,
     pub bump: u8,
 }
 
@@ -171,6 +171,42 @@ mod tests {
 
         assert_ne!(readonly_hash, writable_hash);
         assert_ne!(readonly_hash, signer_hash);
+    }
+
+    #[test]
+    fn amount_offset_and_scope_preserve_existing_action_bytes() {
+        let ops = Ops::new([Op::IngestAccount { index: 0 }]).unwrap();
+        for (scope, tag) in [
+            (ActionScope::Manager, 0),
+            (ActionScope::Swap, 1),
+            (ActionScope::AtomicRedeem, 2),
+            (ActionScope::FlashApprove, 3),
+            (ActionScope::Deploy, 4),
+        ] {
+            let action = Action {
+                vault: [1; 32],
+                action_hash: [2; 32],
+                ops,
+                fee_num: 3,
+                fee_den: 4,
+                scope,
+                amount_offset: 513,
+                bump: 254,
+            };
+            // Wire layout before the field rename, with the new scope appended.
+            let mut bytes = vec![1; 32];
+            bytes.extend([2; 32]);
+            bytes.extend(wincode::serialize(&ops).unwrap());
+            bytes.extend(3u64.to_le_bytes());
+            bytes.extend(4u64.to_le_bytes());
+            bytes.push(tag);
+            bytes.extend(513u16.to_le_bytes());
+            bytes.push(254);
+            assert_eq!(wincode::serialize(&action).unwrap(), bytes);
+            let decoded: Action = wincode::deserialize_exact(&bytes).unwrap();
+            assert_eq!(decoded.amount_offset, 513);
+            assert_eq!(decoded.scope, scope);
+        }
     }
 
     #[test]

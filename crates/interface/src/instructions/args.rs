@@ -41,7 +41,7 @@ pub struct AuthorizeActionArgs {
     pub action_hash: [u8; 32],
     pub scope: ActionScope,
     pub ops: Ops,
-    pub redeem_amount_offset: u16,
+    pub amount_offset: u16,
     /// `FlashApprove` flash-fee rate as an opaque committed fraction (#21);
     /// stored on the `Action` but not part of `action_hash`. `fee_num == 0` is
     /// a fee-free action (any other scope ignores these).
@@ -57,6 +57,17 @@ pub struct RevokeActionArgs {
 #[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
 pub struct ManageArgs {
     pub sub_account: u8,
+    pub accounts_start: u8,
+    pub account_flags: PackedAccountFlags,
+    pub ix_data: Vec<u8>,
+}
+
+#[derive(codama_macros::CodamaType, SchemaWrite, SchemaRead)]
+pub struct DepositAndDeployArgs {
+    pub amount: u64,
+    pub min_shares_out: u64,
+    pub access_proof: Vec<[u8; 32]>,
+    /// Relative to the CPI section after the ten fixed accounts.
     pub accounts_start: u8,
     pub account_flags: PackedAccountFlags,
     pub ix_data: Vec<u8>,

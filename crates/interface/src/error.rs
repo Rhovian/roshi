@@ -50,6 +50,9 @@ pub enum RoshiError {
     UnboundAtomicRedeemAccount = 44,
     ZeroSharePrice = 45,
     DepositsMustBePaused = 46,
+    EmptyDeployOps = 47,
+    UnboundDeployAccount = 48,
+    DeployAmountMismatch = 49,
 }
 
 impl From<RoshiError> for ProgramError {

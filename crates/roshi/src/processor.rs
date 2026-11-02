@@ -13,7 +13,8 @@ use crate::{
             try_write_down_fees,
         },
         execution::{
-            try_assert_delegate_cleared, try_atomic_redeem, try_manage, try_manage_batch, try_swap,
+            try_assert_delegate_cleared, try_atomic_redeem, try_deposit_and_deploy, try_manage,
+            try_manage_batch, try_swap,
         },
         user::{try_cancel_redeem, try_deposit, try_redeem},
         ProcessWithdrawalsArgs, RegisterExternalDestinationArgs, RevokeExternalDestinationArgs,
@@ -56,6 +57,7 @@ fn try_process_instruction<'info>(
         RoshiInstruction::ReportNav(args) => try_report_nav(accounts, args),
         RoshiInstruction::RecoverNav(args) => try_recover_nav(accounts, args),
         RoshiInstruction::Deposit(args) => try_deposit(accounts, args),
+        RoshiInstruction::DepositAndDeploy(args) => try_deposit_and_deploy(accounts, args),
         RoshiInstruction::Redeem(args) => try_redeem(accounts, args),
         RoshiInstruction::CancelRedeem(args) => try_cancel_redeem(accounts, args),
         RoshiInstruction::ProcessWithdrawals => {

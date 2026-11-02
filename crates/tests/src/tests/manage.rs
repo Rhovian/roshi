@@ -78,7 +78,7 @@ impl SystemTransferManageFixture {
                     scope: ActionScope::Manager,
                     fee_num: 0,
                     fee_den: 0,
-                    redeem_amount_offset: 0,
+                    amount_offset: 0,
                     bump: action_bump,
                 }))
                 .unwrap(),
@@ -218,7 +218,7 @@ fn install_manager_action(
                 scope: ActionScope::Manager,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump: action_bump,
             }))
             .unwrap(),
@@ -595,7 +595,7 @@ fn test_manage_rejects_atomic_redeem_action() {
                 scope: ActionScope::AtomicRedeem,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump: action_bump,
             }))
             .unwrap(),
@@ -640,7 +640,7 @@ fn test_manage_rejects_swap_action() {
                 scope: ActionScope::Swap,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump: action_bump,
             }))
             .unwrap(),
@@ -764,7 +764,7 @@ fn test_manage_batch_pinned_account_can_downgrade_message_level_writable_flag() 
                 scope: ActionScope::Manager,
                 fee_num: 0,
                 fee_den: 0,
-                redeem_amount_offset: 0,
+                amount_offset: 0,
                 bump: readonly_action_bump,
             }))
             .unwrap(),

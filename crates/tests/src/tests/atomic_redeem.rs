@@ -178,7 +178,7 @@ impl AtomicRedeemFixture {
                     scope: ActionScope::AtomicRedeem,
                     fee_num: 0,
                     fee_den: 0,
-                    redeem_amount_offset: amount_offset,
+                    amount_offset: amount_offset,
                     bump: action_bump,
                 }))
                 .unwrap(),
@@ -522,7 +522,7 @@ fn test_atomic_redeem_rejects_instruction_swap_on_bound_route() {
                 },
             ]),
             // New authority with small leading bytes so the amount decoded at
-            // `redeem_amount_offset` clears the entitlement check, letting the
+            // `amount_offset` clears the entitlement check, letting the
             // request reach (and fail) the action-hash comparison rather than the
             // earlier entitlement guard.
             ix_data: set_account_owner_data(Pubkey::new_from_array([0u8; 32])),

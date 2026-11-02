@@ -47,8 +47,14 @@ pub fn try_deposit<'info>(
     if args.access_proof.len() > MAX_ACCESS_PROOF_LEN {
         return Err(RoshiError::InvalidAccessProof.into());
     }
-
     let context = DepositContext::load(accounts)?;
+    execute_deposit(context, args)
+}
+
+pub(crate) fn execute_deposit<'info>(
+    context: DepositContext<'info, 'info>,
+    args: DepositArgs,
+) -> ProgramResult {
     let vault = &context.vault;
 
     if vault.deposits_paused()? {

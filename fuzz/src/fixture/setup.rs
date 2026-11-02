@@ -195,7 +195,7 @@
         //     destination) and the transfer discriminator, so a public caller
         //     cannot redirect the route to drain an unpinned sibling; the redeem
         //     is further bounded by the on-chain share entitlement. The unwind
-        //     amount (ix_data[1..9]) stays free, and `redeem_amount_offset = 1`
+        //     amount (ix_data[1..9]) stays free, and `amount_offset = 1`
         //     is where it sits in the token-transfer ix data ([tag, amount_le]).
         let atomic_venue = Pubkey::new_unique();
         set_token_account(&mut ctx.svm, atomic_venue, &base_mint, &sub_account, VENUE_BASE);
@@ -236,6 +236,16 @@
             .unwrap(),
             &[&operator],
             "authorize_action(atomic_redeem)",
+        );
+
+        let (deploy_action, _) = authorize_transfer_action(
+            &mut ctx,
+            &operator,
+            vault,
+            sub_account,
+            custody,
+            atomic_venue,
+            ActionScope::Deploy,
         );
 
         // 4e. A revocable Manager action (custody -> treasury) used only to drive
@@ -557,6 +567,7 @@
             swap_reverse_action,
             atomic_venue,
             atomic_action,
+            deploy_action,
             revocable_action,
             revocable_action_hash,
             members_root,

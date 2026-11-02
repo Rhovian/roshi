@@ -3,6 +3,8 @@ mod asset;
 mod atomic_redeem;
 mod cancel_redeem;
 mod deposit;
+mod deposit_and_deploy;
+pub(crate) use deposit_and_deploy::DepositAndDeployContext;
 mod external_destination;
 mod manage;
 mod oracle_price;
